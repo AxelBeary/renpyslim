@@ -213,7 +213,7 @@ def cmd_slimapk(args) -> int:
             key_alias=args.key_alias, key_pass=args.key_pass,
             generate_key=args.gen_key,
             new_key_password=args.key_password,
-            webp_remap=args.webp_remap,
+            remap_convert=args.remap,
             progress=Progress(_log))
     except apk.ApkError as e:
         return _fail(str(e))
@@ -298,8 +298,8 @@ def main(argv=None) -> int:
                    help="自动生成新钥匙签名（不需要任何现有密码；新身份，玩家需卸载重装）")
     p.add_argument("--key-password", default=None, help="配 --gen-key：自定义新钥匙密码（默认自动随机）")
     p.add_argument("--extra-chars", default="", help="字体保底手动追加字符")
-    p.add_argument("--webp-remap", action="store_true",
-                   help="实验性：图片转 WebP + 注入运行时重映射脚本（收益最大，需 SDK）")
+    p.add_argument("--remap", action="store_true",
+                   help="实验性：图转 WebP、音转 OGG + 注入运行时重映射脚本（收益最大，需 SDK）")
     p.set_defaults(func=cmd_slimapk)
 
     p = sub.add_parser("slimfont", help="独立字体瘦身（不依赖游戏工程）")

@@ -22,7 +22,7 @@ from typing import Optional
 
 from . import charset as charset_mod
 from . import remap as remap_mod
-from .audio_optimizer import reencode_audio
+from .audio_optimizer import convert_audio, reencode_audio
 from .config import PRESETS, CharsetOptions
 from .font_optimizer import subset_font
 from .image_optimizer import optimize_image
@@ -179,14 +179,15 @@ def slim_apk(apk_path: str, preset_name: str,
               key_pass: Optional[str] = None,
               generate_key: bool = False,
               new_key_password: Optional[str] = None,
-              webp_remap: bool = False,
+              remap_convert: bool = False,
               progress: Optional[Progress] = None) -> dict:
     """瘦身一个 APK。签名三种姿势：
     ① 传 keystore+ks_pass → 用原钥匙（可覆盖安装旧版）
     ② 传自有 keystore+密码 → 用自己的身份签
     ③ generate_key=True → 现场生成新钥匙+密码备忘（新身份，需卸载重装）
     都不传 → 未签名产出 + 警告。
-    webp_remap=True（实验性）：图片转 WebP 并注入编译好的重映射脚本（B9 的 APK 版）。
+    remap_convert=True（实验性）：图片转 WebP、音频转 OGG，并注入编译好的
+    重映射脚本把请求透明指到新文件（B9 的 APK 版，不改任何引用）。
     返回 {output, saved_bytes, changes, signed, keystore, warnings}。
     """
     p = progress or Progress()
@@ -229,12 +230,12 @@ def slim_apk(apk_path: str, preset_name: str,
         chars = _extract_charset_from_apk(work, cs_opts)
         p.emit("apk", f"从 APK 内脚本提取到 {len(chars)} 个字符")
 
-        # 3. 逐个同名优化（开了 webp_remap 则图片先试转 WebP）
-        remap_usable = webp_remap and bool(sdk) \
+        # 3. 逐个同名优化（开了 remap_convert 则图/音先试换格式）
+        remap_usable = remap_convert and bool(sdk) \
             and (Path(sdk) / "renpy.exe").exists()
-        if webp_remap and not remap_usable:
+        if remap_convert and not remap_usable:
             warnings.append("未找到 Ren'Py SDK，无法编译重映射脚本，"
-                            "图片降级为同名压缩。")
+                            "图片/音频降级为同名压缩。")
         changed: set[str] = set()
         pending_remap = []   # (旧条目, 新条目名, 本地新文件, 节省字节)
         for i, name in enumerate(targets, start=1):
@@ -244,27 +245,37 @@ def slim_apk(apk_path: str, preset_name: str,
             ext = f.suffix.lower()
             size_before = f.stat().st_size
             game_rel = apk_entry_to_game_rel(name)
-            # 实验性：图片转 WebP + 运行时重映射（不改引用，安全）
+            # 实验性：图片转 WebP / 音频转 OGG + 运行时重映射（不改引用，安全）
             if (remap_usable and game_rel
-                    and kind_of(ext) == AssetKind.IMAGE
-                    and ext in (".png", ".jpg", ".jpeg")
                     and size_before >= preset.min_size_kb * 1024):
-                new_rel = Path(game_rel).with_suffix(".webp").as_posix()
-                new_entry = game_rel_to_apk_entry(new_rel)
-                new_local = work / new_entry
-                new_local.parent.mkdir(parents=True, exist_ok=True)
-                res = None
-                try:
-                    res = optimize_image(str(f), str(new_local),
-                                         preset.image_quality,
-                                         convert_webp=True)
-                except Exception as e:
-                    warnings.append(f"{name}：转 WebP 失败，保留原样（{e}）")
-                if res:
-                    pending_remap.append((name, new_entry, new_local,
-                                          size_before - res["new_size"]))
-                    continue
-                # 转换失败落到同名压缩
+                new_suffix = None
+                if kind_of(ext) == AssetKind.IMAGE \
+                        and ext in (".png", ".jpg", ".jpeg"):
+                    new_suffix = ".webp"
+                elif kind_of(ext) == AssetKind.AUDIO \
+                        and ext in (".wav", ".mp3"):
+                    new_suffix = ".ogg"
+                if new_suffix:
+                    new_rel = Path(game_rel).with_suffix(new_suffix).as_posix()
+                    new_entry = game_rel_to_apk_entry(new_rel)
+                    new_local = work / new_entry
+                    new_local.parent.mkdir(parents=True, exist_ok=True)
+                    res = None
+                    try:
+                        if new_suffix == ".webp":
+                            res = optimize_image(str(f), str(new_local),
+                                                 preset.image_quality,
+                                                 convert_webp=True)
+                        else:
+                            res = convert_audio(str(f), str(new_local),
+                                                preset.audio_bitrate_k)
+                    except Exception as e:
+                        warnings.append(f"{name}：换格式失败，保留原样（{e}）")
+                    if res:
+                        pending_remap.append((name, new_entry, new_local,
+                                              size_before - res["new_size"]))
+                        continue
+                    # 转换失败落到同名压缩
             res = None
             try:
                 if kind_of(ext) == AssetKind.IMAGE and ext != ".gif" \
@@ -304,14 +315,15 @@ def slim_apk(apk_path: str, preset_name: str,
                 changes += 1
             rpyc_entry_name = game_rel_to_apk_entry(
                 remap_mod.REMAP_SCRIPT_NAME + "c")
-            p.emit("apk", f"已注入重映射脚本，{len(pending_remap)} 张图"
-                          "将在运行时透明转为 WebP（实验性）")
+            p.emit("apk", f"已注入重映射脚本，{len(pending_remap)} 个资源"
+                          "将在运行时透明换格式（实验性）")
             warnings.append(
-                f"实验性功能：{len(pending_remap)} 张图已转 WebP 并注入运行时"
-                "重映射脚本（assets/x-game/x-scripts/x-rtools_remap.rpyc）。"
+                f"实验性功能：{len(pending_remap)} 个资源已换格式（图→WebP、"
+                "音→OGG）并注入运行时重映射脚本"
+                "（assets/x-game/x-scripts/x-rtools_remap.rpyc）。"
                 "若游戏异常，用未开启该开关的版本重跑即可还原。")
         elif pending_remap:
-            warnings.append(f"重映射脚本编译失败，{len(pending_remap)} 张图"
+            warnings.append(f"重映射脚本编译失败，{len(pending_remap)} 个资源"
                             "未转换，已原样保留。")
 
         # 4. 重打包：未改动条目逐字节保留，改动条目用新内容

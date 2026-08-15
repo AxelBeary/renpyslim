@@ -66,12 +66,12 @@ def test_apk_entry_path_mapping():
     assert apk.apk_entry_to_game_rel("classes.dex") is None
 
 
-def test_webp_remap_fallback_without_sdk(tmp_path):
-    """无 SDK 时开 webp_remap 不能崩，降级同名压缩 + 警告。"""
+def test_remap_convert_fallback_without_sdk(tmp_path):
+    """无 SDK 时开 remap_convert 不能崩，降级同名压缩 + 警告。"""
     apk_path = tmp_path / "fake.apk"
     _make_fake_apk(apk_path)
     result = apk.slim_apk(str(apk_path), "balanced", sdk=None,
-                           webp_remap=True)
+                           remap_convert=True)
     assert Path(result["output"]).exists()
     assert any("同名压缩" in w or "降级" in w for w in result["warnings"])
 
