@@ -5,275 +5,647 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <link rel="icon" href="/favicon.ico">
 <title>RenPySlim</title>
+<script>
+/* 首屏防闪：启动即应用已保存的主题与语言（业内标准做法） */
+(function(){
+  try {
+    var t = localStorage.getItem("rps-theme");
+    if (!t) t = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+    document.documentElement.setAttribute("data-theme", t);
+    var l = localStorage.getItem("rps-lang") || "zh";
+    document.documentElement.setAttribute("lang", l === "zh" ? "zh-CN" : "en");
+  } catch (e) {}
+})();
+</script>
 <style>
-  :root {
-    --bg: #0f1420; --panel: #182032; --panel2: #1f2a42;
-    --border: #2a3654; --text: #e8edf7; --muted: #93a0bc;
-    --accent: #5b8cff; --accent2: #7c5bff; --ok: #3ecf8e;
-    --warn: #ffb454; --err: #ff6b6b;
-  }
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { background: var(--bg); color: var(--text);
-    font-family: "Segoe UI", "Microsoft YaHei", sans-serif; min-height: 100vh; }
-  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 60px; }
-  header { display: flex; align-items: baseline; gap: 14px; margin-bottom: 6px; }
-  header h1 { font-size: 24px; }
-  header .sub { color: var(--muted); font-size: 13px; }
-  #envbar { font-size: 12px; color: var(--muted); margin-bottom: 18px; }
-  #envbar b { color: var(--text); font-weight: 600; }
-  #envbar .miss { color: var(--warn); }
+/* ===================== 设计令牌：暖色圆润（原型已拍板） ===================== */
+:root {
+  color-scheme: light dark;
+  --radius-card: 18px; --radius-btn: 12px; --radius-input: 11px;
+  --font: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+}
+html[data-theme="light"] {
+  color-scheme: light;
+  --bg: #faf5ee; --bg-soft: #f3ebdf;
+  --card: #fffdf9; --card2: #f7f0e6;
+  --border: #eadfcd; --border-strong: #dcccb2;
+  --text: #3c3226; --muted: #91826d;
+  --accent: #e07b2f; --accent-hover: #cf6c22; --accent-soft: #fbe8d6;
+  --accent-text: #ffffff;
+  --ok: #3f9e6e; --ok-bg: #e4f3ea; --ok-border: #bfe0cd;
+  --warn: #c07f1d; --warn-bg: #faf0da; --warn-border: #e8d3a4;
+  --err: #cf5449; --err-bg: #fbe7e4; --err-border: #eec3be;
+  --log-bg: #2e2820; --log-text: #d8cbb6;
+  --shadow: 0 2px 10px rgba(120, 90, 40, .07);
+  --shadow-lg: 0 10px 34px rgba(120, 90, 40, .14);
+}
+html[data-theme="dark"] {
+  color-scheme: dark;
+  /* 中性暖灰深色（Linear/shadcn 风格）：不闷不黄，橙色点缀保留 */
+  --bg: #1d1b1a; --bg-soft: #232120;
+  --card: #282524; --card2: #322e2c;
+  --border: #3c3836; --border-strong: #524c48;
+  --text: #eeeae5; --muted: #a69e94;
+  --accent: #ef9349; --accent-hover: #f5a463; --accent-soft: #40301e;
+  --accent-text: #241505;
+  --ok: #6cc496; --ok-bg: #223429; --ok-border: #3a5c47;
+  --warn: #e3b25e; --warn-bg: #382e1a; --warn-border: #6b5426;
+  --err: #ef8177; --err-bg: #3e2520; --err-border: #703a31;
+  --log-bg: #141210; --log-text: #ccc2b2;
+  --shadow: 0 2px 10px rgba(0, 0, 0, .28);
+  --shadow-lg: 0 10px 34px rgba(0, 0, 0, .45);
+}
 
-  .tabs { display: flex; gap: 8px; margin-bottom: 16px; }
-  .tab { padding: 10px 22px; border-radius: 10px; cursor: pointer;
-    background: var(--panel); border: 1px solid var(--border);
-    color: var(--muted); font-size: 15px; }
-  .tab.active { background: linear-gradient(135deg, var(--accent), var(--accent2));
-    color: #fff; border-color: transparent; }
+/* ===================== 基础 ===================== */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { background: var(--bg); color: var(--text); font-family: var(--font);
+  font-size: 14px; line-height: 1.55; min-height: 100vh; }
+button { font-family: var(--font); }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 6px;
+  border: 2px solid var(--bg); }
 
-  .card { background: var(--panel); border: 1px solid var(--border);
-    border-radius: 14px; padding: 20px; margin-bottom: 16px; }
-  .card h2 { font-size: 16px; margin-bottom: 4px; }
-  .card .desc { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
-  .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-  input[type=text] { flex: 1; min-width: 260px; background: var(--panel2);
-    border: 1px solid var(--border); color: var(--text); border-radius: 8px;
-    padding: 10px 12px; font-size: 14px; }
-  button { background: var(--accent); border: none; color: #fff; padding: 10px 20px;
-    border-radius: 8px; font-size: 14px; cursor: pointer; }
-  button:hover { filter: brightness(1.12); }
-  button:disabled { opacity: .45; cursor: not-allowed; }
-  button.ghost { background: var(--panel2); border: 1px solid var(--border); color: var(--text); }
-  button.danger { background: #8b2f3a; }
+/* ===================== 布局：侧边栏 + 内容区 ===================== */
+.shell { display: flex; min-height: 100vh; }
+.sidebar { width: 236px; flex: none; background: var(--bg-soft);
+  border-right: 1px solid var(--border); padding: 20px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+  position: sticky; top: 0; height: 100vh; }
+.brand { display: flex; align-items: center; gap: 10px; padding: 4px 10px 18px; }
+.brand .paw { width: 42px; height: 42px; border-radius: 14px; font-size: 24px;
+  display: grid; place-items: center; background: var(--accent-soft);
+  box-shadow: var(--shadow); }
+.brand b { font-size: 17px; display: block; }
+.brand small { color: var(--muted); font-size: 11.5px; }
 
-  .opts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; }
-  .opt { display: flex; gap: 8px; align-items: flex-start; font-size: 13.5px; }
-  .opt input { margin-top: 3px; accent-color: var(--accent); }
-  .opt .hint { color: var(--muted); font-size: 12px; }
-  select { background: var(--panel2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: 8px 10px; font-size: 14px; }
+.nav-item { display: flex; align-items: center; gap: 11px; padding: 11px 13px;
+  border-radius: var(--radius-btn); color: var(--muted); cursor: pointer;
+  border: 1px solid transparent; font-size: 14px; user-select: none;
+  transition: background .15s, color .15s; }
+.nav-item:hover { background: var(--card); color: var(--text); }
+.nav-item.active { background: var(--card); color: var(--text);
+  border-color: var(--border); box-shadow: var(--shadow); font-weight: 600; }
+.nav-item svg { width: 19px; height: 19px; flex: none; }
+.nav-sec { color: var(--muted); font-size: 11px; letter-spacing: .08em;
+  padding: 14px 13px 6px; text-transform: uppercase; }
+.side-foot { margin-top: auto; padding: 12px 10px 0; border-top: 1px solid var(--border);
+  color: var(--muted); font-size: 12px; display: flex; flex-direction: column; gap: 10px; }
 
-  table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--border); }
-  th { color: var(--muted); font-weight: 500; }
-  .pri-high { color: var(--err); font-weight: 600; }
-  .pri-medium { color: var(--warn); }
-  .pri-low { color: var(--muted); }
-  .badge { display: inline-block; padding: 2px 8px; border-radius: 6px; font-size: 11px;
-    background: var(--panel2); border: 1px solid var(--border); }
+.main { flex: 1; min-width: 0; padding: 22px 30px 60px; max-width: 1060px; }
 
-  #log { background: #0a0e18; border: 1px solid var(--border); border-radius: 10px;
-    padding: 12px; font-family: Consolas, monospace; font-size: 12.5px;
-    max-height: 260px; overflow-y: auto; white-space: pre-wrap; color: #b9c4dd; }
-  .warnbox { background: #2c2416; border: 1px solid #5c4a1e; color: #ffd58a;
-    border-radius: 10px; padding: 12px 14px; font-size: 13px; margin-top: 12px; }
-  .errbox { background: #2c1618; border: 1px solid #5c1e24; color: #ff9a9a;
-    border-radius: 10px; padding: 12px 14px; font-size: 13px; margin-top: 12px; }
-  .okbox { background: #13291f; border: 1px solid #1e5c3c; color: #8ee6bb;
-    border-radius: 10px; padding: 12px 14px; font-size: 13px; margin-top: 12px; }
-  .stat { display: inline-block; margin-right: 22px; }
-  .stat b { font-size: 20px; display: block; }
-  .stat span { color: var(--muted); font-size: 12px; }
-  .hidden { display: none; }
-  .steptitle { font-size: 13px; color: var(--muted); margin: 18px 0 8px; }
+/* ===================== 顶栏 ===================== */
+.topbar { display: flex; align-items: center; gap: 14px; margin-bottom: 22px; flex-wrap: wrap; }
+.topbar h1 { font-size: 21px; font-weight: 700; }
+.envlights { display: flex; gap: 8px; flex-wrap: wrap; }
+.envlight { display: inline-flex; align-items: center; gap: 6px; font-size: 12px;
+  color: var(--muted); background: var(--card); border: 1px solid var(--border);
+  border-radius: 999px; padding: 4px 11px; }
+.dot { width: 8px; height: 8px; border-radius: 50%; flex: none; }
+.dot.ok { background: var(--ok); } .dot.miss { background: var(--warn); }
+.top-actions { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+
+.seg { display: inline-flex; background: var(--card2); border: 1px solid var(--border);
+  border-radius: 999px; padding: 3px; }
+.seg button { border: none; background: transparent; color: var(--muted);
+  padding: 5px 13px; border-radius: 999px; cursor: pointer; font-size: 12.5px; }
+.seg button.on { background: var(--card); color: var(--text); font-weight: 600;
+  box-shadow: var(--shadow); }
+
+.icon-btn { width: 36px; height: 36px; border-radius: 12px; border: 1px solid var(--border);
+  background: var(--card); color: var(--text); cursor: pointer; font-size: 16px;
+  display: grid; place-items: center; }
+.icon-btn:hover { border-color: var(--border-strong); }
+
+/* ===================== 组件 ===================== */
+.card { background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius-card); padding: 22px; margin-bottom: 18px;
+  box-shadow: var(--shadow); }
+.card h2 { font-size: 15.5px; margin-bottom: 3px; display: flex; align-items: center; gap: 8px; }
+.card .desc { color: var(--muted); font-size: 13px; margin-bottom: 15px; }
+.stepnum { width: 24px; height: 24px; border-radius: 9px; background: var(--accent-soft);
+  color: var(--accent); font-size: 12.5px; font-weight: 700; display: inline-grid;
+  place-items: center; flex: none; }
+
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+input[type=text], input[type=password] { flex: 1; min-width: 240px; background: var(--card2);
+  border: 1px solid var(--border); color: var(--text); border-radius: var(--radius-input);
+  padding: 10px 13px; font-size: 13.5px; font-family: var(--font); outline: none; }
+input:focus, select:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+select { background: var(--card2); color: var(--text); border: 1px solid var(--border);
+  border-radius: var(--radius-input); padding: 9px 11px; font-size: 13.5px; outline: none; }
+
+.btn { border: none; border-radius: var(--radius-btn); padding: 10px 19px; font-size: 13.5px;
+  cursor: pointer; font-weight: 600; transition: background .15s, transform .05s; }
+.btn:active { transform: scale(.98); }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn.primary { background: var(--accent); color: var(--accent-text); }
+.btn.primary:hover:not(:disabled) { background: var(--accent-hover); }
+.btn.ghost { background: var(--card2); border: 1px solid var(--border); color: var(--text); }
+.btn.ghost:hover:not(:disabled) { border-color: var(--border-strong); background: var(--card); }
+.btn.danger { background: var(--err-bg); border: 1px solid var(--err-border); color: var(--err); }
+.btn.small { padding: 6px 14px; font-size: 12.5px; }
+
+.chip { display: inline-flex; align-items: center; gap: 6px; background: var(--card2);
+  border: 1px solid var(--border); border-radius: 999px; padding: 4px 12px;
+  font-size: 12px; color: var(--muted); cursor: pointer; }
+.chip:hover { border-color: var(--accent); color: var(--text); }
+
+.opts { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 22px; }
+.opt { display: flex; gap: 10px; align-items: flex-start; font-size: 13.5px;
+  background: var(--card2); border: 1px solid var(--border); border-radius: 13px;
+  padding: 12px 14px; cursor: pointer; }
+.opt:hover { border-color: var(--border-strong); }
+.opt input { margin-top: 3px; accent-color: var(--accent); }
+.opt .hint { color: var(--muted); font-size: 12px; }
+.group-title { font-size: 12.5px; color: var(--muted); font-weight: 600;
+  margin: 18px 0 9px; display: flex; align-items: center; gap: 8px; }
+.group-title::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+details.advgroup { margin-top: 6px; }
+details.advgroup summary { cursor: pointer; list-style: none; display: flex;
+  align-items: center; gap: 8px; font-size: 12.5px; color: var(--muted);
+  font-weight: 600; margin: 18px 0 9px; }
+details.advgroup summary::-webkit-details-marker { display: none; }
+details.advgroup summary::before { content: "▸"; transition: transform .15s; }
+details.advgroup[open] summary::before { transform: rotate(90deg); }
+details.advgroup summary::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+th { color: var(--muted); font-weight: 600; font-size: 12px; }
+.pri-high { color: var(--err); font-weight: 700; }
+.pri-medium { color: var(--warn); font-weight: 600; }
+.pri-low { color: var(--muted); }
+.badge { display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: 11.5px;
+  background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.badge.plain { background: var(--card2); color: var(--muted); border: 1px solid var(--border);
+  font-weight: 500; }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 15px; }
+.stat { background: var(--card2); border: 1px solid var(--border); border-radius: 14px;
+  padding: 13px 15px; }
+.stat b { font-size: 20px; display: block; word-break: break-all; }
+.stat.big b { color: var(--accent); }
+.stat span { color: var(--muted); font-size: 12px; }
+
+.progress { height: 12px; border-radius: 999px; background: var(--card2);
+  border: 1px solid var(--border); overflow: hidden; margin: 12px 0; }
+.progress i { display: block; height: 100%; width: 0; border-radius: 999px;
+  background: linear-gradient(90deg, var(--accent), #f2b26b);
+  transition: width .4s ease; }
+.progress.ind i { width: 38%; animation: slide 1.4s ease-in-out infinite; }
+@keyframes slide { 0% { margin-left: -40%; } 100% { margin-left: 104%; } }
+
+#log, .logbox { background: var(--log-bg); border-radius: 13px; padding: 13px 15px;
+  font-family: Consolas, "Courier New", monospace; font-size: 12.5px;
+  max-height: 240px; overflow-y: auto; white-space: pre-wrap; color: var(--log-text); }
+
+.box { border-radius: 13px; padding: 13px 16px; font-size: 13px; margin-top: 12px;
+  border: 1px solid; word-break: break-word; }
+.box.ok { background: var(--ok-bg); border-color: var(--ok-border); color: var(--ok); }
+.box.warn { background: var(--warn-bg); border-color: var(--warn-border); color: var(--warn); }
+.box.err { background: var(--err-bg); border-color: var(--err-border); color: var(--err); }
+.box .pathline { opacity: .85; font-size: 12.5px; }
+.hidden { display: none; }
+.note { color: var(--muted); font-size: 12px; }
+.updchip { color: var(--warn); font-size: 12.5px; text-decoration: none;
+  border: 1px solid var(--warn-border); background: var(--warn-bg);
+  border-radius: 999px; padding: 4px 12px; }
+
+@media (max-width: 900px) {
+  .sidebar { width: 66px; padding: 16px 9px; }
+  .brand b, .brand small, .nav-item span, .nav-sec, .side-foot { display: none; }
+  .nav-item { justify-content: center; }
+  .opts, .stats { grid-template-columns: 1fr; }
+  .main { padding: 16px 14px 40px; }
+}
 </style>
 </head>
 <body>
-<div class="wrap">
-  <header><h1>RenPySlim</h1><div class="sub">Ren'Py 资源瘦身与打包工具箱 · 分析 · 压缩 · 字体精简 · 官方打包</div></header>
-  <div id="envbar">正在检测环境…</div>
+<div class="shell">
+  <!-- ===================== 侧边栏 ===================== -->
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="paw">🐶</div>
+      <div><b>RenPySlim</b><small data-i18n="tagline">Ren'Py 瘦身打包工具箱</small></div>
+    </div>
+    <div class="nav-sec" data-i18n="nav_workspace">工作台</div>
+    <div class="nav-item active" data-view="project" onclick="go('project')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.3 7 12 12 20.7 7"/><line x1="12" y1="22" x2="12" y2="12"/></svg>
+      <span data-i18n="nav_project">超级打包器</span>
+    </div>
+    <div class="nav-item" data-view="dist" onclick="go('dist')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
+      <span data-i18n="nav_dist">成品瘦身</span>
+    </div>
+    <div class="nav-item" data-view="font" onclick="go('font')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
+      <span data-i18n="nav_font">字体瘦身</span>
+    </div>
+    <div class="nav-sec" data-i18n="nav_other">其他</div>
+    <div class="nav-item" data-view="settings" onclick="go('settings')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      <span data-i18n="nav_settings">设置</span>
+    </div>
+    <div class="side-foot">
+      <span id="runstate" data-i18n="foot_running">后台运行中 · 关页面不停工具</span>
+      <button class="btn danger small" style="width:100%" data-i18n="quit" onclick="shutdownTool()">退出工具</button>
+    </div>
+  </aside>
 
-  <div class="tabs">
-    <div class="tab active" id="tabA" onclick="switchMode('project')">超级打包器（工程优化 + 打包）</div>
-    <div class="tab" id="tabB" onclick="switchMode('dist')">成品瘦身（已打包文件）</div>
-    <div class="tab" id="tabF" onclick="switchMode('font')">字体瘦身（独立工具）</div>
-  </div>
+  <!-- ===================== 主区 ===================== -->
+  <div class="main">
+    <div class="topbar">
+      <h1 id="viewtitle">—</h1>
+      <div class="envlights" id="envlights"></div>
+      <div class="top-actions">
+        <span class="note" id="verlabel"></span>
+        <a class="updchip hidden" id="updchip" target="_blank"></a>
+        <div class="seg" id="langseg">
+          <button onclick="setLang('zh')">中文</button>
+          <button onclick="setLang('en')">EN</button>
+        </div>
+        <button class="icon-btn" id="themebtn" onclick="toggleTheme()">☀️</button>
+      </div>
+    </div>
 
-  <!-- 第 1 步：选路径 -->
-  <div class="card" id="pickcard">
-    <h2 id="step1title">第 1 步 · 选择 Ren'Py 工程目录</h2>
-    <div class="desc" id="step1desc">选中包含 game 文件夹的那个目录。工具会先复制到工作副本再处理，原件不会被改动。</div>
-    <div class="row">
-      <input type="text" id="path" placeholder="例如：E:\MyGame，或直接把压缩包拖到工具图标上">
-      <button class="ghost" onclick="browse('file')">浏览压缩包</button>
-      <button class="ghost" onclick="browse('dir')">浏览文件夹</button>
-      <button class="ghost" onclick="analyze()">扫描分析</button>
-    </div>
-    <div id="recentbox" style="margin-top:8px"></div>
-    <div id="analyzewarn"></div>
-  </div>
+    <!-- ========== 工作流视图（超级打包器 / 成品瘦身共用四步） ========== -->
+    <div id="view-workflow">
+      <!-- 第 1 步：选路径 -->
+      <div class="card" id="pickcard">
+        <h2><span class="stepnum">1</span><span id="s1title">—</span></h2>
+        <div class="desc" id="s1desc">—</div>
+        <div class="row">
+          <input type="text" id="path" data-i18n-ph="path_ph" placeholder="E:\MyGame">
+          <button class="btn ghost" data-i18n="browse_zip" onclick="browse('file')">浏览压缩包</button>
+          <button class="btn ghost" data-i18n="browse_dir" onclick="browse('dir')">浏览文件夹</button>
+          <button class="btn primary" data-i18n="analyze" onclick="analyze()">扫描分析</button>
+        </div>
+        <div class="row hidden" id="pwdrow" style="margin-top:10px">
+          <input type="password" id="arc_pwd" data-i18n-ph="pwd_ph" placeholder="压缩包密码（没有留空）">
+        </div>
+        <div class="row" style="margin-top:10px" id="recentrow">
+          <span class="note" data-i18n="recent">最近用过：</span>
+          <span id="recentbox"></span>
+        </div>
+        <div id="analyzewarn"></div>
+      </div>
 
-  <!-- 第 2 步：分析报告 -->
-  <div class="card hidden" id="reportcard">
-    <h2>第 2 步 · 分析报告</h2>
-    <div class="desc" id="reportsum"></div>
-    <div style="max-height:340px;overflow-y:auto">
-      <table id="reporttable"></table>
-    </div>
-  </div>
+      <!-- 第 2 步：分析报告 -->
+      <div class="card hidden" id="reportcard">
+        <h2><span class="stepnum">2</span><span data-i18n="s2_title">分析报告</span></h2>
+        <div class="stats" id="reportstats"></div>
+        <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:13px">
+          <table id="reporttable"></table>
+        </div>
+        <div id="reportwarn"></div>
+      </div>
 
-  <!-- 第 3 步：选项 -->
-  <div class="card hidden" id="optcard">
-    <h2>第 3 步 · 选择优化项目</h2>
-    <div class="desc">默认配置已经过安全验证，一般直接开始即可。</div>
-    <div class="opts">
-      <label class="opt"><input type="checkbox" id="do_images" checked>
-        <span>优化图片<br><span class="hint">压缩 PNG/JPG；工程模式下把大图转 WebP 并自动改脚本引用</span></span></label>
-      <label class="opt"><input type="checkbox" id="do_audio" checked>
-        <span>优化音频<br><span class="hint">WAV/MP3 转 OGG；只处理脚本里有明确引用的文件</span></span></label>
-      <label class="opt"><input type="checkbox" id="do_fonts" checked>
-        <span>字体瘦身<br><span class="hint">只保留项目实际用到的字，通常能减 80% 以上</span></span></label>
-      <label class="opt"><input type="checkbox" id="convert_webp" checked>
-        <span>PNG 转 WebP（仅工程模式）<br><span class="hint">收益最大的一项；成品模式下自动忽略</span></span></label>
-    </div>
-    <div class="steptitle">压缩档位</div>
-    <div class="row">
-      <select id="preset">
-        <option value="conservative">保守档：几乎无损，体积收益中等</option>
-        <option value="balanced" selected>均衡档（推荐）：肉眼几乎无差，体积减 40~60%</option>
-        <option value="aggressive">激进档：体积优先，画质音质有可感损失</option>
-      </select>
-    </div>
-    <div class="steptitle">字体保底字符集（防误删安全垫）</div>
-    <div class="opts">
-      <label class="opt"><input type="checkbox" id="cs_latin" checked><span>基础拉丁字母+数字+标点（强烈推荐）</span></label>
-      <label class="opt"><input type="checkbox" id="cs_cjk" checked><span>常用中文标点（推荐）</span></label>
-      <label class="opt"><input type="checkbox" id="cs_full"><span>全角符号</span></label>
-      <label class="opt"><input type="checkbox" id="cs_kana"><span>日文假名</span></label>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <input type="text" id="cs_extra" placeholder="手动追加保留的字符（可选，直接粘贴）">
-    </div>
-    <div class="steptitle">高级选项</div>
-    <div class="opts">
-      <label class="opt"><input type="checkbox" id="in_place">
-        <span>直接修改原文件（危险）<br><span class="hint">不勾选则在副本上操作；勾选后会先强制生成备份压缩包</span></span></label>
-      <label class="opt hidden" id="delwrap"><input type="checkbox" id="del_unref">
-        <span>隔离疑似无引用的文件<br><span class="hint">成品模式：移入隔离文件夹而非删除，默认关闭</span></span></label>
-      <label class="opt" id="qwrap"><input type="checkbox" id="q_unused">
-        <span>隔离无用资源<br><span class="hint">工程模式：确认找不到引用的音频/视频/字体移入隔离区（图片不检测，默认关闭）</span></span></label>
-      <label class="opt"><input type="checkbox" id="opt_quant">
-        <span>PNG 深度压缩（实验性）<br><span class="hint">真彩大图有损量化，再省 60~80%；渐变可能有轻微色带，建议完成后自己看一眼</span></span></label>
-      <label class="opt"><input type="checkbox" id="opt_videos">
-        <span>压缩视频（实验性）<br><span class="hint">同名重编码，兼容性最脆弱的一类，默认关闭</span></span></label>
-      <label class="opt"><input type="checkbox" id="opt_remap">
-        <span>成品强行转 WebP（实验性）<br><span class="hint">成品瘦身专用：无源码也能转格式，靠注入映射脚本运行时重定向；出问题删掉脚本即还原</span></span></label>
-      <label class="opt"><input type="checkbox" id="opt_nocache">
-        <span>禁用增量缓存<br><span class="hint">默认开启：重复处理同一批文件时秒级跳过；勾选后每次全量处理</span></span></label>
-    </div>
-    <div class="row" style="margin-top:10px" id="pwdrow">
-      <input type="password" id="arc_pwd" placeholder="压缩包密码（输入的是 zip/7z/rar 且带密码时填，没有密码留空）">
-    </div>
-    <div id="platarea" class="steptitle">打包平台（优化完成后自动打包）</div>
-    <div class="opts" id="platopts">
-      <label class="opt"><input type="checkbox" id="pl_pc" checked><span>PC（Windows + Linux 合包）</span></label>
-      <label class="opt"><input type="checkbox" id="pl_mac"><span>Mac</span></label>
-      <label class="opt"><input type="checkbox" id="pl_android"><span>Android（首次需先在 Ren'Py 启动器完成安卓配置）</span></label>
-      <label class="opt"><input type="checkbox" id="rpa_pack"><span>打包时把资源封进 RPA 封包<br><span class="hint">走官方通道，成品里的资源装进 main.rpa，防顺手牵羊但不能防破解</span></span></label>
-    </div>
-    <div class="row" style="margin-top:16px">
-      <button id="runbtn" onclick="runJob()">开始执行</button>
-      <span id="runhint" style="color:var(--muted);font-size:13px"></span>
-    </div>
-    <div id="inplacewarn" class="warnbox hidden">
-      你勾选了"直接修改原文件"：工具会先生成完整备份压缩包，但操作本身不可逆。请确认你有把握。
-    </div>
-  </div>
+      <!-- 第 3 步：选项 -->
+      <div class="card hidden" id="optcard">
+        <h2><span class="stepnum">3</span><span data-i18n="s3_title">选择优化项目</span></h2>
+        <div class="desc" data-i18n="s3_desc">默认配置已经过安全验证，一般直接开始即可。</div>
+        <div class="group-title" data-i18n="grp_basic">基础项</div>
+        <div class="opts">
+          <label class="opt"><input type="checkbox" id="do_images" checked>
+            <span data-i18n="opt_img">优化图片<br><span class="hint">压缩 PNG/JPG；工程模式下把大图转 WebP 并自动改脚本引用</span></span></label>
+          <label class="opt"><input type="checkbox" id="do_audio" checked>
+            <span data-i18n="opt_aud">优化音频<br><span class="hint">WAV/MP3 转 OGG；只处理脚本里有明确引用的文件</span></span></label>
+          <label class="opt"><input type="checkbox" id="do_fonts" checked>
+            <span data-i18n="opt_font">字体瘦身<br><span class="hint">只保留项目实际用到的字，通常能减 80% 以上</span></span></label>
+          <label class="opt"><input type="checkbox" id="convert_webp" checked>
+            <span data-i18n="opt_webp">PNG 转 WebP（仅工程模式）<br><span class="hint">收益最大的一项；成品模式下自动忽略</span></span></label>
+        </div>
+        <div class="group-title" data-i18n="grp_preset">压缩档位</div>
+        <select id="preset">
+          <option value="conservative" data-i18n="preset_con">保守档：几乎无损，体积收益中等</option>
+          <option value="balanced" selected data-i18n="preset_bal">均衡档（推荐）：肉眼几乎无差，体积减 40~60%</option>
+          <option value="aggressive" data-i18n="preset_agg">激进档：体积优先，画质音质有可感损失</option>
+        </select>
+        <div class="group-title" data-i18n="grp_charset">字体保底字符集（防误删安全垫）</div>
+        <div class="opts">
+          <label class="opt"><input type="checkbox" id="cs_latin" checked><span data-i18n="cs_latin">基础拉丁字母+数字+标点（强烈推荐）</span></label>
+          <label class="opt"><input type="checkbox" id="cs_cjk" checked><span data-i18n="cs_cjk">常用中文标点（推荐）</span></label>
+          <label class="opt"><input type="checkbox" id="cs_full"><span data-i18n="cs_full">全角符号</span></label>
+          <label class="opt"><input type="checkbox" id="cs_kana"><span data-i18n="cs_kana">日文假名</span></label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <input type="text" id="cs_extra" data-i18n-ph="cs_extra_ph" placeholder="手动追加保留的字符（可选，直接粘贴）">
+        </div>
+        <details class="advgroup">
+          <summary data-i18n="grp_adv">高级与实验性选项</summary>
+          <div class="opts">
+            <label class="opt"><input type="checkbox" id="in_place">
+              <span data-i18n="opt_inplace">直接修改原文件（危险）<br><span class="hint">不勾选则在副本上操作；勾选后会先强制生成备份压缩包</span></span></label>
+            <label class="opt hidden" id="delwrap"><input type="checkbox" id="del_unref">
+              <span data-i18n="opt_delref">隔离疑似无引用的文件<br><span class="hint">成品模式：移入隔离文件夹而非删除，默认关闭</span></span></label>
+            <label class="opt" id="qwrap"><input type="checkbox" id="q_unused">
+              <span data-i18n="opt_quar">隔离无用资源<br><span class="hint">工程模式：确认找不到引用的音频/视频/字体移入隔离区（图片不检测）</span></span></label>
+            <label class="opt"><input type="checkbox" id="opt_quant">
+              <span data-i18n="opt_quant">PNG 深度压缩（实验性）<br><span class="hint">真彩大图有损量化，再省 60~80%；渐变可能有轻微色带</span></span></label>
+            <label class="opt"><input type="checkbox" id="opt_videos">
+              <span data-i18n="opt_video">压缩视频（实验性）<br><span class="hint">同名重编码，兼容性最脆弱的一类，默认关闭</span></span></label>
+            <label class="opt"><input type="checkbox" id="opt_remap">
+              <span data-i18n="opt_remap">成品强行转 WebP（实验性）<br><span class="hint">注入映射脚本运行时重定向；出问题删掉脚本即还原</span></span></label>
+            <label class="opt"><input type="checkbox" id="opt_nocache">
+              <span data-i18n="opt_nocache">禁用增量缓存<br><span class="hint">默认开启：重复处理同一批文件时秒级跳过</span></span></label>
+          </div>
+        </details>
+        <div id="inplacewarn" class="box warn hidden" data-i18n="inplace_warn">
+          你勾选了"直接修改原文件"：工具会先生成完整备份压缩包，但操作本身不可逆。请确认你有把握。
+        </div>
+        <div id="platarea">
+          <div class="group-title" data-i18n="grp_plat">打包平台（优化完成后自动打包）</div>
+          <div class="opts">
+            <label class="opt"><input type="checkbox" id="pl_pc" checked><span>PC（Windows + Linux）</span></label>
+            <label class="opt"><input type="checkbox" id="pl_mac"><span>Mac</span></label>
+            <label class="opt"><input type="checkbox" id="pl_android"><span data-i18n="plat_android">Android（首次需先在 Ren'Py 启动器完成安卓配置）</span></label>
+            <label class="opt"><input type="checkbox" id="rpa_pack">
+              <span data-i18n="opt_rpa">资源封入 RPA 封包<br><span class="hint">走官方通道，防顺手牵羊但不能防破解</span></span></label>
+          </div>
+        </div>
+        <div class="row" style="margin-top:18px">
+          <button class="btn primary" id="runbtn" data-i18n="run" onclick="runJob()">开始执行</button>
+          <span class="note" id="runhint" data-i18n="run_hint">预计 3~8 分钟</span>
+        </div>
+      </div>
 
-  <!-- 第 4 步：执行 -->
-  <div class="card hidden" id="runcard">
-    <h2>第 4 步 · 执行中</h2>
-    <div class="desc" style="display:flex;justify-content:space-between;align-items:center">
-      <span id="runstatus">准备中…</span>
-      <button class="ghost" id="cancelbtn" style="display:none" onclick="cancelJob()">停止任务</button>
+      <!-- 第 4 步：执行 -->
+      <div class="card hidden" id="runcard">
+        <h2><span class="stepnum">4</span><span data-i18n="s4_title">执行中</span>
+          <button class="btn ghost small" id="cancelbtn" style="margin-left:auto;display:none"
+                  data-i18n="cancel" onclick="cancelJob()">停止任务</button>
+        </h2>
+        <div class="desc" id="runstatus">—</div>
+        <div class="progress ind" id="progressbar"><i id="progressfill"></i></div>
+        <div id="log"></div>
+        <div id="resultarea"></div>
+      </div>
     </div>
-    <div id="log"></div>
-    <div id="resultarea"></div>
-  </div>
 
-  <!-- 字体瘦身（独立工具） -->
-  <div class="card hidden" id="fontcard">
-    <h2>字体瘦身 · 独立工具</h2>
-    <div class="desc">不需要游戏工程：选一个字体 + 文本来源，输出瘦身后的新字体（永不覆盖原件）。
-      支持 ttf / otf；ttc / otc 集合会拆开按字重分别输出。</div>
-    <div class="steptitle">1. 字体文件</div>
-    <div class="row">
-      <input type="text" id="fs_font" placeholder="例如：E:\Fonts\思源黑体.ttf">
-      <button class="ghost" onclick="browseFor('fs_font','font')">浏览字体</button>
+    <!-- ========== 视图：字体瘦身（独立工具） ========== -->
+    <div id="view-font" class="hidden">
+      <div class="card">
+        <h2 data-i18n="font_title">字体瘦身 · 独立工具</h2>
+        <div class="desc" data-i18n="font_desc">不需要游戏工程：选一个字体 + 文本来源，输出瘦身后的新字体（永不覆盖原件）。支持 ttf / otf；ttc / otc 集合会拆开按字重分别输出。</div>
+        <div class="group-title" data-i18n="font_step1">1. 字体文件</div>
+        <div class="row">
+          <input type="text" id="fs_font" data-i18n-ph="font_ph" placeholder="例如：E:\Fonts\思源黑体.ttf">
+          <button class="btn ghost" data-i18n="browse_font" onclick="browseFor('fs_font','font')">浏览字体</button>
+        </div>
+        <div class="group-title" data-i18n="font_step2">2. 文本来源（文件夹或文件；多个用逗号分开）</div>
+        <div class="row">
+          <input type="text" id="fs_src" data-i18n-ph="src_ph" placeholder="例如：E:\MyGame\game">
+          <button class="btn ghost" data-i18n="browse_dir" onclick="browseFor('fs_src','dir')">浏览文件夹</button>
+        </div>
+        <div class="group-title" data-i18n="font_step3">3. 保底字符集（防误删）</div>
+        <div class="opts">
+          <label class="opt"><input type="checkbox" id="fs_latin" checked><span data-i18n="cs_latin">基础拉丁字母+数字+标点（强烈推荐）</span></label>
+          <label class="opt"><input type="checkbox" id="fs_cjk" checked><span data-i18n="cs_cjk">常用中文标点（推荐）</span></label>
+          <label class="opt"><input type="checkbox" id="fs_full"><span data-i18n="cs_full">全角符号</span></label>
+          <label class="opt"><input type="checkbox" id="fs_kana"><span data-i18n="cs_kana">日文假名</span></label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <input type="text" id="fs_extra" data-i18n-ph="cs_extra_ph" placeholder="手动追加保留的字符（可选，直接粘贴）">
+        </div>
+        <div class="row" style="margin-top:16px">
+          <button class="btn primary" id="fsrun" data-i18n="font_run" onclick="runFontSlim()">开始瘦身</button>
+        </div>
+        <div id="fsresult" style="margin-top:12px"></div>
+      </div>
     </div>
-    <div class="steptitle">2. 文本来源（文件夹或文件；多个用逗号分开）</div>
-    <div class="row">
-      <input type="text" id="fs_src" placeholder="例如：E:\MyGame\game，或单个脚本/txt 文件">
-      <button class="ghost" onclick="browseFor('fs_src','dir')">浏览文件夹</button>
-    </div>
-    <div class="steptitle">3. 保底字符集（防误删）</div>
-    <div class="opts">
-      <label class="opt"><input type="checkbox" id="fs_latin" checked><span>基础拉丁字母+数字+标点（强烈推荐）</span></label>
-      <label class="opt"><input type="checkbox" id="fs_cjk" checked><span>常用中文标点（推荐）</span></label>
-      <label class="opt"><input type="checkbox" id="fs_full"><span>全角符号</span></label>
-      <label class="opt"><input type="checkbox" id="fs_kana"><span>日文假名</span></label>
-    </div>
-    <div class="row" style="margin-top:10px">
-      <input type="text" id="fs_extra" placeholder="手动追加保留的字符（可选，直接粘贴）">
-    </div>
-    <div class="row" style="margin-top:16px">
-      <button id="fsrun" onclick="runFontSlim()">开始瘦身</button>
-    </div>
-    <div id="fsresult" style="margin-top:12px"></div>
-  </div>
 
-  <!-- 底部：运行状态与退出 -->
-  <div class="card" style="display:flex;justify-content:space-between;align-items:center">
-    <span style="color:var(--muted);font-size:12px" id="runstate">RenPySlim 后台运行中 · 关闭本页面不会停掉工具，右下角托盘图标说明它还活着</span>
-    <button class="danger" onclick="shutdownTool()">退出工具</button>
-  </div>
-
-  <!-- SDK 设置 -->
-  <div class="card">
-    <h2 style="font-size:14px">设置 · Ren'Py SDK 位置</h2>
-    <div class="desc">打包功能需要官方 SDK。一般会自动找到，找不到时在这里手动指定。</div>
-    <div class="row">
-      <input type="text" id="sdkpath" placeholder="例如：E:\renpy">
-      <button class="ghost" onclick="saveSdk()">保存</button>
+    <!-- ========== 视图：设置 ========== -->
+    <div id="view-settings" class="hidden">
+      <div class="card">
+        <h2 data-i18n="set_sdk">Ren'Py SDK 位置</h2>
+        <div class="desc" data-i18n="set_sdk_desc">打包功能需要官方 SDK。一般会自动找到，找不到时在这里手动指定。</div>
+        <div class="row">
+          <input type="text" id="sdkpath" placeholder="E:\renpy">
+          <button class="btn ghost" data-i18n="save" onclick="saveSdk()">保存</button>
+        </div>
+        <div class="note" id="sdkmsg" style="margin-top:6px"></div>
+      </div>
+      <div class="card">
+        <h2 data-i18n="set_env">环境状态</h2>
+        <div class="stats" style="grid-template-columns:repeat(3,1fr)" id="envstats"></div>
+        <div id="updbox"></div>
+      </div>
+      <div class="card">
+        <h2 data-i18n="set_appearance">外观</h2>
+        <div class="desc" data-i18n="set_appearance_desc">语言与亮暗随时可在右上角切换，选择会被记住；不手动选时亮暗跟随系统。</div>
+      </div>
     </div>
-    <div id="sdkmsg" style="font-size:12px;margin-top:6px;color:var(--muted)"></div>
   </div>
 </div>
 
 <script>
-let MODE = "project";
-let REPORT = null;
-let JOB = null;
-let LOGIDX = 0;
+"use strict";
 
-function switchMode(m) {
-  MODE = m;
-  document.getElementById("tabA").classList.toggle("active", m === "project");
-  document.getElementById("tabB").classList.toggle("active", m === "dist");
-  document.getElementById("tabF").classList.toggle("active", m === "font");
-  const isP = m === "project";
-  document.getElementById("pickcard").classList.toggle("hidden", m === "font");
-  document.getElementById("fontcard").classList.toggle("hidden", m !== "font");
-  if (m === "font") {
-    document.getElementById("reportcard").classList.add("hidden");
-    document.getElementById("optcard").classList.add("hidden");
-    document.getElementById("runcard").classList.add("hidden");
-    return;
-  }
-  document.getElementById("step1title").textContent =
-    isP ? "第 1 步 · 选择 Ren'Py 工程目录" : "第 1 步 · 选择已打包的成品目录";
-  document.getElementById("step1desc").textContent =
-    isP ? "选中包含 game 文件夹的那个目录（可点“浏览文件夹”直接挑）。工具会先复制到工作副本再处理，原件不会被改动。"
-        : "选成品目录，或直接选 zip / 7z / rar 压缩包（自动解压，瘦身后自动重新打包交付）。小贴士：把压缩包直接拖到工具图标上更省事。";
-  document.getElementById("platarea").classList.toggle("hidden", !isP);
-  document.getElementById("platopts").classList.toggle("hidden", !isP);
-  document.getElementById("delwrap").classList.toggle("hidden", isP);
-  document.getElementById("qwrap").classList.toggle("hidden", !isP);
-  document.getElementById("reportcard").classList.add("hidden");
-  document.getElementById("optcard").classList.add("hidden");
-  document.getElementById("runcard").classList.add("hidden");
-  document.getElementById("analyzewarn").innerHTML = "";
+/* ======================================================================
+   中英字典：界面静态文案全部走这里；后端返回的日志/警告原文展示
+   ====================================================================== */
+const I18N = {
+zh: {
+  tagline: "Ren'Py 瘦身打包工具箱", nav_workspace: "工作台", nav_other: "其他",
+  nav_project: "超级打包器", nav_dist: "成品瘦身", nav_font: "字体瘦身", nav_settings: "设置",
+  foot_running: "后台运行中 · 关页面不停工具", quit: "退出工具",
+  title_project: "超级打包器", title_dist: "成品瘦身", title_font: "字体瘦身", title_settings: "设置",
+  s1_title_p: "选择 Ren'Py 工程目录", s1_title_d: "选择已打包的成品",
+  s1_desc_p: "选中包含 game 文件夹的那个目录（可点“浏览文件夹”直接挑）。工具会先复制到工作副本再处理，原件不会被改动。",
+  s1_desc_d: "选成品目录，或直接选 zip / 7z / rar 压缩包（自动解压，瘦身后自动重新打包交付）。小贴士：把压缩包直接拖到工具图标上更省事。",
+  path_ph: "例如：E:\\MyGame，或直接把压缩包拖到工具图标上",
+  pwd_ph: "压缩包密码（输入的 zip/7z/rar 带密码时填，没有留空）",
+  browse_zip: "浏览压缩包", browse_dir: "浏览文件夹", browse_font: "浏览字体",
+  analyze: "扫描分析", recent: "最近用过：",
+  analyzing: "准备扫描…", analyze_done: "分析完成，正在生成报告…",
+  analyze_err_next: "下一步：检查路径与压缩包密码是否正确。",
+  not_dist_warn: "这个目录里没找到 .rpyc 编译脚本，看起来不像已打包的成品。",
+  s2_title: "分析报告", stat_assets: "资源总数", stat_size: "总体积",
+  stat_est: "预计最多可省", stat_chars: "实际用字",
+  s3_title: "选择优化项目", s3_desc: "默认配置已经过安全验证，一般直接开始即可。",
+  grp_basic: "基础项", grp_preset: "压缩档位", grp_charset: "字体保底字符集（防误删安全垫）",
+  grp_adv: "高级与实验性选项", grp_plat: "打包平台（优化完成后自动打包）",
+  opt_img: "优化图片<br><span class='hint'>压缩 PNG/JPG；工程模式下把大图转 WebP 并自动改脚本引用</span>",
+  opt_aud: "优化音频<br><span class='hint'>WAV/MP3 转 OGG；只处理脚本里有明确引用的文件</span>",
+  opt_font: "字体瘦身<br><span class='hint'>只保留项目实际用到的字，通常能减 80% 以上</span>",
+  opt_webp: "PNG 转 WebP（仅工程模式）<br><span class='hint'>收益最大的一项；成品模式下自动忽略</span>",
+  preset_con: "保守档：几乎无损，体积收益中等",
+  preset_bal: "均衡档（推荐）：肉眼几乎无差，体积减 40~60%",
+  preset_agg: "激进档：体积优先，画质音质有可感损失",
+  cs_latin: "基础拉丁字母+数字+标点（强烈推荐）", cs_cjk: "常用中文标点（推荐）",
+  cs_full: "全角符号", cs_kana: "日文假名",
+  cs_extra_ph: "手动追加保留的字符（可选，直接粘贴）",
+  opt_inplace: "直接修改原文件（危险）<br><span class='hint'>不勾选则在副本上操作；勾选后会先强制生成备份压缩包</span>",
+  opt_delref: "隔离疑似无引用的文件<br><span class='hint'>成品模式：移入隔离文件夹而非删除，默认关闭</span>",
+  opt_quar: "隔离无用资源<br><span class='hint'>工程模式：确认找不到引用的音频/视频/字体移入隔离区（图片不检测）</span>",
+  opt_quant: "PNG 深度压缩（实验性）<br><span class='hint'>真彩大图有损量化，再省 60~80%；渐变可能有轻微色带</span>",
+  opt_video: "压缩视频（实验性）<br><span class='hint'>同名重编码，兼容性最脆弱的一类，默认关闭</span>",
+  opt_remap: "成品强行转 WebP（实验性）<br><span class='hint'>注入映射脚本运行时重定向；出问题删掉脚本即还原</span>",
+  opt_nocache: "禁用增量缓存<br><span class='hint'>默认开启：重复处理同一批文件时秒级跳过</span>",
+  opt_rpa: "资源封入 RPA 封包<br><span class='hint'>走官方通道，防顺手牵羊但不能防破解</span>",
+  plat_android: "Android（首次需先在 Ren'Py 启动器完成安卓配置）",
+  inplace_warn: "你勾选了“直接修改原文件”：工具会先生成完整备份压缩包，但操作本身不可逆。请确认你有把握。",
+  run: "开始执行", run_hint: "预计 3~8 分钟", cancel: "停止任务",
+  s4_title: "执行中",
+  st_preparing: "准备中…", st_running: "执行中，请勿关闭窗口……",
+  st_stopping: "正在停止，等手头的文件处理完……",
+  st_done: "完成", st_failed: "执行失败", st_cancelled: "已停止",
+  err_next: "下一步：检查路径是否正确、磁盘空间是否足够；看不懂的话把这段内容发给开发者。",
+  fill_path: "请先填写路径", fill_font: "字体文件和文本来源都要填",
+  r_opt_done: "优化完成：节省约", r_workdir: "工作目录", r_report: "分析报告", r_changelog: "修改清单",
+  r_lint_ok: "官方验证：lint 检查通过，未发现错误", r_lint_head: "官方验证：",
+  r_extra_head: "附加检测：", r_junk: "清理可再生垃圾 {n} 项（省 {s}）",
+  r_unused: "确认无引用的资源 {n} 个", r_unused_q: "，已隔离 {n} 个", r_unused_rep: "（仅报告，未处理）",
+  r_dup: "重复文件 {n} 组（仅报告，请自行确认）", r_glyph: "字体缺字提醒 {n} 项（见警告）",
+  r_dist_done: "瘦身完成：节省约", r_outdir: "结果目录", r_deliver: "交付压缩包",
+  r_has_rpy: "检测到该成品带有 .rpy 源码：已启用格式转换（PNG/JPG→WebP、WAV/MP3→OGG），引用已同步改写，引擎下次启动会自动重编译。",
+  r_pkg_ok: "打包成功：", r_pkg_out: "输出目录",
+  r_charlist: "下载字符清单", r_warn_default: "· ",
+  font_title: "字体瘦身 · 独立工具",
+  font_desc: "不需要游戏工程：选一个字体 + 文本来源，输出瘦身后的新字体（永不覆盖原件）。支持 ttf / otf；ttc / otc 集合会拆开按字重分别输出。",
+  font_step1: "1. 字体文件", font_step2: "2. 文本来源（文件夹或文件；多个用逗号分开）",
+  font_step3: "3. 保底字符集（防误删）",
+  font_ph: "例如：E:\\Fonts\\思源黑体.ttf", src_ph: "例如：E:\\MyGame\\game，或单个脚本/txt 文件",
+  font_run: "开始瘦身", font_running: "瘦身中…",
+  font_done: "瘦身完成：字符集共 {n} 个字符", font_glyphs: "字形 {a} → {b}，",
+  font_out: "输出", font_charlist: "字符清单",
+  set_sdk: "Ren'Py SDK 位置", set_sdk_desc: "打包功能需要官方 SDK。一般会自动找到，找不到时在这里手动指定。",
+  save: "保存", saved: "已保存", set_env: "环境状态",
+  set_appearance: "外观",
+  set_appearance_desc: "语言与亮暗随时可在右上角切换，选择会被记住；不手动选时亮暗跟随系统。",
+  env_sdk: "SDK", env_ffmpeg: "FFmpeg", env_java: "Java",
+  env_ready: "就绪", env_sdk_miss: "未找到（打包不可用）",
+  env_ff_miss: "未找到（音频优化不可用）", env_java_miss: "未安装（安卓打包需要）",
+  env_ver: "版本", upd_found: "发现新版本 {v}，点此下载",
+  th_pri: "优先级", th_kind: "类型", th_file: "文件", th_size: "体积", th_issue: "问题与建议",
+  kinds: { image: "图片", audio: "音频", video: "视频", font: "字体" },
+  kind_rpa: "·封包内",
+  pri: { high: "高", medium: "中", low: "低" },
+  issue_tpl: "{m}<br><span style='color:var(--muted)'>建议：{s}</span>",
+  stages: { scan: "扫描", unpack: "解包", analyze: "分析", optimize: "优化", rewrite: "改写",
+            rpa: "封包", clean: "清理", verify: "验证", package: "打包", backup: "备份",
+            copy: "复制", done: "完成", error: "错误", font: "字体", repack: "回包",
+            junk: "清理", quarantine: "隔离" },
+  quit_confirm: "确定退出 RenPySlim？\n正在执行的任务会被中断（原件不受影响）。",
+  quit_ing: "正在退出…", quit_done: "工具已退出，可以关闭本页面了。",
+  quit_sent: "退出请求已发送，稍后页面将无法连接——属正常现象。",
+  browse_fail: "无法打开选择框",
+  logs_note: "以下为工具运行日志（中文输出）",
+},
+en: {
+  tagline: "Ren'Py slimming & packaging toolkit", nav_workspace: "Workspace", nav_other: "More",
+  nav_project: "Slim & Pack", nav_dist: "Dist Slimming", nav_font: "Font Slimming", nav_settings: "Settings",
+  foot_running: "Running in background · closing this page won't stop it", quit: "Quit tool",
+  title_project: "Slim & Pack", title_dist: "Dist Slimming", title_font: "Font Slimming", title_settings: "Settings",
+  s1_title_p: "Pick your Ren'Py project folder", s1_title_d: "Pick a packaged distribution",
+  s1_desc_p: "Choose the folder containing the game directory (or use “Browse folders”). The tool works on a copy first — the original stays untouched.",
+  s1_desc_d: "Pick a dist folder, or a zip / 7z / rar archive directly (auto-extract, auto-repack after slimming). Tip: dropping the archive onto the tool icon works too.",
+  path_ph: "e.g. E:\\MyGame, or drop the archive onto the tool icon",
+  pwd_ph: "Archive password (only if the zip/7z/rar is protected)",
+  browse_zip: "Browse archives", browse_dir: "Browse folders", browse_font: "Browse fonts",
+  analyze: "Analyze", recent: "Recent:",
+  analyzing: "Preparing to scan…", analyze_done: "Analysis complete, building report…",
+  analyze_err_next: "Next: check the path and archive password.",
+  not_dist_warn: "No .rpyc compiled scripts found here — this doesn't look like a packaged distribution.",
+  s2_title: "Analysis report", stat_assets: "Assets", stat_size: "Total size",
+  stat_est: "Est. max saving", stat_chars: "Chars used",
+  s3_title: "Choose what to optimize", s3_desc: "Defaults are safety-verified — usually just hit Run.",
+  grp_basic: "Basics", grp_preset: "Compression preset", grp_charset: "Font safety charset (prevents over-trimming)",
+  grp_adv: "Advanced & experimental", grp_plat: "Package platforms (auto-pack after optimizing)",
+  opt_img: "Optimize images<br><span class='hint'>Compress PNG/JPG; in project mode convert big ones to WebP with refs rewritten</span>",
+  opt_aud: "Optimize audio<br><span class='hint'>WAV/MP3 to OGG; only files with explicit script references</span>",
+  opt_font: "Slim fonts<br><span class='hint'>Keep only glyphs actually used — usually 80%+ smaller</span>",
+  opt_webp: "PNG to WebP (project mode only)<br><span class='hint'>The biggest win; ignored automatically in dist mode</span>",
+  preset_con: "Conservative: near-lossless, moderate saving",
+  preset_bal: "Balanced (recommended): near-invisible loss, 40~60% smaller",
+  preset_agg: "Aggressive: size first, noticeable quality loss",
+  cs_latin: "Basic Latin + digits + punctuation (strongly recommended)", cs_cjk: "Common CJK punctuation (recommended)",
+  cs_full: "Fullwidth symbols", cs_kana: "Japanese kana",
+  cs_extra_ph: "Extra characters to keep (optional, paste directly)",
+  opt_inplace: "Modify originals in place (dangerous)<br><span class='hint'>Default works on a copy; a forced backup runs first if checked</span>",
+  opt_delref: "Quarantine seemingly unreferenced files<br><span class='hint'>Dist mode: moved to a quarantine folder, never deleted; off by default</span>",
+  opt_quar: "Quarantine unused assets<br><span class='hint'>Project mode: unreferenced audio/video/fonts get moved aside (images are never flagged)</span>",
+  opt_quant: "Deep PNG compression (experimental)<br><span class='hint'>Lossy quantization for truecolor art, saves another 60~80%; gradients may show slight banding</span>",
+  opt_video: "Compress videos (experimental)<br><span class='hint'>Same-name re-encode, the most fragile category; off by default</span>",
+  opt_remap: "Force WebP in dist (experimental)<br><span class='hint'>Injects a runtime remap script; delete the script to revert</span>",
+  opt_nocache: "Disable incremental cache<br><span class='hint'>On by default: re-processing the same files skips in seconds</span>",
+  opt_rpa: "Archive assets into RPA<br><span class='hint'>Official channel — deters casual theft, not crackers</span>",
+  plat_android: "Android (first run requires setup in the Ren'Py launcher)",
+  inplace_warn: "You checked “modify originals”: a full backup zip is made first, but the operation itself is irreversible. Make sure you mean it.",
+  run: "Run", run_hint: "Typically 3~8 minutes", cancel: "Stop task",
+  s4_title: "Running",
+  st_preparing: "Preparing…", st_running: "Working — please don't close this window…",
+  st_stopping: "Stopping — finishing the file in hand…",
+  st_done: "Done", st_failed: "Failed", st_cancelled: "Stopped",
+  err_next: "Next: check the path and disk space; if unsure, send the message to the developer.",
+  fill_path: "Please enter a path first", fill_font: "Both font file and text sources are required",
+  r_opt_done: "Optimization done: saved about", r_workdir: "Working dir", r_report: "Report", r_changelog: "Changelog",
+  r_lint_ok: "Official verification: lint passed, no errors found", r_lint_head: "Official verification: ",
+  r_extra_head: "Extra checks: ", r_junk: "Cleaned {n} regenerable junk items (freed {s})",
+  r_unused: "{n} assets with no references found", r_unused_q: ", {n} quarantined", r_unused_rep: " (report only, untouched)",
+  r_dup: "{n} duplicate file groups (report only — review manually)", r_glyph: "{n} missing-glyph notices (see warnings)",
+  r_dist_done: "Slimming done: saved about", r_outdir: "Result dir", r_deliver: "Delivery zip",
+  r_has_rpy: "This dist ships .rpy sources: format conversion enabled (PNG/JPG→WebP, WAV/MP3→OGG) with references rewritten; the engine recompiles on next launch.",
+  r_pkg_ok: "Packaged: ", r_pkg_out: "Output dir",
+  r_charlist: "Download character list", r_warn_default: "· ",
+  font_title: "Font Slimming · Standalone",
+  font_desc: "No game project needed: pick a font + text sources, get a slimmed copy (originals never touched). Supports ttf/otf; ttc/otc collections are split by weight.",
+  font_step1: "1. Font file", font_step2: "2. Text sources (folders or files; comma-separated)",
+  font_step3: "3. Safety charset (prevents over-trimming)",
+  font_ph: "e.g. E:\\Fonts\\SourceHanSans.ttf", src_ph: "e.g. E:\\MyGame\\game, or a single script/txt file",
+  font_run: "Slim font", font_running: "Slimming…",
+  font_done: "Done: charset has {n} characters", font_glyphs: "glyphs {a} → {b}, ",
+  font_out: "Output", font_charlist: "Character list",
+  set_sdk: "Ren'Py SDK location", set_sdk_desc: "Packaging needs the official SDK. Usually auto-detected; set it here if not.",
+  save: "Save", saved: "Saved", set_env: "Environment",
+  set_appearance: "Appearance",
+  set_appearance_desc: "Language and theme can be switched top-right anytime and are remembered; when unset, the theme follows the system.",
+  env_sdk: "SDK", env_ffmpeg: "FFmpeg", env_java: "Java",
+  env_ready: "ready", env_sdk_miss: "not found (packaging unavailable)",
+  env_ff_miss: "not found (audio optimization unavailable)", env_java_miss: "not installed (needed for Android)",
+  env_ver: "Version", upd_found: "New version {v} available — download",
+  th_pri: "Priority", th_kind: "Kind", th_file: "File", th_size: "Size", th_issue: "Issue & suggestion",
+  kinds: { image: "Image", audio: "Audio", video: "Video", font: "Font" },
+  kind_rpa: "·in RPA",
+  pri: { high: "High", medium: "Med", low: "Low" },
+  issue_tpl: "{m}<br><span style='color:var(--muted)'>Suggestion: {s}</span>",
+  stages: { scan: "scan", unpack: "unpack", analyze: "analyze", optimize: "optimize", rewrite: "rewrite",
+            rpa: "rpa", clean: "clean", verify: "verify", package: "package", backup: "backup",
+            copy: "copy", done: "done", error: "error", font: "font", repack: "repack",
+            junk: "clean", quarantine: "quarantine" },
+  quit_confirm: "Quit RenPySlim?\nRunning tasks will be interrupted (originals stay safe).",
+  quit_ing: "Quitting…", quit_done: "Tool has quit. You can close this page now.",
+  quit_sent: "Quit request sent — the page will lose connection shortly. This is normal.",
+  browse_fail: "Cannot open the file dialog",
+  logs_note: "Tool run logs below (Chinese output)",
+},
+};
+
+/* ===================== 全局状态 ===================== */
+let MODE = "project";          // 工作流模式：project / dist
+let VIEW = "project";          // 当前视图：project / dist / font / settings
+let LANG = localStorage.getItem("rps-lang") || "zh";
+let REPORT = null;             // 最近一次分析报告
+let LAST_RESULT = null;        // 最近一次执行结果（切语言时重渲染）
+let LAST_CHARLIST = null;
+let JOB = null, LOGIDX = 0;
+let ANALYZE_JOB = null, ANALYZE_IDX = 0, ANALYZE_START = 0;
+let FS_JOB = null, FS_IDX = 0, FS_RESULT = null;
+
+function t(key) { return (I18N[LANG] && I18N[LANG][key]) ?? key; }
+function tf(key, vars) {
+  let s = t(key);
+  for (const k in vars) s = s.split("{" + k + "}").join(vars[k]);
+  return s;
 }
-
+function esc(s) {
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function fmtSize(b) {
+  if (b == null) return "";
+  return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
+}
 async function api(url, body) {
   const r = await fetch(url, body === undefined ? undefined :
     { method: "POST", headers: { "Content-Type": "application/json" },
@@ -281,53 +653,173 @@ async function api(url, body) {
   return await r.json();
 }
 
+/* ===================== 主题与语言 ===================== */
+function applyThemeBtn() {
+  const dark = document.documentElement.getAttribute("data-theme") === "dark";
+  document.getElementById("themebtn").textContent = dark ? "☀️" : "🌙";
+}
+function toggleTheme() {
+  const cur = document.documentElement.getAttribute("data-theme");
+  const next = cur === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", next);
+  try { localStorage.setItem("rps-theme", next); } catch (e) {}
+  applyThemeBtn();
+}
+matchMedia("(prefers-color-scheme: dark)").addEventListener("change", e => {
+  if (!localStorage.getItem("rps-theme")) {
+    document.documentElement.setAttribute("data-theme", e.matches ? "dark" : "light");
+    applyThemeBtn();
+  }
+});
+
+function setLang(l) {
+  LANG = l;
+  try { localStorage.setItem("rps-lang", l); } catch (e) {}
+  applyLang();
+}
+function applyLang() {
+  document.documentElement.setAttribute("lang", LANG === "zh" ? "zh-CN" : "en");
+  document.querySelectorAll("[data-i18n]").forEach(el => {
+    const v = I18N[LANG][el.getAttribute("data-i18n")];
+    if (v !== undefined) el.innerHTML = v;
+  });
+  document.querySelectorAll("[data-i18n-ph]").forEach(el => {
+    const v = I18N[LANG][el.getAttribute("data-i18n-ph")];
+    if (v !== undefined) el.placeholder = v;
+  });
+  const seg = document.getElementById("langseg").children;
+  seg[0].classList.toggle("on", LANG === "zh");
+  seg[1].classList.toggle("on", LANG === "en");
+  /* 动态内容跟随语言重渲染 */
+  applyViewText();
+  renderEnv();
+  renderRecent();
+  if (REPORT) renderReport(REPORT.report, REPORT.mode);
+  if (LAST_RESULT) renderResult(LAST_RESULT);
+  if (FS_RESULT) renderFontResult(FS_RESULT);
+}
+
+/* ===================== 导航 ===================== */
+function applyViewText() {
+  document.getElementById("viewtitle").textContent =
+    t("title_" + (VIEW === "project" ? "project" : VIEW === "dist" ? "dist"
+        : VIEW === "font" ? "font" : "settings"));
+  const isP = MODE === "project";
+  document.getElementById("s1title").textContent = isP ? t("s1_title_p") : t("s1_title_d");
+  document.getElementById("s1desc").textContent = isP ? t("s1_desc_p") : t("s1_desc_d");
+}
+function go(v) {
+  const prev = VIEW;
+  VIEW = v;
+  document.querySelectorAll(".nav-item").forEach(n =>
+    n.classList.toggle("active", n.getAttribute("data-view") === v));
+  const wf = v === "project" || v === "dist";
+  document.getElementById("view-workflow").classList.toggle("hidden", !wf);
+  document.getElementById("view-font").classList.toggle("hidden", v !== "font");
+  document.getElementById("view-settings").classList.toggle("hidden", v !== "settings");
+  if (wf && v !== prev) {           // project ↔ dist 切换：重置工作流
+    MODE = v;
+    REPORT = null; LAST_RESULT = null;
+    for (const id of ["reportcard", "optcard", "runcard"]) 
+      document.getElementById(id).classList.add("hidden");
+    document.getElementById("analyzewarn").innerHTML = "";
+    applyModeUI();
+  }
+  applyViewText();
+}
+/* ===================== 环境检测 / 更新提醒 ===================== */
+let ENV = null;
 async function loadEnv() {
   const d = await api("/api/env");
-  const e = d.environment;
-  const parts = [];
-  parts.push(`版本：<b>${d.version || "?"}</b>`);
+  ENV = d;
+  document.getElementById("verlabel").textContent = "v" + (d.version || "?");
+  if (d.environment && d.environment.sdk_path)
+    document.getElementById("sdkpath").value = d.environment.sdk_path;
+  renderEnv();
   api("/api/update").then(u => {
     if (u && u.info && u.info.update_available) {
-      const el = document.getElementById("envbar");
-      el.innerHTML += `　·　<a href="${u.info.url}" target="_blank" style="color:var(--warn)">发现新版本 ${u.info.latest}，点此下载</a>`;
+      const chip = document.getElementById("updchip");
+      chip.href = u.info.url; chip.textContent = tf("upd_found", { v: u.info.latest });
+      chip.classList.remove("hidden");
+      document.getElementById("updbox").innerHTML =
+        `<div class="box warn"><a href="${esc(u.info.url)}" target="_blank" ` +
+        `style="color:inherit">${tf("upd_found", { v: u.info.latest })}</a></div>`;
     }
   }).catch(() => {});
-  parts.push(e.sdk_version ? `SDK：<b>${e.sdk_version}</b>` :
-    `SDK：<span class="miss">未找到（打包功能不可用）</span>`);
-  parts.push(e.ffmpeg ? "FFmpeg：<b>就绪</b>" :
-    "FFmpeg：<span class='miss'>未找到（音频优化不可用，可运行 winget install Gyan.FFmpeg 安装）</span>");
-  parts.push(e.java ? "Java：<b>就绪</b>" : "Java：<span class='miss'>未安装（安卓打包需要）</span>");
-  document.getElementById("envbar").innerHTML = parts.join("　·　");
-  if (e.sdk_path) document.getElementById("sdkpath").value = e.sdk_path;
+}
+function renderEnv() {
+  if (!ENV) return;
+  const e = ENV.environment;
+  const mk = (ok, label, detail) =>
+    `<span class="envlight"><i class="dot ${ok ? "ok" : "miss"}"></i>` +
+    `${esc(label)}${detail ? ": " + esc(detail) : ""}</span>`;
+  document.getElementById("envlights").innerHTML =
+    mk(!!e.sdk_version, t("env_sdk"), e.sdk_version || t("env_sdk_miss")) +
+    mk(!!e.ffmpeg, t("env_ffmpeg"), e.ffmpeg ? "" : t("env_ff_miss")) +
+    mk(!!e.java, t("env_java"), e.java ? "" : t("env_java_miss"));
+  const st = (ok, name, detail) =>
+    `<div class="stat"><b style="color:${ok ? "var(--ok)" : "var(--warn)"}">` +
+    `${ok ? "✓" : "✗"}</b><span>${esc(name)}${detail ? " · " + esc(detail) : ""}</span></div>`;
+  document.getElementById("envstats").innerHTML =
+    st(!!e.sdk_version, "Ren'Py SDK", e.sdk_version || t("env_sdk_miss")) +
+    st(!!e.ffmpeg, "FFmpeg", e.ffmpeg ? t("env_ready") : t("env_ff_miss")) +
+    st(!!e.java, "Java", e.java ? t("env_ready") : t("env_java_miss"));
 }
 
-function fmtSize(b) {
-  if (b == null) return "";
-  return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
+/* ===================== 浏览选择框 / 最近路径 ===================== */
+function isArchiveName(s) { return /\.(zip|7z|rar)$/i.test(s.trim()); }
+
+async function browse(kind) {
+  const d = await api("/api/browse?kind=" + kind);
+  if (!d.ok) { alert(d.error || t("browse_fail")); return; }
+  if (!d.path) return;                 // 用户取消了选择
+  document.getElementById("path").value = d.path;
+  if (isArchiveName(d.path) && MODE !== "dist") go("dist");
+}
+async function browseFor(inputId, kind) {
+  const d = await api("/api/browse?kind=" + kind);
+  if (!d.ok) { alert(d.error || t("browse_fail")); return; }
+  if (!d.path) return;
+  const el = document.getElementById(inputId);
+  el.value = el.value && kind !== "font" ? el.value + "," + d.path : d.path;
 }
 
-let ANALYZE_JOB = null;
-let ANALYZE_IDX = 0;
-let ANALYZE_START = 0;
+let RECENT = [];
+async function loadRecent() {
+  const d = await api("/api/recent");
+  RECENT = (d && d.ok) ? d.recent : [];
+  renderRecent();
+}
+function renderRecent() {
+  const row = document.getElementById("recentrow");
+  if (!RECENT.length) { row.classList.add("hidden"); return; }
+  row.classList.remove("hidden");
+  document.getElementById("recentbox").innerHTML = RECENT.map(p =>
+    `<span class="chip" title="${esc(p)}" onclick="useRecent(this)" ` +
+    `data-path="${esc(p)}" style="margin-right:6px">` +
+    `${esc(p.length > 34 ? "…" + p.slice(-33) : p)}</span>`).join("");
+}
+function useRecent(el) {
+  const p = el.getAttribute("data-path");
+  document.getElementById("path").value = p;
+  if (isArchiveName(p) && MODE !== "dist") go("dist");
+}
 
+/* ===================== 分析流程 ===================== */
 async function analyze() {
   const path = document.getElementById("path").value.trim();
-  if (!path) { alert("请先填写路径"); return; }
+  if (!path) { alert(t("fill_path")); return; }
   document.getElementById("analyzewarn").innerHTML =
-    '<div class="okbox"><div id="analystate">准备扫描…</div>' +
-    '<div id="anlog" style="margin-top:6px;font-family:Consolas,monospace;' +
-    'font-size:12px;color:var(--muted);max-height:110px;overflow-y:auto;' +
-    'white-space:pre-wrap"></div></div>';
+    `<div class="box ok"><div id="analystate">${t("analyzing")}</div>` +
+    `<div class="logbox" id="anlog" style="margin-top:8px;max-height:110px"></div></div>`;
   const d = await api("/api/analyze", { path, mode: MODE,
     password: document.getElementById("arc_pwd").value || null });
   if (!d.ok) {
     document.getElementById("analyzewarn").innerHTML =
-      `<div class="errbox">${d.error}</div>`;
+      `<div class="box err">${esc(d.error)}</div>`;
     return;
   }
-  ANALYZE_JOB = d.job;
-  ANALYZE_IDX = 0;
-  ANALYZE_START = Date.now();
+  ANALYZE_JOB = d.job; ANALYZE_IDX = 0; ANALYZE_START = Date.now();
   pollAnalyze(path);
 }
 
@@ -336,33 +828,30 @@ async function pollAnalyze(path) {
   if (!d.ok) return;
   const logEl = document.getElementById("anlog");
   const stateEl = document.getElementById("analystate");
+  const lines = [];
   for (const l of d.logs) {
     ANALYZE_IDX++;
-    if (logEl) {
-      const lines = (logEl.textContent + `[${l.stage}] ${l.message}\n`)
-        .split("\n").filter(Boolean);
-      logEl.textContent = lines.slice(-6).join("\n");
-      logEl.scrollTop = logEl.scrollHeight;
-    }
-    if (stateEl) {
-      if (l.stage === "scan") stateEl.textContent = "正在扫描：" + l.message;
-      else if (l.stage === "unpack") stateEl.textContent = l.message;
-      else if (l.stage === "analyze") stateEl.textContent = l.message;
-    }
+    lines.push(`[${t("stages")[l.stage] || l.stage}] ${l.message}`);
+    if (stateEl) stateEl.textContent = l.message;
+  }
+  if (logEl && lines.length) {
+    const all = (logEl.textContent + lines.join("\n") + "\n").split("\n").filter(Boolean);
+    logEl.textContent = all.slice(-6).join("\n");
+    logEl.scrollTop = logEl.scrollHeight;
   }
   if (d.status === "running") { setTimeout(() => pollAnalyze(path), 300); return; }
   if (d.status === "error") {
     document.getElementById("analyzewarn").innerHTML =
-      `<div class="errbox">${d.error}<br>下一步：检查路径与压缩包密码是否正确。</div>`;
+      `<div class="box err">${esc(d.error)}<br>${t("analyze_err_next")}</div>`;
     return;
   }
-  // 小项目扫描太快：进度框至少停留 1 秒，让用户看见"分析完成"
+  /* 小项目扫描太快：进度框至少停留 1 秒，让用户看见“分析完成” */
   const stateEl2 = document.getElementById("analystate");
-  if (stateEl2) stateEl2.textContent = "分析完成，正在生成报告…";
+  if (stateEl2) stateEl2.textContent = t("analyze_done");
   const wait = Math.max(0, 1000 - (Date.now() - ANALYZE_START));
   setTimeout(() => {
-    api("/api/recent", { path }).then(loadRecent);
-    REPORT = d.result.report;
+    api("/api/recent", { path }).then(r => { if (r.ok) { RECENT = r.recent; renderRecent(); } });
+    REPORT = { report: d.result.report, mode: d.result.mode };
     LAST_CHARLIST = d.result.charlist || null;
     renderReport(d.result.report, d.result.mode);
     document.getElementById("analyzewarn").innerHTML = "";
@@ -371,38 +860,52 @@ async function pollAnalyze(path) {
 }
 
 function renderReport(r, mode) {
-  const card = document.getElementById("reportcard");
-  card.classList.remove("hidden");
-  const kindNames = { image: "图片", audio: "音频", video: "视频", font: "字体" };
+  document.getElementById("reportcard").classList.remove("hidden");
   const counts = {};
-  for (const e of r.entries) {
-    const k = kindNames[e.asset.kind] || e.asset.kind;
-    counts[k] = (counts[k] || 0) + 1;
-  }
-  const summary = Object.entries(counts).map(([k, v]) => `${k} ${v} 个`).join("、");
+  for (const e of r.entries) counts[e.asset.kind] = (counts[e.asset.kind] || 0) + 1;
   const est = r.entries.reduce((s, e) => s + (e.est_saving || 0), 0);
-  document.getElementById("reportsum").innerHTML =
-    `共 <b>${r.entries.length}</b> 个资源（${summary}），总体积 <b>${fmtSize(r.total_size)}</b>` +
-    (est ? `，预计最多可省 <b>${fmtSize(est)}</b>` : "") +
-    (r.charset_size ? `；项目实际使用 <b>${r.charset_size}</b> 个字符` +
-      (LAST_CHARLIST ? ` <button class="ghost" style="padding:4px 10px;font-size:12px" onclick="downloadCharlist()">下载字符清单</button>` : "") : "");
-  let html = `<tr><th>优先级</th><th>类型</th><th>文件</th><th>体积</th><th>问题与建议</th></tr>`;
-  const priTxt = { high: "高", medium: "中", low: "低" };
+  const kindTxt = Object.entries(counts)
+    .map(([k, v]) => `${t("kinds")[k] || k} ${v}`).join("、");
+  let stats =
+    `<div class="stat"><b>${r.entries.length}</b><span>${t("stat_assets")}</span></div>` +
+    `<div class="stat"><b>${fmtSize(r.total_size)}</b><span>${t("stat_size")}</span></div>`;
+  if (est) stats += `<div class="stat big"><b>${fmtSize(est)}</b><span>${t("stat_est")}</span></div>`;
+  if (r.charset_size) stats +=
+    `<div class="stat"><b>${r.charset_size}</b><span>${t("stat_chars")}</span></div>`;
+  document.getElementById("reportstats").innerHTML = stats;
+
+  let html = `<tr><th>${t("th_pri")}</th><th>${t("th_kind")}</th><th>${t("th_file")}</th>` +
+    `<th>${t("th_size")}</th><th>${t("th_issue")}</th></tr>`;
   for (const e of r.entries.slice(0, 300)) {
     const a = e.asset;
-    const issues = e.issues.map(i => `${i.message}<br><span style="color:var(--muted)">建议：${i.suggestion}</span>`).join("<br>");
-    html += `<tr><td class="pri-${e.priority}">${priTxt[e.priority]}</td>` +
-      `<td><span class="badge">${kindNames[a.kind] || a.kind}${a.in_rpa ? "·封包内" : ""}</span></td>` +
-      `<td style="word-break:break-all">${a.rel}</td><td>${fmtSize(a.size)}</td>` +
+    const issues = e.issues.map(i => tf("issue_tpl", { m: esc(i.message), s: esc(i.suggestion) })).join("<br>");
+    html += `<tr><td class="pri-${e.priority}">${t("pri")[e.priority]}</td>` +
+      `<td><span class="badge">${t("kinds")[a.kind] || a.kind}` +
+      `${a.in_rpa ? t("kind_rpa") : ""}</span></td>` +
+      `<td style="word-break:break-all">${esc(a.rel)}</td><td>${fmtSize(a.size)}</td>` +
       `<td>${issues || "—"}</td></tr>`;
   }
   document.getElementById("reporttable").innerHTML = html;
-  if (r.warnings && r.warnings.length) {
-    document.getElementById("reportsum").innerHTML +=
-      `<div class="warnbox">${r.warnings.map(w => "· " + w).join("<br>")}</div>`;
-  }
+
+  let warnHtml = "";
+  if (r.warnings && r.warnings.length)
+    warnHtml += `<div class="box warn">${r.warnings.map(w => esc(w)).join("<br>")}</div>`;
+  if (r.charset_size && LAST_CHARLIST)
+    warnHtml += `<div class="row" style="margin-top:10px">` +
+      `<button class="btn ghost small" onclick="downloadCharlist()">${t("r_charlist")}</button></div>`;
+  document.getElementById("reportwarn").innerHTML = warnHtml;
 }
 
+function downloadCharlist() {
+  if (!LAST_CHARLIST) return;
+  const blob = new Blob([LAST_CHARLIST], { type: "text/plain;charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = LANG === "zh" ? "使用字符清单.txt" : "charset-used.txt";
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+/* ===================== 选项收集 ===================== */
 function collectOptions() {
   return {
     preset: document.getElementById("preset").value,
@@ -426,15 +929,22 @@ function collectOptions() {
     },
   };
 }
+document.getElementById("in_place").addEventListener("change", e =>
+  document.getElementById("inplacewarn").classList.toggle("hidden", !e.target.checked));
 
+/* ===================== 执行流程 ===================== */
 async function runJob() {
   const path = document.getElementById("path").value.trim();
   const opts = collectOptions();
   document.getElementById("runcard").classList.remove("hidden");
   document.getElementById("log").textContent = "";
   document.getElementById("resultarea").innerHTML = "";
+  document.getElementById("runstatus").textContent = t("st_preparing");
+  resetProgress();
   document.getElementById("runbtn").disabled = true;
+  LAST_RESULT = null;
   LOGIDX = 0;
+  document.getElementById("runcard").scrollIntoView({ behavior: "smooth" });
 
   let d;
   const pwd = document.getElementById("arc_pwd").value || null;
@@ -449,14 +959,36 @@ async function runJob() {
     d = await api("/api/optimize", { path, mode: "dist", options: opts, password: pwd });
   }
   if (!d.ok) {
-    document.getElementById("resultarea").innerHTML = `<div class="errbox">${d.error}</div>`;
+    document.getElementById("resultarea").innerHTML =
+      `<div class="box err">${esc(d.error)}</div>`;
     document.getElementById("runbtn").disabled = false;
+    setProgress(100); document.getElementById("progressbar").classList.remove("ind");
     return;
   }
   JOB = d.job;
-  document.getElementById("cancelbtn").style.display = "";
-  document.getElementById("cancelbtn").disabled = false;
+  const cb = document.getElementById("cancelbtn");
+  cb.style.display = ""; cb.disabled = false;
   pollJob();
+}
+
+/* 进度条：日志里出现 i/total 就按真实百分比走，否则滑动动画 */
+function resetProgress() {
+  const bar = document.getElementById("progressbar");
+  bar.classList.add("ind");
+  document.getElementById("progressfill").style.width = "0";
+}
+function setProgress(pct) {
+  document.getElementById("progressfill").style.width = pct + "%";
+}
+function tickProgress(msg) {
+  const m = msg.match(/(\d+)\s*\/\s*(\d+)/);
+  if (m) {
+    const cur = parseInt(m[1]), tot = parseInt(m[2]);
+    if (tot > 0 && cur <= tot) {
+      document.getElementById("progressbar").classList.remove("ind");
+      setProgress(Math.round(cur / tot * 100));
+    }
+  }
 }
 
 async function pollJob() {
@@ -464,155 +996,118 @@ async function pollJob() {
   if (!d.ok) return;
   const log = document.getElementById("log");
   for (const l of d.logs) {
-    log.textContent += `[${l.stage}] ${l.message}\n`;
+    log.textContent += `[${t("stages")[l.stage] || l.stage}] ${l.message}\n`;
     LOGIDX++;
+    tickProgress(l.message);
   }
   log.scrollTop = log.scrollHeight;
   if (d.status === "running") {
-    document.getElementById("runstatus").textContent = d.cancel_requested
-      ? "正在停止，等手头的文件处理完……"
-      : "执行中，请勿关闭窗口…";
+    document.getElementById("runstatus").textContent =
+      d.cancel_requested ? t("st_stopping") : t("st_running");
     setTimeout(pollJob, 800);
     return;
   }
   document.getElementById("cancelbtn").style.display = "none";
+  document.getElementById("progressbar").classList.remove("ind");
   if (d.status === "canceled") {
-    document.getElementById("runstatus").textContent = "已停止";
+    document.getElementById("runstatus").textContent = t("st_cancelled");
     document.getElementById("resultarea").innerHTML =
-      `<div class="warnbox">${d.error || "任务已取消。"}</div>`;
+      `<div class="box warn">${esc(d.error || "")}</div>`;
+    document.getElementById("runbtn").disabled = false;
     return;
   }
   document.getElementById("runbtn").disabled = false;
   if (d.status === "error") {
-    document.getElementById("runstatus").textContent = "执行失败";
+    document.getElementById("runstatus").textContent = t("st_failed");
     document.getElementById("resultarea").innerHTML =
-      `<div class="errbox">出错了：${d.error}<br>下一步：检查路径是否正确、磁盘空间是否足够；看不懂的话把这段内容发给开发者。</div>`;
+      `<div class="box err">${esc(d.error)}<br>${t("err_next")}</div>`;
     return;
   }
-  document.getElementById("runstatus").textContent = "完成";
+  document.getElementById("runstatus").textContent = t("st_done");
+  setProgress(100);
+  LAST_RESULT = d.result;
   renderResult(d.result);
 }
 
+async function cancelJob() {
+  if (!JOB) return;
+  document.getElementById("cancelbtn").disabled = true;
+  await api(`/api/job/${JOB}/cancel`, {});
+}
+
+/* ===================== 结果渲染 ===================== */
 function renderResult(res) {
   let html = "";
   if (res.optimize) {
     const o = res.optimize;
-    html += `<div class="okbox">优化完成：节省约 <b>${fmtSize(o.saved_bytes)}</b><br>` +
-      `工作目录：${o.working_dir}<br>` +
-      `分析报告：${o.report}<br>修改清单：${o.changelog}</div>`;
+    html += `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
+      `<div class="stat big"><b>${fmtSize(o.saved_bytes)}</b><span>${t("r_opt_done").split("：")[0].split(": ")[0]}</span></div>` +
+      `<div class="stat"><b style="font-size:13px">${esc(o.working_dir)}</b><span>${t("r_workdir")}</span></div>` +
+      `<div class="stat"><b style="font-size:13px">${esc(String(o.changelog))}</b><span>${t("r_changelog")}</span></div></div>`;
     if (o.validation && o.validation.ran) {
       html += o.validation.ok
-        ? `<div class="okbox">官方验证：lint 检查通过，未发现错误</div>`
-        : `<div class="warnbox">官方验证：${o.validation.summary}` +
+        ? `<div class="box ok">${t("r_lint_ok")}</div>`
+        : `<div class="box warn">${t("r_lint_head")}${esc(o.validation.summary)}` +
           (o.validation.suspects && o.validation.suspects.length
-            ? "<br>" + o.validation.suspects.slice(0, 5).map(s => "· " + s).join("<br>") : "") +
+            ? "<br>" + o.validation.suspects.slice(0, 5).map(s => "· " + esc(s)).join("<br>") : "") +
           `</div>`;
     }
     const extra = [];
-    if (o.junk && o.junk.removed.length) extra.push(`清理可再生垃圾 ${o.junk.removed.length} 项（省 ${fmtSize(o.junk.freed_bytes)}）`);
-    if (o.unused && o.unused.length) extra.push(`确认无引用的资源 ${o.unused.length} 个` + (o.quarantined && o.quarantined.length ? `，已隔离 ${o.quarantined.length} 个` : "（仅报告，未处理）"));
-    if (o.duplicates && o.duplicates.length) extra.push(`重复文件 ${o.duplicates.length} 组（仅报告，请自行确认）`);
-    if (o.missing_glyphs && Object.keys(o.missing_glyphs).length) extra.push(`字体缺字提醒 ${Object.keys(o.missing_glyphs).length} 项（见上方警告）`);
-    if (extra.length) html += `<div class="okbox">附加检测：${extra.join("<br>")}</div>`;
-    if (o.warnings && o.warnings.length) {
-      html += `<div class="warnbox">${o.warnings.slice(0, 10).map(w => "· " + w).join("<br>")}</div>`;
-    }
+    if (o.junk && o.junk.removed.length)
+      extra.push(tf("r_junk", { n: o.junk.removed.length, s: fmtSize(o.junk.freed_bytes) }));
+    if (o.unused && o.unused.length)
+      extra.push(tf("r_unused", { n: o.unused.length }) +
+        (o.quarantined && o.quarantined.length
+          ? tf("r_unused_q", { n: o.quarantined.length }) : t("r_unused_rep")));
+    if (o.duplicates && o.duplicates.length)
+      extra.push(tf("r_dup", { n: o.duplicates.length }));
+    if (o.missing_glyphs && Object.keys(o.missing_glyphs).length)
+      extra.push(tf("r_glyph", { n: Object.keys(o.missing_glyphs).length }));
+    if (extra.length) html += `<div class="box ok">${t("r_extra_head")}${extra.map(esc).join("<br>")}</div>`;
+    if (o.warnings && o.warnings.length)
+      html += `<div class="box warn">${o.warnings.slice(0, 10).map(w => esc(w)).join("<br>")}</div>`;
   } else if (res.saved_bytes !== undefined) {
-    html += `<div class="okbox">瘦身完成：节省约 <b>${fmtSize(res.saved_bytes)}</b><br>` +
-      `结果目录：${res.working_dir}<br>修改清单：${res.changelog}` +
-      (res.archive_output ? `<br>交付压缩包：<b>${res.archive_output}</b>` : "") +
-      `</div>`;
-    if (res.has_rpy) {
-      html += `<div class="okbox">检测到该成品带有 .rpy 源码：已启用格式转换` +
-        `（PNG/JPG→WebP、WAV/MP3→OGG），引用已同步改写，引擎下次启动会自动重编译。</div>`;
-    }
-    if (res.warnings && res.warnings.length) {
-      html += `<div class="warnbox">${res.warnings.slice(0, 10).map(w => "· " + w).join("<br>")}</div>`;
-    }
+    html += `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
+      `<div class="stat big"><b>${fmtSize(res.saved_bytes)}</b><span>${t("r_dist_done").split("：")[0].split(": ")[0]}</span></div>` +
+      `<div class="stat"><b style="font-size:13px">${esc(res.working_dir)}</b><span>${t("r_outdir")}</span></div>` +
+      (res.archive_output
+        ? `<div class="stat"><b style="font-size:13px">${esc(res.archive_output)}</b><span>${t("r_deliver")}</span></div>`
+        : `<div class="stat"><b style="font-size:13px">${esc(String(res.changelog))}</b><span>${t("r_changelog")}</span></div>`)
+      + `</div>`;
+    if (res.has_rpy) html += `<div class="box ok">${t("r_has_rpy")}</div>`;
+    if (res.warnings && res.warnings.length)
+      html += `<div class="box warn">${res.warnings.slice(0, 10).map(w => esc(w)).join("<br>")}</div>`;
   }
   if (res.package) {
     const p = res.package;
     if (p.built.length) {
-      html += `<div class="okbox">打包成功：${p.built.join("、")}<br>` +
-        p.artifacts.map(a => `· ${a.name}（${fmtSize(a.size)}）`).join("<br>") +
-        `<br>输出目录：${p.destination}</div>`;
+      html += `<div class="box ok">${t("r_pkg_ok")}${esc(p.built.join("、"))}<br>` +
+        p.artifacts.map(a => `· ${esc(a.name)}（${fmtSize(a.size)}）`).join("<br>") +
+        `<br>${t("r_pkg_out")}：${esc(p.destination)}</div>`;
     }
-    for (const e of p.errors) html += `<div class="errbox">${e}</div>`;
+    for (const e of p.errors) html += `<div class="box err">${esc(e)}</div>`;
   }
   document.getElementById("resultarea").innerHTML = html ||
-    '<div class="okbox">执行完成</div>';
+    `<div class="box ok">${t("st_done")}</div>`;
+}
+/* ===================== 模式相关的显隐 ===================== */
+function applyModeUI() {
+  const isP = MODE === "project";
+  document.getElementById("platarea").classList.toggle("hidden", !isP);
+  document.getElementById("delwrap").classList.toggle("hidden", isP);
+  document.getElementById("qwrap").classList.toggle("hidden", !isP);
+  document.getElementById("pwdrow").classList.toggle("hidden", isP);
 }
 
-document.getElementById("in_place").addEventListener("change", e => {
-  document.getElementById("inplacewarn").classList.toggle("hidden", !e.target.checked);
-});
-
-async function saveSdk() {
-  const d = await api("/api/sdk", { sdk_path: document.getElementById("sdkpath").value.trim() });
-  document.getElementById("sdkmsg").textContent = d.ok ? "已保存" : d.error;
-  if (d.ok) loadEnv();
-}
-
-// --- 轻松操作：浏览选择框 / 最近路径 / 拖拽到图标自动填充 ---
-
-function isArchiveName(s) {
-  return /\.(zip|7z|rar)$/i.test(s.trim());
-}
-
-async function browse(kind) {
-  const d = await api("/api/browse?kind=" + kind);
-  if (!d.ok) { alert(d.error); return; }
-  if (!d.path) return;   // 用户取消了选择
-  document.getElementById("path").value = d.path;
-  if (isArchiveName(d.path) && MODE !== "dist") switchMode("dist");
-}
-
-async function browseFor(inputId, kind) {
-  const d = await api("/api/browse?kind=" + kind);
-  if (!d.ok) { alert(d.error); return; }
-  if (!d.path) return;
-  const el = document.getElementById(inputId);
-  el.value = el.value && kind !== "font" ? el.value + "," + d.path : d.path;
-}
-
-async function loadRecent() {
-  const d = await api("/api/recent");
-  if (!d.ok || !d.recent.length) { document.getElementById("recentbox").innerHTML = ""; return; }
-  document.getElementById("recentbox").innerHTML =
-    '<span style="color:var(--muted);font-size:12px">最近用过：</span> ' +
-    d.recent.map(p => `<span class="badge" style="cursor:pointer;margin-right:6px" ` +
-      `title="${p}" onclick="useRecent(this)" data-path="${p}">` +
-      `${p.length > 34 ? "…" + p.slice(-33) : p}</span>`).join("");
-}
-
-function useRecent(el) {
-  const p = el.getAttribute("data-path");
-  document.getElementById("path").value = p;
-  if (isArchiveName(p) && MODE !== "dist") switchMode("dist");
-}
-
-// 拖到工具图标上打开时，地址里会带 ?open=路径：自动填入并开始分析
-async function handleOpenParam() {
-  const open = new URLSearchParams(location.search).get("open");
-  if (!open) return;
-  document.getElementById("path").value = open;
-  if (isArchiveName(open) && MODE !== "dist") switchMode("dist");
-  history.replaceState(null, "", location.pathname);
-  await analyze();
-}
-
-// --- 字体瘦身（独立工具） ---
-
-let FS_JOB = null, FS_IDX = 0;
-
+/* ===================== 字体瘦身（独立工具） ===================== */
 async function runFontSlim() {
   const font = document.getElementById("fs_font").value.trim();
   const srcRaw = document.getElementById("fs_src").value.trim();
-  if (!font || !srcRaw) { alert("字体文件和文本来源都要填"); return; }
+  if (!font || !srcRaw) { alert(t("fill_font")); return; }
   const sources = srcRaw.split(/[,，]/).map(s => s.trim()).filter(Boolean);
   document.getElementById("fsresult").innerHTML =
-    '<div class="okbox">瘦身中…<div id="fslog" style="margin-top:6px;' +
-    'font-size:12px;color:var(--muted);white-space:pre-wrap"></div></div>';
+    `<div class="box ok">${t("font_running")}<div class="logbox" id="fslog" ` +
+    `style="margin-top:8px;max-height:140px"></div></div>`;
   document.getElementById("fsrun").disabled = true;
   const d = await api("/api/slimfont", { font, sources, charset: {
     base_latin: document.getElementById("fs_latin").checked,
@@ -622,18 +1117,12 @@ async function runFontSlim() {
     extra_chars: document.getElementById("fs_extra").value } });
   if (!d.ok) {
     document.getElementById("fsresult").innerHTML =
-      `<div class="errbox">${d.error}</div>`;
+      `<div class="box err">${esc(d.error)}</div>`;
     document.getElementById("fsrun").disabled = false;
     return;
   }
   FS_JOB = d.job; FS_IDX = 0;
   pollFontSlim();
-}
-
-async function cancelJob() {
-  if (!JOB) return;
-  document.getElementById("cancelbtn").disabled = true;
-  await api(`/api/job/${JOB}/cancel`, {});
 }
 
 async function pollFontSlim() {
@@ -642,64 +1131,71 @@ async function pollFontSlim() {
   const logEl = document.getElementById("fslog");
   for (const l of d.logs) {
     FS_IDX++;
-    if (logEl) logEl.textContent += `[${l.stage}] ${l.message}\n`;
+    if (logEl) logEl.textContent +=
+      `[${t("stages")[l.stage] || l.stage}] ${l.message}\n`;
   }
   if (d.status === "running") { setTimeout(pollFontSlim, 500); return; }
   document.getElementById("fsrun").disabled = false;
   if (d.status === "error") {
     document.getElementById("fsresult").innerHTML =
-      `<div class="errbox">${d.error}</div>`;
+      `<div class="box err">${esc(d.error)}</div>`;
     return;
   }
+  FS_RESULT = d.result;
   renderFontResult(d.result);
 }
 
 function renderFontResult(r) {
-  let html = `<div class="okbox">瘦身完成：字符集共 ${r.charset_size} 个字符<br>`;
+  let html = `<div class="box ok">${tf("font_done", { n: r.charset_size })}<br>`;
   for (const o of r.outputs) {
     const sizeTxt = o.old_size
-      ? `${fmtSize(o.old_size)} → ${fmtSize(o.new_size)}`
-      : fmtSize(o.new_size);
+      ? `${fmtSize(o.old_size)} → ${fmtSize(o.new_size)}` : fmtSize(o.new_size);
     const glyphTxt = o.glyphs_before != null
-      ? `字形 ${o.glyphs_before} → ${o.glyphs_after}，` : "";
-    html += `· ${o.src}：${glyphTxt}${sizeTxt}` +
-      `<br>&nbsp;&nbsp;输出：${o.out}<br>`;
+      ? tf("font_glyphs", { a: o.glyphs_before, b: o.glyphs_after }) : "";
+    html += `· ${esc(o.src)}：${glyphTxt}${sizeTxt}` +
+      `<br>&nbsp;&nbsp;${t("font_out")}：${esc(o.out)}<br>`;
   }
-  html += `字符清单：${r.charlist}</div>`;
+  html += `${t("font_charlist")}：${esc(r.charlist)}</div>`;
   if (r.warnings && r.warnings.length)
-    html += `<div class="warnbox">${r.warnings.map(w => "· " + w).join("<br>")}</div>`;
+    html += `<div class="box warn">${r.warnings.map(w => esc(w)).join("<br>")}</div>`;
   document.getElementById("fsresult").innerHTML = html;
 }
 
-// --- 字符清单下载（工程分析） ---
-
-let LAST_CHARLIST = null;
-
-function downloadCharlist() {
-  if (!LAST_CHARLIST) return;
-  const blob = new Blob([LAST_CHARLIST], { type: "text/plain;charset=utf-8" });
-  const a = document.createElement("a");
-  a.href = URL.createObjectURL(blob);
-  a.download = "使用字符清单.txt";
-  a.click();
-  URL.revokeObjectURL(a.href);
+/* ===================== SDK 设置 ===================== */
+async function saveSdk() {
+  const d = await api("/api/sdk", { sdk_path: document.getElementById("sdkpath").value.trim() });
+  const msg = document.getElementById("sdkmsg");
+  msg.textContent = d.ok ? t("saved") : d.error;
+  msg.style.color = d.ok ? "var(--ok)" : "var(--err)";
+  if (d.ok) loadEnv();
 }
 
-// --- 退出工具 ---
-
+/* ===================== 退出工具 ===================== */
 async function shutdownTool() {
-  if (!confirm("确定退出 RenPySlim？\n正在执行的任务会被中断（原件不受影响）。")) return;
-  document.getElementById("runstate").textContent = "正在退出…";
+  if (!confirm(t("quit_confirm"))) return;
+  document.getElementById("runstate").textContent = t("quit_ing");
   try {
     await api("/api/shutdown", {});
-    document.getElementById("runstate").textContent =
-      "工具已退出，可以关闭本页面了。";
+    document.getElementById("runstate").textContent = t("quit_done");
   } catch (e) {
-    document.getElementById("runstate").textContent =
-      "退出请求已发送，稍后页面将无法连接——属正常现象。";
+    document.getElementById("runstate").textContent = t("quit_sent");
   }
 }
 
+/* ===================== 拖拽到图标自动填充 ===================== */
+async function handleOpenParam() {
+  const open = new URLSearchParams(location.search).get("open");
+  if (!open) return;
+  document.getElementById("path").value = open;
+  if (isArchiveName(open)) go("dist");
+  history.replaceState(null, "", location.pathname);
+  await analyze();
+}
+
+/* ===================== 启动 ===================== */
+applyModeUI();
+applyLang();
+applyThemeBtn();
 loadEnv();
 loadRecent();
 handleOpenParam();
