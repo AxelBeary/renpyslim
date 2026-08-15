@@ -6,7 +6,8 @@
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.9.0（自更新检查的靶子）
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更新检查靶子，
+附 v0.10.0 exe；已验证 updater 正确识别）
 回归测试：68 项全绿（`pytest tests -q`，含审核修复回归 12 条）
 
 ## Cadaver 样本实测战绩（用户提供的真实游戏，全部实测通过）
@@ -65,8 +66,7 @@ Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.9.0（自更新
 - 版本号 0.9.0 → 0.10.0（rtools/__init__.py 事实源）
 
 已知边界：后端返回的日志/警告保持中文原文（计划内，英文模式下
-日志区为中文）。待办：v0.10.0 可考虑发 GitHub Release（自更新检查的
-新靶子，需用户点头）。
+日志区为中文）。v0.10.0 GitHub Release 已发布（附 exe，用户拍板推送）。
 
 ## 2026-08-15 全面代码审核结果（17 项：15 属实已修，1 半属实已修，1 不属实）
 
