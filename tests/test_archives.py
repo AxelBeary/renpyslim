@@ -44,6 +44,16 @@ def test_find_dist_root_missing(tmp_path):
         archives.find_dist_root(str(tmp_path))
 
 
+def test_find_dist_root_deep_mac_bundle(tmp_path):
+    """Mac 版 .app 包：game 藏在多层深处也要找到。"""
+    deep = tmp_path / "Game.app" / "Contents" / "Resources" / "autorun" / "game"
+    deep.mkdir(parents=True)
+    (deep / "scripts").mkdir()
+    (deep / "scripts" / "script.rpyc").write_bytes(b"x")
+    found = archives.find_dist_root(str(tmp_path))
+    assert Path(found) == deep.parent, "应返回包含 game 的成品根目录"
+
+
 def test_password_zip_requires_password(tmp_path):
     # 用系统 zip 造不了密码包，直接验证"无密码时报错"的逻辑分支：
     # 伪造一个带加密标志的 zip

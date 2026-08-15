@@ -113,18 +113,27 @@ def find_dist_root(extract_dir: str) -> str:
 
     兼容三种常见结构：
     - 解压出来直接就是成品（含 game/）
-    - 成品套在一个顶层文件夹里
-    - 压缩包只打了成品内部文件（game/ 就在根）
+    - 成品套在顶层文件夹里
+    - Mac 版 .app 包：game 藏在 Contents/Resources/autorun/ 多层深处
+    候选多个时，优先选"长得像游戏目录"（含脚本/gui/图片）且最浅的那个。
     """
     root = Path(extract_dir)
     if (root / "game").is_dir():
         return str(root)
-    # 往下最多找 3 层
-    for depth_dir in [root] + [d for d in root.rglob("*") if d.is_dir()]:
-        if (depth_dir / "game").is_dir():
-            rel = depth_dir.relative_to(root)
-            if len(rel.parts) <= 2:
-                return str(depth_dir)
+
+    candidates = [d for d in root.rglob("game") if d.is_dir()]
+
+    def looks_real(d: Path) -> bool:
+        if any((d / x).exists() for x in ("scripts", "gui", "images", "audio")):
+            return True
+        return any(d.glob("*.rpyc")) or any(d.glob("*.rpy"))
+
+    real = [d for d in candidates if looks_real(d)]
+    pool = real or candidates
+    if pool:
+        pool.sort(key=lambda d: len(d.parts))
+        # 返回"包含 game 的那一层"（成品根），不是 game 本身
+        return str(pool[0].parent)
     raise ArchiveError(
         "解压后找不到成品目录（特征是里面有 game 文件夹）。"
         "请确认压缩包里是完整的 Ren'Py 发布成品。")

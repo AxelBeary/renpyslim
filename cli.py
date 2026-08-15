@@ -200,6 +200,23 @@ def cmd_full(args) -> int:
     return _ok({"optimize": opt_result, "package": pkg_result})
 
 
+def cmd_slimapk(args) -> int:
+    """APK 瘦身（实验性）：同名压缩游戏资源，重打包，可选重签名。"""
+    from rtools import apk
+    cs = CharsetOptions()
+    cs.extra_chars = getattr(args, "extra_chars", "") or ""
+    try:
+        result = apk.slim_apk(
+            args.apk, args.preset, cs,
+            sdk=packager.find_sdk(args.sdk),
+            keystore=args.keystore, ks_pass=args.ks_pass,
+            key_alias=args.key_alias, key_pass=args.key_pass,
+            progress=Progress(_log))
+    except apk.ApkError as e:
+        return _fail(str(e))
+    return _ok({"result": result})
+
+
 def cmd_slimfont(args) -> int:
     """独立字体瘦身：选字体 + 文本来源，不依赖游戏工程。"""
     cs = CharsetOptions()
@@ -265,6 +282,17 @@ def main(argv=None) -> int:
             p.add_argument("--archive-rpa", action="store_true",
                            help="打包时把资源封入 main.rpa（官方通道）")
         p.set_defaults(func=func)
+
+    p = sub.add_parser("slimapk", help="APK 瘦身（实验性）")
+    p.add_argument("apk", help="APK 文件路径")
+    p.add_argument("--preset", choices=list(PRESETS), default="balanced")
+    p.add_argument("--sdk", default=None, help="Ren'Py SDK 路径（用于找签名工具）")
+    p.add_argument("--keystore", default=None, help="签名 keystore 文件")
+    p.add_argument("--ks-pass", default=None, help="keystore 密码")
+    p.add_argument("--key-alias", default=None, help="密钥别名（可选）")
+    p.add_argument("--key-pass", default=None, help="密钥密码（可选，默认同 keystore 密码）")
+    p.add_argument("--extra-chars", default="", help="字体保底手动追加字符")
+    p.set_defaults(func=cmd_slimapk)
 
     p = sub.add_parser("slimfont", help="独立字体瘦身（不依赖游戏工程）")
     p.add_argument("font", help="字体文件：ttf/otf/ttc/otc")
