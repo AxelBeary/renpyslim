@@ -182,7 +182,10 @@
   <!-- 第 4 步：执行 -->
   <div class="card hidden" id="runcard">
     <h2>第 4 步 · 执行中</h2>
-    <div class="desc" id="runstatus">准备中…</div>
+    <div class="desc" style="display:flex;justify-content:space-between;align-items:center">
+      <span id="runstatus">准备中…</span>
+      <button class="ghost" id="cancelbtn" style="display:none" onclick="cancelJob()">停止任务</button>
+    </div>
     <div id="log"></div>
     <div id="resultarea"></div>
   </div>
@@ -283,6 +286,12 @@ async function loadEnv() {
   const e = d.environment;
   const parts = [];
   parts.push(`版本：<b>${d.version || "?"}</b>`);
+  api("/api/update").then(u => {
+    if (u && u.info && u.info.update_available) {
+      const el = document.getElementById("envbar");
+      el.innerHTML += `　·　<a href="${u.info.url}" target="_blank" style="color:var(--warn)">发现新版本 ${u.info.latest}，点此下载</a>`;
+    }
+  }).catch(() => {});
   parts.push(e.sdk_version ? `SDK：<b>${e.sdk_version}</b>` :
     `SDK：<span class="miss">未找到（打包功能不可用）</span>`);
   parts.push(e.ffmpeg ? "FFmpeg：<b>就绪</b>" :
@@ -445,6 +454,8 @@ async function runJob() {
     return;
   }
   JOB = d.job;
+  document.getElementById("cancelbtn").style.display = "";
+  document.getElementById("cancelbtn").disabled = false;
   pollJob();
 }
 
@@ -458,8 +469,17 @@ async function pollJob() {
   }
   log.scrollTop = log.scrollHeight;
   if (d.status === "running") {
-    document.getElementById("runstatus").textContent = "执行中，请勿关闭窗口…";
+    document.getElementById("runstatus").textContent = d.cancel_requested
+      ? "正在停止，等手头的文件处理完……"
+      : "执行中，请勿关闭窗口…";
     setTimeout(pollJob, 800);
+    return;
+  }
+  document.getElementById("cancelbtn").style.display = "none";
+  if (d.status === "canceled") {
+    document.getElementById("runstatus").textContent = "已停止";
+    document.getElementById("resultarea").innerHTML =
+      `<div class="warnbox">${d.error || "任务已取消。"}</div>`;
     return;
   }
   document.getElementById("runbtn").disabled = false;
@@ -608,6 +628,12 @@ async function runFontSlim() {
   }
   FS_JOB = d.job; FS_IDX = 0;
   pollFontSlim();
+}
+
+async function cancelJob() {
+  if (!JOB) return;
+  document.getElementById("cancelbtn").disabled = true;
+  await api(`/api/job/${JOB}/cancel`, {});
 }
 
 async function pollFontSlim() {

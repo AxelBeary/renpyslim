@@ -19,3 +19,8 @@ _apk*
 _full_*
 _slimtest/
 *.rtools.tmp
+Cadaver/
+_cadaver_work/
+_cad_*/
+_cad_*.log
+_cad_*.json

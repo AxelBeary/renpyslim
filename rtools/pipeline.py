@@ -14,6 +14,7 @@ import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from typing import Callable, Optional
 
 from . import analyzer, archives, backup, cache, charset, cleanup, font_tool, scanner, verifier
 from . import remap as remap_mod
@@ -32,6 +33,10 @@ class PipelineError(Exception):
     pass
 
 
+class PipelineCancelled(PipelineError):
+    """用户主动取消（区别于真错误：不写崩溃转储）。"""
+
+
 def _find_game_dir(project_dir: str) -> Path:
     game = Path(project_dir) / "game"
     if not game.is_dir():
@@ -46,31 +51,56 @@ def _write_json(path: Path, data) -> None:
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _run_jobs(p: Progress, stage: str, jobs: list) -> list:
+def _run_jobs(p: Progress, stage: str, jobs: list,
+              cancel: "Optional[Callable[[], bool]]" = None) -> list:
     """并行执行一批独立优化任务（BACKLOG B4）。
 
     jobs: [(标签, 无参callable)]，callable 自己负责 try/except 并返回 dict 或 None。
-    小批量退化为串行；进度按完成数汇报（线程安全）。
+    小批量退化为串行；进度按完成数 + 累计节省字节汇报（F6）；
+    取消时不再等待未开始的任务（F4）。
     """
     if not jobs:
         return []
     workers = 1 if len(jobs) < 4 else max(2, min(6, (os.cpu_count() or 4) - 1))
     results: list = []
-    state = {"done": 0}
+    state = {"done": 0, "saved": 0}
     lock = threading.Lock()
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
         futures = [ex.submit(fn) for _label, fn in jobs]
-        for fut in as_completed(futures):
-            with lock:
-                state["done"] += 1
-                if state["done"] % 5 == 0 or state["done"] == len(futures):
-                    p.emit(stage, f"处理中 {state['done']}/{len(futures)}")
-            try:
-                results.append(fut.result())
-            except Exception:
-                results.append(None)
-    return [r for r in results if r]
+        try:
+            for fut in as_completed(futures):
+                if cancel and cancel():
+                    for rest in futures:
+                        rest.cancel()
+                    raise PipelineCancelled()
+                with lock:
+                    state["done"] += 1
+                    if state["done"] % 5 == 0 or state["done"] == len(futures):
+                        p.emit(stage, f"处理中 {state['done']}/{len(futures)}"
+                                          f" · 累计已省 {_fmt(state['saved'])}")
+                try:
+                    r = fut.result()
+                except Exception:
+                    r = None
+                if r:
+                    with lock:
+                        state["saved"] += r.get("saved", 0)
+                    results.append(r)
+        except PipelineCancelled:
+            for rest in futures:
+                rest.cancel()
+            # 已完成的成果尽量留下，不强删
+            for fut in futures:
+                if fut.done() and not fut.cancelled():
+                    try:
+                        r = fut.result()
+                        if r:
+                            results.append(r)
+                    except Exception:
+                        pass
+            raise
+    return results
 
 
 # ===========================================================================
@@ -79,7 +109,8 @@ def _run_jobs(p: Progress, stage: str, jobs: list) -> list:
 
 def run_project(project_dir: str, options: OptimizeOptions,
                 work_root: str, output_dir: str,
-                progress: Progress | None = None) -> dict:
+                progress: Progress | None = None,
+                cancel: Callable[[], bool] | None = None) -> dict:
     """优化一个 Ren'Py 工程。返回汇总 dict（含报告路径）。"""
     p = progress or Progress()
     records: list[ChangeRecord] = []
@@ -110,7 +141,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
     p.emit("analyze", "正在扫描资源文件……")
     assets = scanner.scan_assets(
         game_dir, probe=True,
-        progress=lambda i, t, n: p.emit("scan", f"扫描资源 {i}/{t}：{n}"))
+        progress=lambda i, t, n: p.emit("scan", f"扫描资源 {i}/{t}：{n}"),
+        cancel=cancel)
     report = analyzer.analyze(assets, root=game_dir, mode="project")
 
     # --- 第 3 步：字符集 ---
@@ -346,7 +378,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
     if options.do_images:
         jobs = [_img_job(a) for a in todo_images
                 if a.size >= min_bytes and a.ext not in (".gif", ".bmp", ".avif")]
-        _aggregate(_run_jobs(p, "optimize", jobs), "image")
+        _aggregate(_run_jobs(p, "optimize", jobs, cancel), "image")
 
     if options.do_audio:
         if not find_ffmpeg():
@@ -356,7 +388,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 "② 到 https://www.ffmpeg.org/download.html 下载，把 ffmpeg.exe 放到本工具旁边的 bin 文件夹。")
         else:
             jobs = [_aud_job(a) for a in todo_audio if a.size >= min_bytes]
-            _aggregate(_run_jobs(p, "optimize", jobs), "audio")
+            _aggregate(_run_jobs(p, "optimize", jobs, cancel), "audio")
 
     if options.do_videos:
         if not find_ffmpeg():
@@ -367,10 +399,12 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 "请在高级选项关闭后重跑。")
             jobs = [_vid_job(a) for a in todo_videos
                     if a.ext in (".mp4", ".webm", ".ogv")]
-            _aggregate(_run_jobs(p, "optimize", jobs), "video")
+            _aggregate(_run_jobs(p, "optimize", jobs, cancel), "video")
 
     if options.do_fonts and preset.font_subset:
         for i, a in enumerate(todo_fonts, start=1):
+            if cancel and cancel():
+                raise PipelineCancelled()
             p.emit("optimize", f"字体 {i}/{len(todo_fonts)}：{a.rel}")
             if a.size < 256 * 1024:      # 小于 256KB 的字体瘦身收益有限
                 continue
@@ -473,7 +507,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
 
 def run_dist(dist_dir: str, options: OptimizeOptions,
              work_root: str, output_dir: str,
-             progress: Progress | None = None) -> dict:
+             progress: Progress | None = None,
+             cancel: Callable[[], bool] | None = None) -> dict:
     """对一个已打包的 Ren'Py 成品做安全瘦身。不改文件名、不换格式。"""
     p = progress or Progress()
     records: list[ChangeRecord] = []
@@ -502,9 +537,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     p.emit("analyze", "正在扫描成品资源……")
     extract_dir = working_p / "_rtools_extract"
     scan_log = lambda i, t, n: p.emit("scan", f"扫描资源 {i}/{t}：{n}")
-    loose = scanner.scan_assets(working, probe=True, progress=scan_log)
+    loose = scanner.scan_assets(working, probe=True, progress=scan_log,
+                                cancel=cancel)
     packed = scanner.scan_rpa_assets(working, str(extract_dir), probe=True,
-                                     progress=scan_log)
+                                     progress=scan_log, cancel=cancel)
     all_assets = loose + packed
     report = analyzer.analyze(all_assets, root=working, mode="dist")
 
@@ -534,178 +570,198 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     if options.do_videos and not find_ffmpeg():
         report.warnings.append("未找到 FFmpeg，视频压缩已跳过。")
 
-    # --- 第 4 步：优化（默认同名同格式；带源码的成品可换格式） ---
-    for i, a in enumerate(all_assets, start=1):
-        p.emit("optimize", f"瘦身 {i}/{len(all_assets)}：{a.rel}"
-                           + (f"（来自 {a.rpa_name}）" if a.in_rpa else ""))
+    # --- 第 4 步：优化（默认同名同格式；带源码的成品可换格式；B4 并行） ---
+    def _dist_job(a):
+        def job():
+            out = {"records": [], "saved": 0, "rename": None, "remap": None,
+                   "rpa": None, "failed": None, "warn": None}
+            # 脚本引用用的是相对 game/ 的路径，换算一下再查
+            try:
+                game_rel = Path(a.rel).relative_to("game").as_posix()
+            except ValueError:
+                game_rel = a.rel
+            if a.kind == AssetKind.IMAGE:
+                if a.size < preset.min_size_kb * 1024 or a.ext in (".gif", ".bmp", ".avif"):
+                    return out
+                # 实验性深度压缩：有损量化（同名同格式，安全）
+                if (options.png_quant and a.ext == ".png"
+                        and a.size >= 64 * 1024 and not a.in_rpa):
+                    res = quantize_png(a.path, a.path)
+                    if res:
+                        out["saved"] = res["old_size"] - res["new_size"]
+                        out["records"].append(ChangeRecord(
+                            action="quantize", src=a.rel,
+                            detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}（有损量化）"))
+                        return out
+                # 实验性运行时重映射：无源码也能转 WebP（注入映射脚本）
+                if (options.experimental_remap and not a.in_rpa
+                        and preset.png_to_webp
+                        and a.ext in (".png", ".jpg", ".jpeg")):
+                    new_rel = str(Path(game_rel).with_suffix(".webp")).replace("\\", "/")
+                    new_path = str(game_dir_p / new_rel)
+                    res = optimize_image(a.path, new_path, preset.image_quality,
+                                         convert_webp=True)
+                    if res:
+                        Path(a.path).unlink()
+                        out["remap"] = (game_rel, new_rel)
+                        out["saved"] = res["old_size"] - res["new_size"]
+                        out["records"].append(ChangeRecord(
+                            action="convert", src=game_rel, dst=new_rel,
+                            detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}（运行时重映射）"))
+                        return out
+                    # 转换失败落到同名压缩
+                # 带源码 + 查得到引用 + 不在封包里：可以转 WebP
+                if (ref_index is not None and not a.in_rpa
+                        and preset.png_to_webp
+                        and a.ext in (".png", ".jpg", ".jpeg")
+                        and ref_index.find(game_rel)):
+                    new_rel = str(Path(game_rel).with_suffix(".webp")).replace("\\", "/")
+                    new_path = str(game_dir_p / new_rel)
+                    res = optimize_image(a.path, new_path, preset.image_quality,
+                                         convert_webp=True)
+                    if res:
+                        Path(a.path).unlink()
+                        out["rename"] = (game_rel, new_rel)
+                        out["saved"] = res["old_size"] - res["new_size"]
+                        out["records"].append(ChangeRecord(
+                            action="convert", src=game_rel, dst=new_rel,
+                            detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+                    else:
+                        out["failed"] = "image"
+                else:
+                    # 同名压缩（带增量缓存）
+                    h = cache.hash_file(a.path) if options.use_cache else None
+                    key = f"img|q{preset.image_quality}|same"
+                    hit = cache.lookup_hash(h, key) if h else None
+                    if hit and cache.apply_cached(hit, a.path):
+                        new_sz = Path(a.path).stat().st_size
+                        if new_sz < a.size:
+                            out["saved"] = a.size - new_sz
+                            out["records"].append(ChangeRecord(
+                                action="compress", src=a.rel,
+                                detail="同名压缩（缓存命中）" + (f"（{a.rpa_name}）" if a.in_rpa else "")))
+                            if a.in_rpa:
+                                out["rpa"] = (a.rpa_name, a.rel, a.path)
+                        return out
+                    res = optimize_image(a.path, a.path, preset.image_quality,
+                                         convert_webp=False)
+                    if res:
+                        if h:
+                            cache.store_hash(h, key, a.path)
+                        out["saved"] = res["old_size"] - res["new_size"]
+                        out["records"].append(ChangeRecord(
+                            action="compress", src=a.rel,
+                            detail="同名压缩" + (f"（{a.rpa_name}）" if a.in_rpa else "")))
+                        if a.in_rpa:
+                            out["rpa"] = (a.rpa_name, a.rel, a.path)
+                    else:
+                        out["failed"] = "image"
+            elif a.kind == AssetKind.AUDIO:
+                # 带源码 + 查得到引用 + 不在封包里：WAV/MP3 可以转 OGG
+                if (ref_index is not None and not a.in_rpa
+                        and a.ext in (".wav", ".mp3")
+                        and ref_index.find(game_rel)):
+                    new_rel = str(Path(game_rel).with_suffix(".ogg")).replace("\\", "/")
+                    new_path = str(game_dir_p / new_rel)
+                    res = convert_audio(a.path, new_path, preset.audio_bitrate_k)
+                    if res:
+                        Path(a.path).unlink()
+                        out["rename"] = (game_rel, new_rel)
+                        out["saved"] = res["old_size"] - res["new_size"]
+                        out["records"].append(ChangeRecord(
+                            action="convert", src=game_rel, dst=new_rel,
+                            detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+                elif a.ext in (".ogg", ".mp3") and a.bitrate and \
+                        a.bitrate > preset.audio_bitrate_k + 32:
+                    # 同名同格式重编码，成品模式下安全（带增量缓存）
+                    h = cache.hash_file(a.path) if options.use_cache else None
+                    key = f"aud|{preset.audio_bitrate_k}|re-{a.ext[1:]}"
+                    hit = cache.lookup_hash(h, key) if h else None
+                    if hit and cache.apply_cached(hit, a.path):
+                        new_sz = Path(a.path).stat().st_size
+                        if new_sz < a.size:
+                            out["saved"] = a.size - new_sz
+                            out["records"].append(ChangeRecord(
+                                action="compress", src=a.rel,
+                                detail=f"{a.ext[1:].upper()} 降码率（缓存命中）"))
+                            if a.in_rpa:
+                                out["rpa"] = (a.rpa_name, a.rel, a.path)
+                        return out
+                    res = reencode_audio(a.path, a.path, preset.audio_bitrate_k)
+                    if res:
+                        if h:
+                            cache.store_hash(h, key, a.path)
+                        out["saved"] = res["old_size"] - res["new_size"]
+                        out["records"].append(ChangeRecord(
+                            action="compress", src=a.rel,
+                            detail=f"{a.ext[1:].upper()} 降码率（保持格式）"))
+                        if a.in_rpa:
+                            out["rpa"] = (a.rpa_name, a.rel, a.path)
+                    else:
+                        out["failed"] = "audio"
+                elif a.ext == ".wav":
+                    if ref_index is not None:
+                        out["warn"] = (f"{a.rel}：成品带源码但没查到它的字面引用，"
+                                       "可能被变量拼接调用，为安全起见不换格式。")
+                    else:
+                        out["warn"] = (f"{a.rel}：成品内的 WAV 不能换格式（引用被焊死），"
+                                       "无法安全压缩。")
+            elif a.kind == AssetKind.VIDEO:
+                # 视频压缩（BACKLOG B7，实验性，默认关）：同名同格式重编码
+                if options.do_videos and a.ext in (".mp4", ".webm", ".ogv") and find_ffmpeg():
+                    try:
+                        res = compress_video(a.path, a.path, options.preset)
+                    except RuntimeError as e:
+                        res = None
+                        out["warn"] = str(e)
+                    if res:
+                        out["saved"] = res["old_size"] - res["new_size"]
+                        out["records"].append(ChangeRecord(
+                            action="compress", src=a.rel,
+                            detail=f"视频重编码 {_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+                        if a.in_rpa:
+                            out["rpa"] = (a.rpa_name, a.rel, a.path)
+                    else:
+                        out["failed"] = "video"
+            elif a.kind == AssetKind.FONT and a.ext in (".ttf", ".otf"):
+                if a.size < 256 * 1024:
+                    return out
+                try:
+                    res = subset_font(a.path, a.path, chars)
+                    out["saved"] = res["old_size"] - res["new_size"]
+                    out["records"].append(ChangeRecord(
+                        action="subset_font", src=a.rel,
+                        detail=f"字形 {res['glyphs_before']} -> {res['glyphs_after']}"))
+                    if a.in_rpa:
+                        out["rpa"] = (a.rpa_name, a.rel, a.path)
+                except Exception as e:
+                    out["failed"] = "font"
+                    out["warn"] = f"{a.rel}：字体瘦身失败，保留原文件（{e}）"
+            return out
+        return a.rel, job
+
+    dist_jobs = []
+    for a in all_assets:
         # 引擎自带目录（renpy/common 等）里的资源不碰：
         # 内置界面/报错文本用的字符和文件扫描不到，瘦身会出事
         top_dir = a.rel.replace("\\", "/").split("/")[0].lower()
-        engine_owned = top_dir in ("renpy", "lib")
-        if engine_owned:
+        if top_dir in ("renpy", "lib"):
             continue
-        # 脚本引用用的是相对 game/ 的路径，换算一下再查
-        try:
-            game_rel = Path(a.rel).relative_to("game").as_posix()
-        except ValueError:
-            game_rel = a.rel
-        if a.kind == AssetKind.IMAGE:
-            if a.size < preset.min_size_kb * 1024 or a.ext in (".gif", ".bmp", ".avif"):
-                continue
-            # 实验性深度压缩：有损量化（同名同格式，安全）
-            if (options.png_quant and a.ext == ".png"
-                    and a.size >= 64 * 1024 and not a.in_rpa):
-                res = quantize_png(a.path, a.path)
-                if res:
-                    saved += res["old_size"] - res["new_size"]
-                    records.append(ChangeRecord(
-                        action="quantize", src=a.rel,
-                        detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}（有损量化）"))
-                    continue
-            # 实验性运行时重映射：无源码也能转 WebP（注入映射脚本）
-            if (options.experimental_remap and not a.in_rpa
-                    and preset.png_to_webp
-                    and a.ext in (".png", ".jpg", ".jpeg")):
-                new_rel = str(Path(game_rel).with_suffix(".webp")).replace("\\", "/")
-                new_path = str(game_dir_p / new_rel)
-                res = optimize_image(a.path, new_path, preset.image_quality,
-                                     convert_webp=True)
-                if res:
-                    Path(a.path).unlink()
-                    remap_map[game_rel] = new_rel
-                    saved += res["old_size"] - res["new_size"]
-                    records.append(ChangeRecord(
-                        action="convert", src=game_rel, dst=new_rel,
-                        detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}（运行时重映射）"))
-                    continue
-                # 转换失败落到同名压缩
-            # 带源码 + 查得到引用 + 不在封包里：可以转 WebP
-            if (ref_index is not None and not a.in_rpa
-                    and preset.png_to_webp
-                    and a.ext in (".png", ".jpg", ".jpeg")
-                    and ref_index.find(game_rel)):
-                new_rel = str(Path(game_rel).with_suffix(".webp")).replace("\\", "/")
-                new_path = str(game_dir_p / new_rel)
-                res = optimize_image(a.path, new_path, preset.image_quality,
-                                     convert_webp=True)
-                if res:
-                    Path(a.path).unlink()
-                    rename_map[game_rel] = new_rel
-                    saved += res["old_size"] - res["new_size"]
-                    records.append(ChangeRecord(
-                        action="convert", src=game_rel, dst=new_rel,
-                        detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
-                else:
-                    failed["image"] += 1
-            else:
-                # 同名压缩（带增量缓存）
-                h = cache.hash_file(a.path) if options.use_cache else None
-                key = f"img|q{preset.image_quality}|same"
-                hit = cache.lookup_hash(h, key) if h else None
-                if hit and cache.apply_cached(hit, a.path):
-                    new_sz = Path(a.path).stat().st_size
-                    if new_sz < a.size:
-                        saved += a.size - new_sz
-                        records.append(ChangeRecord(
-                            action="compress", src=a.rel,
-                            detail="同名压缩（缓存命中）" + (f"（{a.rpa_name}）" if a.in_rpa else "")))
-                        if a.in_rpa:
-                            rpa_replacements.setdefault(a.rpa_name, {})[a.rel] = a.path
-                    continue
-                res = optimize_image(a.path, a.path, preset.image_quality,
-                                     convert_webp=False)
-                if res:
-                    if h:
-                        cache.store_hash(h, key, a.path)
-                    saved += res["old_size"] - res["new_size"]
-                    records.append(ChangeRecord(action="compress", src=a.rel,
-                                                detail="同名压缩" + (f"（{a.rpa_name}）" if a.in_rpa else "")))
-                    if a.in_rpa:
-                        rpa_replacements.setdefault(a.rpa_name, {})[a.rel] = a.path
-                else:
-                    failed["image"] += 1
-        elif a.kind == AssetKind.AUDIO:
-            # 带源码 + 查得到引用 + 不在封包里：WAV/MP3 可以转 OGG
-            if (ref_index is not None and not a.in_rpa
-                    and a.ext in (".wav", ".mp3")
-                    and ref_index.find(game_rel)):
-                new_rel = str(Path(game_rel).with_suffix(".ogg")).replace("\\", "/")
-                new_path = str(game_dir_p / new_rel)
-                res = convert_audio(a.path, new_path, preset.audio_bitrate_k)
-                if res:
-                    Path(a.path).unlink()
-                    rename_map[game_rel] = new_rel
-                    saved += res["old_size"] - res["new_size"]
-                    records.append(ChangeRecord(
-                        action="convert", src=game_rel, dst=new_rel,
-                        detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
-            elif a.ext in (".ogg", ".mp3") and a.bitrate and \
-                    a.bitrate > preset.audio_bitrate_k + 32:
-                # 同名同格式重编码，成品模式下安全（带增量缓存）
-                h = cache.hash_file(a.path) if options.use_cache else None
-                key = f"aud|{preset.audio_bitrate_k}|re-{a.ext[1:]}"
-                hit = cache.lookup_hash(h, key) if h else None
-                if hit and cache.apply_cached(hit, a.path):
-                    new_sz = Path(a.path).stat().st_size
-                    if new_sz < a.size:
-                        saved += a.size - new_sz
-                        records.append(ChangeRecord(
-                            action="compress", src=a.rel,
-                            detail=f"{a.ext[1:].upper()} 降码率（缓存命中）"))
-                        if a.in_rpa:
-                            rpa_replacements.setdefault(a.rpa_name, {})[a.rel] = a.path
-                    continue
-                res = reencode_audio(a.path, a.path, preset.audio_bitrate_k)
-                if res:
-                    if h:
-                        cache.store_hash(h, key, a.path)
-                    saved += res["old_size"] - res["new_size"]
-                    records.append(ChangeRecord(
-                        action="compress", src=a.rel,
-                        detail=f"{a.ext[1:].upper()} 降码率（保持格式）"))
-                    if a.in_rpa:
-                        rpa_replacements.setdefault(a.rpa_name, {})[a.rel] = a.path
-                else:
-                    failed["audio"] += 1
-            elif a.ext == ".wav":
-                if ref_index is not None:
-                    report.warnings.append(
-                        f"{a.rel}：成品带源码但没查到它的字面引用，"
-                        "可能被变量拼接调用，为安全起见不换格式。")
-                else:
-                    report.warnings.append(
-                        f"{a.rel}：成品内的 WAV 不能换格式（引用被焊死），无法安全压缩。")
-        elif a.kind == AssetKind.VIDEO:
-            # 视频压缩（BACKLOG B7，实验性，默认关）：同名同格式重编码
-            if options.do_videos and a.ext in (".mp4", ".webm", ".ogv") and find_ffmpeg():
-                try:
-                    res = compress_video(a.path, a.path, options.preset)
-                except RuntimeError as e:
-                    res = None
-                    report.warnings.append(str(e))
-                if res:
-                    saved += res["old_size"] - res["new_size"]
-                    records.append(ChangeRecord(
-                        action="compress", src=a.rel,
-                        detail=f"视频重编码 {_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
-                    if a.in_rpa:
-                        rpa_replacements.setdefault(a.rpa_name, {})[a.rel] = a.path
-                else:
-                    failed["video"] += 1
-        elif a.kind == AssetKind.FONT and a.ext in (".ttf", ".otf"):
-            if a.size < 256 * 1024:
-                continue
-            try:
-                res = subset_font(a.path, a.path, chars)
-                saved += res["old_size"] - res["new_size"]
-                records.append(ChangeRecord(
-                    action="subset_font", src=a.rel,
-                    detail=f"字形 {res['glyphs_before']} -> {res['glyphs_after']}"))
-                if a.in_rpa:
-                    rpa_replacements.setdefault(a.rpa_name, {})[a.rel] = a.path
-            except Exception as e:
-                failed["font"] += 1
-                report.warnings.append(f"{a.rel}：字体瘦身失败，保留原文件（{e}）")
+        dist_jobs.append(_dist_job(a))
+
+    for r in _run_jobs(p, "optimize", dist_jobs, cancel):
+        records.extend(r["records"])
+        saved += r["saved"]
+        if r["rename"]:
+            rename_map[r["rename"][0]] = r["rename"][1]
+        if r["remap"]:
+            remap_map[r["remap"][0]] = r["remap"][1]
+        if r["rpa"]:
+            rpa_replacements.setdefault(r["rpa"][0], {})[r["rpa"][1]] = r["rpa"][2]
+        if r["failed"]:
+            failed[r["failed"]] += 1
+        if r["warn"]:
+            report.warnings.append(r["warn"])
 
     # --- 第 4.3 步：实验性运行时重映射脚本注入（BACKLOG B9） ---
     if remap_map:
@@ -813,7 +869,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
 def run_dist_smart(path: str, options: OptimizeOptions,
                    work_root: str, output_dir: str,
                    progress: Progress | None = None,
-                   password: str | None = None) -> dict:
+                   password: str | None = None,
+                   cancel: Callable[[], bool] | None = None) -> dict:
     """输入可以是成品目录，也可以是 zip/7z/rar 压缩包。
 
     压缩包输入时：解压 -> 定位成品目录 -> 瘦身 -> 重新打包成
@@ -830,7 +887,8 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     dist_root = archives.find_dist_root(extract_dir)
     p.emit("unpack", f"已定位成品目录：{Path(dist_root).name}")
 
-    result = run_dist(dist_root, options, work_root, output_dir, p)
+    result = run_dist(dist_root, options, work_root, output_dir, p,
+                      cancel=cancel)
 
     # 交付包里的文件夹用原成品目录名，不带时间戳，好认又整洁
     import shutil as _shutil

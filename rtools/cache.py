@@ -9,6 +9,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import shutil
 from pathlib import Path
 from typing import Optional
@@ -47,7 +48,10 @@ def store_hash(file_hash: str, action_key: str, optimized: str) -> None:
     try:
         entry = _entry_path(file_hash, action_key)
         entry.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(optimized, entry)
+        # 原子写入：并发场景下两个线程写同一条目也不会产出损坏文件
+        tmp = entry.with_name(entry.name + ".tmp")
+        shutil.copyfile(optimized, tmp)
+        os.replace(tmp, entry)
     except OSError:
         pass
 

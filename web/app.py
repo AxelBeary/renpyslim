@@ -48,9 +48,16 @@ def _new_job(kind: str) -> str:
         JOBS[job_id] = {
             "id": job_id, "kind": kind, "status": "running",
             "logs": [], "result": None, "error": None,
+            "cancel": False,
             "created": time.time(),
         }
     return job_id
+
+
+def _job_cancelled(job_id: str) -> bool:
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        return bool(job and job["cancel"])
 
 
 def _job_log(job_id: str, stage: str, message: str) -> None:
@@ -68,10 +75,21 @@ def _run_in_thread(job_id: str, fn) -> None:
             with JOBS_LOCK:
                 JOBS[job_id]["status"] = "done"
                 JOBS[job_id]["result"] = result
+        except pipeline.PipelineCancelled:
+            with JOBS_LOCK:
+                JOBS[job_id]["status"] = "canceled"
+                JOBS[job_id]["error"] = "用户已取消，已完成的部分成果保留在结果目录。"
+        except scanner.ScanCancelled:
+            with JOBS_LOCK:
+                JOBS[job_id]["status"] = "canceled"
+                JOBS[job_id]["error"] = "用户已取消扫描。"
         except Exception as e:
+            from rtools import crashdump
+            dump = crashdump.write_crash(JOBS.get(job_id, {}).get("kind", "job"))
             with JOBS_LOCK:
                 JOBS[job_id]["status"] = "error"
-                JOBS[job_id]["error"] = str(e)
+                JOBS[job_id]["error"] = str(e) + (
+                    f"\n崩溃详情已存：{dump}" if dump else "")
                 JOBS[job_id]["logs"].append(
                     {"t": time.time(), "stage": "error",
                      "message": traceback.format_exc(limit=5)})
@@ -207,7 +225,9 @@ def api_analyze(req: AnalyzeReq):
                 if not (p / "game").is_dir():
                     raise ValueError(f"{req.path} 缺少 game 目录，不是有效工程")
                 game = str(p / "game")
-                assets = scanner.scan_assets(game, probe=True, progress=scan_log)
+                assets = scanner.scan_assets(
+                    game, probe=True, progress=scan_log,
+                    cancel=lambda: _job_cancelled(job_id))
                 report = analyzer.analyze(assets, game, "project")
                 _job_log(job_id, "analyze", "正在提取字符集…")
                 chars, warns = charset.extract_charset(game, CharsetOptions())
@@ -219,9 +239,11 @@ def api_analyze(req: AnalyzeReq):
                 work = Path(tempfile.mkdtemp(prefix="rtools_analyze_"))
                 try:
                     loose = scanner.scan_assets(str(p), probe=True,
-                                                progress=scan_log)
+                                                progress=scan_log,
+                                                cancel=lambda: _job_cancelled(job_id))
                     packed = scanner.scan_rpa_assets(str(p), str(work),
-                                                     probe=True, progress=scan_log)
+                                                     probe=True, progress=scan_log,
+                                                     cancel=lambda: _job_cancelled(job_id))
                     report = analyzer.analyze(loose + packed, str(p), "dist")
                 finally:
                     shutil.rmtree(work, ignore_errors=True)
@@ -264,12 +286,14 @@ def api_optimize(req: OptimizeReq):
     def task():
         if mode == "project":
             r = pipeline.run_project(str(path), opts, work_root, output_dir,
-                                     progress)
+                                     progress,
+                                     cancel=lambda: _job_cancelled(job_id))
         else:
             # run_dist_smart 兼容目录与压缩包输入，压缩包会自动回包
             r = pipeline.run_dist_smart(str(path), opts, work_root,
                                         output_dir, progress,
-                                        password=req.password)
+                                        password=req.password,
+                                        cancel=lambda: _job_cancelled(job_id))
         return _clean_result(r)
 
     _run_in_thread(job_id, task)
@@ -314,7 +338,8 @@ def api_full(req: FullReq):
 
     def task():
         opt = pipeline.run_project(str(path), opts, work_root, output_dir,
-                                   progress)
+                                   progress,
+                                   cancel=lambda: _job_cancelled(job_id))
         pkg = packager.package_project(sdk, opt["working_dir"], req.platforms,
                                        req.destination,
                                        log=lambda m: _job_log(job_id, "package", m),
@@ -334,7 +359,25 @@ def api_job(job_id: str, since: int = 0):
         logs = job["logs"][since:]
         return {"ok": True, "status": job["status"],
                 "logs": logs, "next": since + len(logs),
-                "result": job["result"], "error": job["error"]}
+                "result": job["result"], "error": job["error"],
+                "cancel_requested": job["cancel"]}
+
+
+@app.post("/api/job/{job_id}/cancel")
+def api_job_cancel(job_id: str):
+    with JOBS_LOCK:
+        job = JOBS.get(job_id)
+        if not job:
+            return JSONResponse({"ok": False, "error": "任务不存在"})
+        job["cancel"] = True
+    return {"ok": True}
+
+
+@app.get("/api/update")
+def api_update():
+    from rtools import updater
+    info = updater.check_update()
+    return {"ok": True, "info": info}
 
 
 @app.get("/api/sdk")

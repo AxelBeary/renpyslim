@@ -25,6 +25,10 @@ _FFPROBE = shutil.which("ffprobe")
 ScanProgress = Optional[Callable[[int, int, str], None]]
 
 
+class ScanCancelled(Exception):
+    """扫描被用户取消。"""
+
+
 def _progress_step(total: int) -> int:
     """小项目逐个报、大项目抽样报，兼顾实时感与性能。"""
     if total <= 50:
@@ -79,7 +83,8 @@ def iter_files(root: Path) -> Iterator[Path]:
 
 
 def scan_assets(root: str, probe: bool = True,
-                progress: ScanProgress = None) -> list[AssetInfo]:
+                progress: ScanProgress = None,
+                cancel: Optional[Callable[[], bool]] = None) -> list[AssetInfo]:
     """扫描散落的资源文件。probe=True 时读取图片尺寸/音视频元数据。"""
     root_p = Path(root)
     candidates = []
@@ -92,6 +97,8 @@ def scan_assets(root: str, probe: bool = True,
     step = _progress_step(total)
     results: list[AssetInfo] = []
     for i, (p, kind) in enumerate(candidates, start=1):
+        if cancel and cancel():
+            raise ScanCancelled()
         rel = p.relative_to(root_p).as_posix()
         if progress and (i % step == 1 or i == total):
             progress(i, total, rel)
@@ -110,7 +117,8 @@ def scan_assets(root: str, probe: bool = True,
 
 
 def scan_rpa_assets(root: str, extract_dir: str, probe: bool = True,
-                    progress: ScanProgress = None) -> list[AssetInfo]:
+                    progress: ScanProgress = None,
+                    cancel: Optional[Callable[[], bool]] = None) -> list[AssetInfo]:
     """扫描成品目录内的 RPA 封包，把封包里的资源解出到 extract_dir 并登记。
 
     返回的 AssetInfo.rel 使用封包内路径（即游戏内引用路径）。
@@ -136,6 +144,8 @@ def scan_rpa_assets(root: str, extract_dir: str, probe: bool = True,
         step = _progress_step(total)
         results: list[AssetInfo] = []
         for i, (p, arc, name) in enumerate(plan, start=1):
+            if cancel and cancel():
+                raise ScanCancelled()
             if progress and (i % step == 1 or i == total):
                 progress(i, total, f"{p.stem}/{name}")
             ext = Path(name).suffix.lower()

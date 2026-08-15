@@ -46,17 +46,17 @@
 | B8 | 安卓打包补丁 | renpybox | 实战已通过：用测试工程 JIGSAW_PUZZLES 成功打出 release 签名 APK（271MB）。此前 the_question 失败的根因是该项目没配密钥；四个补丁均未用上，暂不引入 | ✅ |
 | B9 | 动态拼名运行时兜底 | renpak | 实验项已真实验收：无源码成品 Jigsaw_Puzzles-1.5.5 开启后 16 张图透明转 WebP，共省 160MB，游戏启动正常；删脚本即还原 | ✅（已验收） |
 
-### 远期想法（无排期）
+### 远期想法（部分已实现）
 
-| # | 想法 | 来源 |
-|---|---|---|
-| F1 | APK 本体瘦身（拆 assets/x-* → 压缩 → 重签名） | Rentool |
-| F2 | 自更新（GitHub Releases + trampoline 替换，带 zip-slip 防护） | Alenia-Porter |
-| F3 | 崩溃转储（失败时落盘完整命令+stderr） | Alenia-Porter |
-| F4 | 任务取消按钮（flag 文件轮询方案跨界面通用） | Alenia-Porter |
-| F5 | lint 输出驱动的自动修复闭环 | renpybox |
-| F6 | 进度按字节级百分比（预扫描总量、失败按原体积计入） | Rentool |
-| F7 | Ren'Py TextMate 语法资产（若未来加脚本查看器） | Rentool |
+| # | 想法 | 来源 | 状态 |
+|---|---|---|---|
+| F1 | APK 本体瘦身（拆 assets/x-* → 压缩 → 重签名） | Rentool | 💡 无排期 |
+| F2 | 自更新检查（GitHub Releases 对比 + 界面提示） | Alenia-Porter | ✅ 已实现 |
+| F3 | 崩溃转储（~/.renpyslim/crashes/，保留 20 份） | Alenia-Porter | ✅ 已实现 |
+| F4 | 任务取消按钮（扫描/优化均可停，已完成成果保留） | Alenia-Porter | ✅ 已实现 |
+| F5 | lint 输出驱动的自动修复闭环 | renpybox | 💡 无排期 |
+| F6 | 进度字节级（处理中 x/y · 累计已省 X MB） | Rentool | ✅ 已实现 |
+| F7 | Ren'Py TextMate 语法资产（若未来加脚本查看器） | Rentool | 💡 无排期 |
 
 ## 三、明确不做（红线与取舍记录）
 
@@ -73,5 +73,4 @@
 - 新需求先落到本文件，注明状态，再动代码
 - 每批完成后把 📅 改为 ✅ 并补一行结果记录
 - 红线变更必须由用户拍板，拍板结论记录在"明确不做"或移回待办
-- 已知残余债：成品线（run_dist）优化循环仍为串行（工程线已并行），
-  触发条件：用户对成品瘦身速度提出不满，或给成品线加新优化器时
+- 已知残余债：无（成品线已于 v0.9.0+ 并行化，与工程线一致）
