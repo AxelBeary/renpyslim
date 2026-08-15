@@ -9,6 +9,11 @@ from pathlib import Path
 # 复制工作副本时跳过的目录（可再生、体积大、与优化无关）
 _COPY_SKIP = {"saves", "cache", "__pycache__", ".git", "tmp", "log"}
 
+# 备份时只跳纯垃圾：存档（saves）必须进备份——它不可再生，
+# 一旦后续操作出事，备份是唯一的救命稻草。（审核修复：曾误用 _COPY_SKIP
+# 导致 in_place 备份里没有存档，清理又把存档删了，两头落空）
+_BACKUP_SKIP = {"__pycache__", ".git"}
+
 
 def make_working_copy(project_dir: str, dest_root: str) -> str:
     """把工程复制到工作目录，返回副本路径。原件保持不动。"""
@@ -31,7 +36,7 @@ def make_backup_zip(target_dir: str, dest_zip: str) -> str:
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for p in target.rglob("*"):
             if p.is_file():
-                if any(part in _COPY_SKIP for part in p.relative_to(target).parts):
+                if any(part in _BACKUP_SKIP for part in p.relative_to(target).parts):
                     continue
                 zf.write(p, p.relative_to(target.parent))
     return str(out)

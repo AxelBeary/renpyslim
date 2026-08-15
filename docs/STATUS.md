@@ -6,7 +6,7 @@
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，Apache-2.0）
 Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.9.0（自更新检查的靶子）
-回归测试：56 项全绿（`pytest tests -q`）
+回归测试：68 项全绿（`pytest tests -q`，含审核修复回归 12 条）
 
 ## Cadaver 样本实测战绩（用户提供的真实游戏，全部实测通过）
 
@@ -45,6 +45,34 @@ Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.9.0（自更新
 3. F5 lint 自修、F7 语法资产（远期）
 4. 用户真实游戏成品瘦身（等用户提供样本）
 
+## 2026-08-15 全面代码审核结果（17 项：15 属实已修，1 半属实已修，1 不属实）
+
+审核当日逐条对照代码核验，属实项当日全部修复，
+新增 12 条回归测试锁住（tests/test_bugfix_audit.py，共 68 项全绿）。
+
+严重级（4/4 属实，已修）：
+1. ✅ run_dist in_place 删玩家存档且备份漏存档 → in_place 跳过垃圾清理
+   （对齐工程模式），make_backup_zip 改用 _BACKUP_SKIP 不再排除 saves
+2. ✅ APK 字符集提取链路断裂（rpyc 属 OTHER 从不解出）→ 提取阶段一并
+   解出 x-game 内脚本/文本，按类型分别解码；真实 APK 冒烟提到 2193 汉字
+3. ✅ 脚本封 rpa 时成品字符集扫空 → scan_rpa_assets 新增 extract_scripts，
+   run_dist 已开启
+4. ✅ BASE_CJK_PUNCT 弯引号被 ASCII 引号截断 → 改用 \u 转义写入并加注释防复发
+
+中等级（7/7 属实，已修）：remap 二次运行先读回旧映射再合并（remap.py
+新增 parse_remap_mapping）；隔离区改按 game/ 基准拼路径；run_dist_smart
+目录分支补传 cancel；新增 find_suffix_clashes 预检同名撞车（工程/成品/APK
+三处撞车项降级同名压缩）；utils.safe_join 路径净化挡住 zip-slip（scanner
+与 apk 解包均已接入，盘符/.. 一律拒绝）；RpaWriter 新增 abort，重建异常
+句柄必关；取消时 _flush_partial_changelog 落 cancelled=true 的部分清单。
+
+轻微级（3 属实已修，1 半属实已修，1 不属实）：
+- ✅ PC/Mac 打包补 1 小时超时（对齐安卓分支）
+- ✅ slim_apk ZipFile 句柄移入 finally（异常不再锁死原 APK）
+- ✅ cache 并发写 tmp 名加随机后缀
+- ✅（半属实）ffmpeg 探测补容器级 bit_rate 回退（WAV 等流级无码率）
+- ❌（不属实）read_rpyc_text 槽位循环实际受文件长度限界，无需修
+
 ## 本机环境备忘
 
 - Ren'Py SDK 8.5.3：E:\renpy（打包、rpyc 编译都委托它）
@@ -58,7 +86,7 @@ Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.9.0（自更新
 
 ```
 git status                                  # 应干净
-.venv\Scripts\python -m pytest tests -q     # 应 56 passed
+.venv\Scripts\python -m pytest tests -q     # 应 68 passed
 dist\RenPySlim.exe                          # 如代码有变，先 build_exe.bat 重建
 ```
 

@@ -161,16 +161,23 @@ def package_project(sdk: str, project_dir: str, platforms: list[str],
         for p in pc_platforms:
             cmd += ["--package", PLATFORM_PACKAGES[p]]
         log(f"执行官方打包：{' '.join(cmd)}")
-        proc = run_quiet(cmd, capture_output=True, text=False, cwd=sdk)
-        out = proc.stdout.decode("utf-8", "replace")
-        err = proc.stderr.decode("utf-8", "replace")
-        if proc.returncode == 0:
-            for p in pc_platforms:
-                built.append(p)
-            log(out[-2000:] if out else "打包完成")
-        else:
-            errors.append(f"PC/Mac 打包失败（退出码 {proc.returncode}）：\n"
-                          f"{(err or out)[-3000:]}")
+        # 审核修复：PC/Mac 打包也得有超时（以前无超时，官方启动器
+        # 卡死时流水线永远挂着），口径与安卓分支一致
+        try:
+            proc = run_quiet(cmd, capture_output=True, text=False,
+                             timeout=3600, cwd=sdk)
+            out = proc.stdout.decode("utf-8", "replace")
+            err = proc.stderr.decode("utf-8", "replace")
+            if proc.returncode == 0:
+                for p in pc_platforms:
+                    built.append(p)
+                log(out[-2000:] if out else "打包完成")
+            else:
+                errors.append(f"PC/Mac 打包失败（退出码 {proc.returncode}）：\n"
+                              f"{(err or out)[-3000:]}")
+                log(errors[-1])
+        except subprocess.TimeoutExpired:
+            errors.append("PC/Mac 打包超时（超过 1 小时），请检查机器性能与 SDK 状态。")
             log(errors[-1])
 
     if "android" in platforms:

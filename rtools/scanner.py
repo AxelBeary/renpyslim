@@ -15,9 +15,13 @@ from .models import (
     IMAGE_EXTS, AUDIO_EXTS, VIDEO_EXTS, FONT_EXTS,
 )
 from .procutil import run_quiet
+from .utils import safe_join
 from . import rpa
 
 ASSET_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS | FONT_EXTS
+
+# 字符集提取关心的脚本/文本扩展名（封包里属 OTHER，不会被当资源登记）
+SCRIPT_EXTRACT_EXTS = {".rpyc", ".rpymc", ".rpy", ".txt"}
 
 _FFPROBE = shutil.which("ffprobe")
 
@@ -58,6 +62,10 @@ def _probe_media(path: str) -> tuple[Optional[float], Optional[int]]:
             if s.get("codec_type") == "audio" and s.get("bit_rate"):
                 bitrate = int(int(s["bit_rate"]) / 1000)
                 break
+        # 审核修复：部分容器（如 WAV）流级没有 bit_rate，回退到容器级，
+        # 否则码率探测永远为 None，降码率判断全被跳过
+        if bitrate is None and fmt.get("bit_rate"):
+            bitrate = int(int(fmt["bit_rate"]) / 1000)
         return duration, bitrate
     except Exception:
         return None, None
@@ -118,10 +126,14 @@ def scan_assets(root: str, probe: bool = True,
 
 def scan_rpa_assets(root: str, extract_dir: str, probe: bool = True,
                     progress: ScanProgress = None,
-                    cancel: Optional[Callable[[], bool]] = None) -> list[AssetInfo]:
+                    cancel: Optional[Callable[[], bool]] = None,
+                    extract_scripts: bool = False) -> list[AssetInfo]:
     """扫描成品目录内的 RPA 封包，把封包里的资源解出到 extract_dir 并登记。
 
     返回的 AssetInfo.rel 使用封包内路径（即游戏内引用路径）。
+    extract_scripts=True 时一并解出脚本/文本条目（不登记为资源）：
+    成品模式字符集提取需要它们，否则脚本封在 rpa 里时扫不到
+    实际使用字符，字体会被剃成保底集。（审核修复）
     """
     root_p = Path(root)
     extract_p = Path(extract_dir)
@@ -137,8 +149,19 @@ def scan_rpa_assets(root: str, extract_dir: str, probe: bool = True,
                 continue
             archives.append((p, arc))
             for name in arc.names():
-                if kind_of(Path(name).suffix.lower()) != AssetKind.OTHER:
+                ext = Path(name).suffix.lower()
+                if kind_of(ext) != AssetKind.OTHER:
                     plan.append((p, arc, name))
+                elif extract_scripts and ext in SCRIPT_EXTRACT_EXTS:
+                    # 只解出不登记；同名互覆无妨（字符集收集不怕重）
+                    out = safe_join(extract_p / p.stem, name)
+                    if out is None:
+                        continue
+                    out.parent.mkdir(parents=True, exist_ok=True)
+                    try:
+                        arc.extract(name, str(out))
+                    except rpa.RpaError:
+                        continue
 
         total = len(plan)
         step = _progress_step(total)
@@ -150,7 +173,10 @@ def scan_rpa_assets(root: str, extract_dir: str, probe: bool = True,
                 progress(i, total, f"{p.stem}/{name}")
             ext = Path(name).suffix.lower()
             kind = kind_of(ext)
-            out = extract_p / p.stem / name
+            # 审核修复：封包内路径来自不可信输入，净化后再落盘（防 zip-slip）
+            out = safe_join(extract_p / p.stem, name)
+            if out is None:
+                continue
             out.parent.mkdir(parents=True, exist_ok=True)
             try:
                 arc.extract(name, str(out))

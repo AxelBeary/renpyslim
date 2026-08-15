@@ -28,6 +28,7 @@ from .font_optimizer import subset_font
 from .image_optimizer import optimize_image
 from .models import AssetKind, Progress, kind_of
 from .procutil import run_quiet
+from .utils import find_suffix_clashes, safe_join
 
 # 引擎与杂项目录（APK 内相对路径前缀），一律不碰
 UNTOUCHABLE_PREFIXES = ("assets/x-renpy/", "assets/dexopt/", "lib/", "res/",
@@ -159,12 +160,24 @@ def generate_keystore(dest_dir: str, password: Optional[str] = None,
 
 def _extract_charset_from_apk(extract_root: Path,
                               opts: CharsetOptions) -> set[str]:
-    """从 APK 里的编译脚本提取字符集（rpyc 字节流宽容解码）。"""
+    """从 APK 里的编译脚本提取字符集。
+
+    编译产物（rpyc/rpymc）走 zlib 解压宽容解码；纯文本（rpy/txt）
+    走稳健文本读取——以前全部按 rpyc 解，文本文件 zlib 失败
+    返回空串，白白丢字符。（审核修复）
+    """
     chars: set[str] = set()
     for p in extract_root.rglob("*"):
-        if p.is_file() and p.suffix.lower() in (".rpyc", ".rpymc", ".rpy", ".txt"):
+        if not p.is_file():
+            continue
+        suffix = p.suffix.lower()
+        if suffix in (".rpyc", ".rpymc"):
             text = charset_mod.read_rpyc_text(p)
-            chars.update(c for c in text if c.isprintable())
+        elif suffix in (".rpy", ".txt"):
+            text = charset_mod.read_text_robust(p)
+        else:
+            continue
+        chars.update(c for c in text if c.isprintable())
     chars.update(opts.base_text())
     chars.discard("\x00")
     return chars
@@ -202,12 +215,14 @@ def slim_apk(apk_path: str, preset_name: str,
     warnings: list[str] = []
     changes = 0
     saved = 0
+    zf = None
     try:
         zf = zipfile.ZipFile(str(apk))
         names = zf.namelist()
 
         # 1. 提取可优化目标
         targets = []
+        script_entries = []   # x-game 内脚本/文本：只供字符集提取，不参与优化
         for name in names:
             if name.endswith("/"):
                 continue
@@ -216,12 +231,22 @@ def slim_apk(apk_path: str, preset_name: str,
             if not name.startswith("assets/"):
                 continue
             if kind_of(Path(name).suffix.lower()) == AssetKind.OTHER:
+                # 审核修复：rpyc/rpy/txt 属 OTHER 以前从不解出，字符集扫空，
+                # 中文字体被剃成保底集（文字变方框）
+                if name.startswith(X_GAME_PREFIX) and \
+                        Path(name).suffix.lower() in (".rpyc", ".rpymc",
+                                                      ".rpy", ".txt"):
+                    script_entries.append(name)
                 continue
             targets.append(name)
         p.emit("apk", f"APK 共 {len(names)} 个条目，可优化资源 {len(targets)} 个")
 
-        for name in targets:
-            out = work / name
+        for name in targets + script_entries:
+            # 审核修复：条目名来自不可信输入，净化后再落盘（防 zip-slip）
+            out = safe_join(work, name)
+            if out is None:
+                warnings.append(f"条目名异常（疑似路径穿越），已跳过：{name}")
+                continue
             out.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(name) as src_f:
                 out.write_bytes(src_f.read())
@@ -238,6 +263,18 @@ def slim_apk(apk_path: str, preset_name: str,
                             "图片/音频降级为同名压缩。")
         changed: set[str] = set()
         pending_remap = []   # (旧条目, 新条目名, 本地新文件, 节省字节)
+        # 审核修复：预检同名撞车——foo.png 与 foo.jpg 都会变 foo.webp，
+        # 撞车项不转换（降级同名压缩），避免互覆丢文件
+        clash_webp = find_suffix_clashes(
+            [apk_entry_to_game_rel(n) for n in targets
+             if apk_entry_to_game_rel(n)
+             and Path(n).suffix.lower() in (".png", ".jpg", ".jpeg")],
+            ".webp")
+        clash_ogg = find_suffix_clashes(
+            [apk_entry_to_game_rel(n) for n in targets
+             if apk_entry_to_game_rel(n)
+             and Path(n).suffix.lower() in (".wav", ".mp3")],
+            ".ogg")
         for i, name in enumerate(targets, start=1):
             if i % 10 == 1 or i == len(targets):
                 p.emit("apk", f"瘦身 {i}/{len(targets)}：{name}")
@@ -255,6 +292,13 @@ def slim_apk(apk_path: str, preset_name: str,
                 elif kind_of(ext) == AssetKind.AUDIO \
                         and ext in (".wav", ".mp3"):
                     new_suffix = ".ogg"
+                if new_suffix:
+                    new_rel = Path(game_rel).with_suffix(new_suffix).as_posix()
+                    clash = clash_webp if new_suffix == ".webp" else clash_ogg
+                    if new_rel in clash:
+                        warnings.append(f"{name}：换格式目标与另一资源撞名，"
+                                        "已降级为同名压缩。")
+                        new_suffix = None
                 if new_suffix:
                     new_rel = Path(game_rel).with_suffix(new_suffix).as_posix()
                     new_entry = game_rel_to_apk_entry(new_rel)
@@ -353,7 +397,6 @@ def slim_apk(apk_path: str, preset_name: str,
                 out_zf.writestr(new_entry, local.read_bytes())
             if remap_rpyc and rpyc_entry_name:
                 out_zf.writestr(rpyc_entry_name, remap_rpyc)
-        zf.close()
 
         # 5. 对齐
         zipalign, apksigner = find_build_tools(sdk) if sdk else (None, None)
@@ -416,4 +459,7 @@ def slim_apk(apk_path: str, preset_name: str,
             "warnings": warnings,
         }
     finally:
+        # 审核修复：异常路径上句柄也要关，否则 Windows 上原 APK 被锁死
+        if zf is not None:
+            zf.close()
         shutil.rmtree(work, ignore_errors=True)

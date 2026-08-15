@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import os
 import shutil
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -48,8 +49,9 @@ def store_hash(file_hash: str, action_key: str, optimized: str) -> None:
     try:
         entry = _entry_path(file_hash, action_key)
         entry.parent.mkdir(parents=True, exist_ok=True)
-        # 原子写入：并发场景下两个线程写同一条目也不会产出损坏文件
-        tmp = entry.with_name(entry.name + ".tmp")
+        # 原子写入：tmp 名带随机后缀（审核修复）——并发写同一条目时
+        # 各用各的 tmp，避免一方 copyfile 中途被另一方 replace 掉
+        tmp = entry.with_name(f"{entry.name}.{uuid.uuid4().hex}.tmp")
         shutil.copyfile(optimized, tmp)
         os.replace(tmp, entry)
     except OSError:

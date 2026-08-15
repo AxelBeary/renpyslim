@@ -197,6 +197,17 @@ class RpaWriter:
         self._f.write(b"RPA-3.0 %016x %08x\n" % (index_off, self.key))
         self._f.close()
 
+    def abort(self) -> None:
+        """异常终止：只关句柄不写索引（半成品由调用方清理）。
+
+        审核修复：以前异常路径上句柄不关，Windows 上临时封包
+        被占住，后续 unlink 连环爆。
+        """
+        try:
+            self._f.close()
+        except Exception:
+            pass
+
 
 def rebuild_archive(src_rpa: str, dest_rpa: str,
                     replacements: Dict[str, str]) -> Tuple[int, int]:
@@ -210,14 +221,18 @@ def rebuild_archive(src_rpa: str, dest_rpa: str,
     arc = RpaArchive(src_rpa)
     writer = RpaWriter(dest_rpa, key=arc.key if arc.version == "RPA-3.0" else 0)
     try:
-        for name in arc.names():
-            total += 1
-            if name in replacements:
-                writer.add_file(name, replacements[name])
-                replaced += 1
-            else:
-                writer.add(name, arc.read(name))
+        try:
+            for name in arc.names():
+                total += 1
+                if name in replacements:
+                    writer.add_file(name, replacements[name])
+                    replaced += 1
+                else:
+                    writer.add(name, arc.read(name))
+            writer.close()
+        except Exception:
+            writer.abort()
+            raise
     finally:
         arc.close()
-    writer.close()
     return replaced, total

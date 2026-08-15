@@ -63,3 +63,26 @@ def build_remap_script(mapping: dict[str, str]) -> str:
 def parse_remap_targets(script_text: str) -> int:
     """数一数脚本里映射了多少条（供报告/测试用）。"""
     return script_text.count('": ')
+
+
+def parse_remap_mapping(script_text: str) -> dict[str, str]:
+    """从已注入的重映射脚本里把映射表读回来。
+
+    二次运行时用来合并旧映射：只拿新表覆盖写会把旧条目弄丢，
+    而旧表里的原文件已被删除，丢了映射 = 图加载不到。（审核修复）
+    解析失败返回空 dict（保守：不阻断流程）。
+    """
+    marker = "_renpyslim_remap = "
+    idx = script_text.find(marker)
+    if idx < 0:
+        return {}
+    brace = script_text.find("{", idx)
+    if brace < 0:
+        return {}
+    try:
+        obj, _end = json.JSONDecoder().raw_decode(script_text[brace:])
+    except ValueError:
+        return {}
+    if not isinstance(obj, dict):
+        return {}
+    return {str(k): str(v) for k, v in obj.items()}
