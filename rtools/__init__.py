@@ -4,4 +4,4 @@
 模块职责与依赖方向见 docs/ARCHITECTURE.md；需求与待办见 docs/BACKLOG.md。
 """
 
-__version__ = "0.9.0"
+__version__ = "0.10.0"
