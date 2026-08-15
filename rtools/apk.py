@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Optional
 
 from . import charset as charset_mod
+from . import remap as remap_mod
 from .audio_optimizer import reencode_audio
 from .config import PRESETS, CharsetOptions
 from .font_optimizer import subset_font
@@ -32,10 +33,54 @@ from .procutil import run_quiet
 UNTOUCHABLE_PREFIXES = ("assets/x-renpy/", "assets/dexopt/", "lib/", "res/",
                         "kotlin/", "META-INF/")
 SIGNATURE_SUFFIXES = (".SF", ".RSA", ".DSA", ".EC")
+X_GAME_PREFIX = "assets/x-game/"
 
 
 class ApkError(Exception):
     pass
+
+
+def apk_entry_to_game_rel(entry: str) -> Optional[str]:
+    """APK 条目名 → 游戏内相对路径（去掉 x- 前缀体系）。
+
+    assets/x-game/x-images/x-foo.png -> images/foo.png
+    非 x-game 下的条目返回 None。
+    """
+    if not entry.startswith(X_GAME_PREFIX):
+        return None
+    parts = entry[len(X_GAME_PREFIX):].split("/")
+    parts = [seg[2:] if seg.startswith("x-") else seg for seg in parts]
+    return "/".join(parts)
+
+
+def game_rel_to_apk_entry(rel: str) -> str:
+    """游戏内相对路径 → APK 条目名（每个段加 x- 前缀）。
+
+    images/foo.webp -> assets/x-game/x-images/x-foo.webp
+    """
+    parts = rel.split("/")
+    return X_GAME_PREFIX + "/".join("x-" + p for p in parts)
+
+
+def compile_remap_rpyc(script_text: str, sdk: str) -> Optional[bytes]:
+    """用 SDK 把重映射脚本编译成 rpyc 字节（APK 里只认编译产物）。"""
+    renpy_exe = Path(sdk) / "renpy.exe"
+    if not renpy_exe.exists():
+        return None
+    proj = Path(tempfile.mkdtemp(prefix="renpyslim_rpyc_"))
+    try:
+        game = proj / "game"
+        game.mkdir()
+        (game / remap_mod.REMAP_SCRIPT_NAME).write_text(script_text,
+                                                        encoding="utf-8")
+        run_quiet([str(renpy_exe), str(proj), "compile"],
+                  capture_output=True, timeout=300, cwd=str(sdk))
+        rpyc = game / (remap_mod.REMAP_SCRIPT_NAME + "c")
+        return rpyc.read_bytes() if rpyc.exists() else None
+    except Exception:
+        return None
+    finally:
+        shutil.rmtree(proj, ignore_errors=True)
 
 
 def find_build_tools(sdk: str) -> tuple[Optional[str], Optional[str]]:
@@ -134,12 +179,14 @@ def slim_apk(apk_path: str, preset_name: str,
               key_pass: Optional[str] = None,
               generate_key: bool = False,
               new_key_password: Optional[str] = None,
+              webp_remap: bool = False,
               progress: Optional[Progress] = None) -> dict:
     """瘦身一个 APK。签名三种姿势：
     ① 传 keystore+ks_pass → 用原钥匙（可覆盖安装旧版）
     ② 传自有 keystore+密码 → 用自己的身份签
     ③ generate_key=True → 现场生成新钥匙+密码备忘（新身份，需卸载重装）
     都不传 → 未签名产出 + 警告。
+    webp_remap=True（实验性）：图片转 WebP 并注入编译好的重映射脚本（B9 的 APK 版）。
     返回 {output, saved_bytes, changes, signed, keystore, warnings}。
     """
     p = progress or Progress()
@@ -182,14 +229,42 @@ def slim_apk(apk_path: str, preset_name: str,
         chars = _extract_charset_from_apk(work, cs_opts)
         p.emit("apk", f"从 APK 内脚本提取到 {len(chars)} 个字符")
 
-        # 3. 逐个同名优化
+        # 3. 逐个同名优化（开了 webp_remap 则图片先试转 WebP）
+        remap_usable = webp_remap and bool(sdk) \
+            and (Path(sdk) / "renpy.exe").exists()
+        if webp_remap and not remap_usable:
+            warnings.append("未找到 Ren'Py SDK，无法编译重映射脚本，"
+                            "图片降级为同名压缩。")
         changed: set[str] = set()
+        pending_remap = []   # (旧条目, 新条目名, 本地新文件, 节省字节)
         for i, name in enumerate(targets, start=1):
             if i % 10 == 1 or i == len(targets):
                 p.emit("apk", f"瘦身 {i}/{len(targets)}：{name}")
             f = work / name
             ext = f.suffix.lower()
             size_before = f.stat().st_size
+            game_rel = apk_entry_to_game_rel(name)
+            # 实验性：图片转 WebP + 运行时重映射（不改引用，安全）
+            if (remap_usable and game_rel
+                    and kind_of(ext) == AssetKind.IMAGE
+                    and ext in (".png", ".jpg", ".jpeg")
+                    and size_before >= preset.min_size_kb * 1024):
+                new_rel = Path(game_rel).with_suffix(".webp").as_posix()
+                new_entry = game_rel_to_apk_entry(new_rel)
+                new_local = work / new_entry
+                new_local.parent.mkdir(parents=True, exist_ok=True)
+                res = None
+                try:
+                    res = optimize_image(str(f), str(new_local),
+                                         preset.image_quality,
+                                         convert_webp=True)
+                except Exception as e:
+                    warnings.append(f"{name}：转 WebP 失败，保留原样（{e}）")
+                if res:
+                    pending_remap.append((name, new_entry, new_local,
+                                          size_before - res["new_size"]))
+                    continue
+                # 转换失败落到同名压缩
             res = None
             try:
                 if kind_of(ext) == AssetKind.IMAGE and ext != ".gif" \
@@ -209,6 +284,36 @@ def slim_apk(apk_path: str, preset_name: str,
                     changes += 1
                     changed.add(name)
 
+        # 3.5 重映射落地：编译脚本成功才生效，失败则原图原样保留
+        converted: set[str] = set()
+        new_entries: dict[str, Path] = {}
+        rpyc_entry_name = None
+        remap_rpyc: Optional[bytes] = None
+        if pending_remap:
+            mapping = {}
+            for old, new_entry, _local, _g in pending_remap:
+                mapping[apk_entry_to_game_rel(old)] = \
+                    apk_entry_to_game_rel(new_entry)
+            script = remap_mod.build_remap_script(mapping)
+            remap_rpyc = compile_remap_rpyc(script, sdk)
+        if pending_remap and remap_rpyc:
+            for old, new_entry, local, gained in pending_remap:
+                converted.add(old)
+                new_entries[new_entry] = local
+                saved += gained
+                changes += 1
+            rpyc_entry_name = game_rel_to_apk_entry(
+                remap_mod.REMAP_SCRIPT_NAME + "c")
+            p.emit("apk", f"已注入重映射脚本，{len(pending_remap)} 张图"
+                          "将在运行时透明转为 WebP（实验性）")
+            warnings.append(
+                f"实验性功能：{len(pending_remap)} 张图已转 WebP 并注入运行时"
+                "重映射脚本（assets/x-game/x-scripts/x-rtools_remap.rpyc）。"
+                "若游戏异常，用未开启该开关的版本重跑即可还原。")
+        elif pending_remap:
+            warnings.append(f"重映射脚本编译失败，{len(pending_remap)} 张图"
+                            "未转换，已原样保留。")
+
         # 4. 重打包：未改动条目逐字节保留，改动条目用新内容
         p.emit("apk", f"重新打包（替换 {changes} 个条目）……")
         out_apk = work / "slim-unsigned.apk"
@@ -220,6 +325,9 @@ def slim_apk(apk_path: str, preset_name: str,
                 if info.filename.startswith("META-INF/") and \
                         info.filename.upper().endswith(SIGNATURE_SUFFIXES + (".MF",)):
                     continue
+                # 已转 WebP 的旧图不再入包（请求会被重映射到新文件）
+                if info.filename in converted:
+                    continue
                 if info.filename in changed:
                     data = (work / info.filename).read_bytes()
                     new_info = zipfile.ZipInfo(info.filename,
@@ -228,6 +336,11 @@ def slim_apk(apk_path: str, preset_name: str,
                     out_zf.writestr(new_info, data)
                 else:
                     out_zf.writestr(info, zf.read(info.filename))
+            # 新增条目：WebP 新图 + 重映射脚本（原清单里没有，循环后追加）
+            for new_entry, local in new_entries.items():
+                out_zf.writestr(new_entry, local.read_bytes())
+            if remap_rpyc and rpyc_entry_name:
+                out_zf.writestr(rpyc_entry_name, remap_rpyc)
         zf.close()
 
         # 5. 对齐
@@ -255,15 +368,19 @@ def slim_apk(apk_path: str, preset_name: str,
             use_pass = keystore_info["password"]
             use_alias = use_alias or keystore_info["alias"]
         if apksigner and use_ks and use_pass:
+            # apksigner(Java) 对含乱码/生僻字符的输出路径会报 Bad pathname，
+            # 先签到纯英文临时路径再落位，稳
+            tmp_signed = work / "slim-signed.apk"
             cmd = [apksigner, "sign", "--ks", use_ks,
                    "--ks-pass", f"pass:{use_pass}"]
             if use_alias:
                 cmd += ["--ks-key-alias", use_alias]
             if key_pass:
                 cmd += ["--key-pass", f"pass:{key_pass}"]
-            cmd += ["--out", str(final), str(aligned)]
+            cmd += ["--out", str(tmp_signed), str(aligned)]
             proc = run_quiet(cmd, capture_output=True, timeout=600)
-            if proc.returncode == 0:
+            if proc.returncode == 0 and tmp_signed.exists():
+                shutil.copyfile(tmp_signed, final)
                 signed = True
                 if keystore_info:
                     warnings.append(

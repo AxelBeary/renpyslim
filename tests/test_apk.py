@@ -53,6 +53,29 @@ def test_build_tools_lookup_missing_sdk(tmp_path):
     assert za is None and signer is None
 
 
+def test_apk_entry_path_mapping():
+    """x- 前缀体系双向换算：APK 条目名 <-> 游戏内相对路径。"""
+    entry = "assets/x-game/x-images/x-bg/x-foo bar.png"
+    rel = apk.apk_entry_to_game_rel(entry)
+    assert rel == "images/bg/foo bar.png"
+    assert apk.game_rel_to_apk_entry(rel) == entry
+    assert apk.game_rel_to_apk_entry("rtools_remap.rpyc") == \
+        "assets/x-game/x-rtools_remap.rpyc"
+    # 非 x-game 条目不参与映射
+    assert apk.apk_entry_to_game_rel("assets/x-renpy/x-common/a.png") is None
+    assert apk.apk_entry_to_game_rel("classes.dex") is None
+
+
+def test_webp_remap_fallback_without_sdk(tmp_path):
+    """无 SDK 时开 webp_remap 不能崩，降级同名压缩 + 警告。"""
+    apk_path = tmp_path / "fake.apk"
+    _make_fake_apk(apk_path)
+    result = apk.slim_apk(str(apk_path), "balanced", sdk=None,
+                           webp_remap=True)
+    assert Path(result["output"]).exists()
+    assert any("同名压缩" in w or "降级" in w for w in result["warnings"])
+
+
 def test_generate_keystore(tmp_path):
     """钥匙生成：钥匙文件 + 密码备忘都得落地。"""
     import pytest as _pt
