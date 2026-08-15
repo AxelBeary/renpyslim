@@ -211,6 +211,8 @@ def cmd_slimapk(args) -> int:
             sdk=packager.find_sdk(args.sdk),
             keystore=args.keystore, ks_pass=args.ks_pass,
             key_alias=args.key_alias, key_pass=args.key_pass,
+            generate_key=args.gen_key,
+            new_key_password=args.key_password,
             progress=Progress(_log))
     except apk.ApkError as e:
         return _fail(str(e))
@@ -291,6 +293,9 @@ def main(argv=None) -> int:
     p.add_argument("--ks-pass", default=None, help="keystore 密码")
     p.add_argument("--key-alias", default=None, help="密钥别名（可选）")
     p.add_argument("--key-pass", default=None, help="密钥密码（可选，默认同 keystore 密码）")
+    p.add_argument("--gen-key", action="store_true",
+                   help="自动生成新钥匙签名（不需要任何现有密码；新身份，玩家需卸载重装）")
+    p.add_argument("--key-password", default=None, help="配 --gen-key：自定义新钥匙密码（默认自动随机）")
     p.add_argument("--extra-chars", default="", help="字体保底手动追加字符")
     p.set_defaults(func=cmd_slimapk)
 

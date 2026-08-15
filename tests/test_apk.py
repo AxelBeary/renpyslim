@@ -51,3 +51,39 @@ def test_apk_slim_core_safety(tmp_path):
 def test_build_tools_lookup_missing_sdk(tmp_path):
     za, signer = apk.find_build_tools(str(tmp_path))
     assert za is None and signer is None
+
+
+def test_generate_keystore(tmp_path):
+    """钥匙生成：钥匙文件 + 密码备忘都得落地。"""
+    import pytest as _pt
+    if not apk.find_keytool():
+        _pt.skip("本机无 keytool")
+    info = apk.generate_keystore(str(tmp_path), password="testpass123")
+    assert Path(info["keystore"]).exists()
+    assert Path(info["memo"]).exists()
+    memo = Path(info["memo"]).read_text(encoding="utf-8")
+    assert "testpass123" in memo and info["alias"] in memo
+    assert info["password"] == "testpass123"
+
+
+def test_slim_apk_sign_flow_with_generated_key(tmp_path):
+    """生成钥匙参与签名流程：钥匙必须生成并传给签名器。
+
+    注：假 APK 没有 AndroidManifest.xml，apksigner 会拒签（真实 APK 必有清单），
+    所以这里只断言钥匙生成与流程走通；真实签名由真实 APK 实测覆盖。
+    """
+    import pytest as _pt
+    if not apk.find_keytool():
+        _pt.skip("本机无 keytool")
+    sdk = r"E:\renpy"
+    if not (Path(sdk) / "rapt" / "Sdk" / "build-tools").is_dir():
+        _pt.skip("本机无 Android build-tools")
+    apk_path = tmp_path / "fake.apk"
+    _make_fake_apk(apk_path)
+    result = apk.slim_apk(str(apk_path), "balanced", sdk=sdk,
+                           generate_key=True, new_key_password="e2epass456")
+    assert result["keystore"] is not None
+    assert Path(result["keystore"]["keystore"]).exists()
+    assert result["keystore"]["password"] == "e2epass456"
+    assert Path(result["output"]).exists()
+    assert isinstance(result["signed"], bool)

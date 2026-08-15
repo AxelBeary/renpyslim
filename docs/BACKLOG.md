@@ -50,7 +50,7 @@
 
 | # | 想法 | 来源 | 状态 |
 |---|---|---|---|
-| F1 | APK 本体瘦身（拆包→同名压缩→重打包保字节→可选重签名） | Rentool | ✅ 已实现（cli slimapk，实验性）；实测用户 APK：内容几乎已被开发者优化过，重打包 deflate 再省 127MB；待 keystore 密码重签名 | 
+| F1 | APK 本体瘦身（拆包→同名压缩→重打包保字节→三种姿势重签名） | Rentool | ✅ 已实现（cli slimapk，实验性）；签名三姿势：原钥匙/自有钥匙/现场造新钥匙（--gen-key，密码自动生成+备忘文件）；实测用户 APK 重打包省 127MB | 
 | F2 | 自更新检查（GitHub Releases 对比 + 界面提示） | Alenia-Porter | ✅ 已实现 |
 | F3 | 崩溃转储（~/.renpyslim/crashes/，保留 20 份） | Alenia-Porter | ✅ 已实现 |
 | F4 | 任务取消按钮（扫描/优化均可停，已完成成果保留） | Alenia-Porter | ✅ 已实现 |

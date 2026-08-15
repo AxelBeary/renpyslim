@@ -10,7 +10,10 @@ Ren'Py 安卓版结构：assets/x-game/** 是游戏资源，assets/x-renpy/** �
 """
 from __future__ import annotations
 
+import os
+import random
 import shutil
+import string
 import subprocess
 import tempfile
 import zipfile
@@ -49,6 +52,66 @@ def find_build_tools(sdk: str) -> tuple[Optional[str], Optional[str]]:
     return None, None
 
 
+def find_keytool() -> Optional[str]:
+    """找 keytool（JDK 自带）：PATH -> JAVA_HOME -> 常见安装目录。"""
+    kt = shutil.which("keytool")
+    if kt:
+        return kt
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        name = "keytool.exe" if os.name == "nt" else "keytool"
+        cand = Path(java_home) / "bin" / name
+        if cand.exists():
+            return str(cand)
+    for base in (Path(r"C:\Program Files\Eclipse Adoptium"),
+                 Path(r"C:\Program Files\Java"),
+                 Path(r"C:\Program Files (x86)\Java")):
+        if base.is_dir():
+            for exe in base.rglob("keytool.exe"):
+                return str(exe)
+    return None
+
+
+def generate_keystore(dest_dir: str, password: Optional[str] = None,
+                      alias: str = "renpyslim") -> dict:
+    """现场生成一把新 keystore（模式③）。
+
+    密码不传则自动生成随机密码；密码写进钥匙旁边的备忘文件，
+    请用户妥善保管——丢了就无法再给这个应用签更新包。
+    """
+    kt = find_keytool()
+    if not kt:
+        raise ApkError("未找到 keytool（生成钥匙需要 JDK）。请先安装 JDK。")
+    password = password or "".join(
+        random.choices(string.ascii_letters + string.digits, k=14))
+    dest = Path(dest_dir)
+    dest.mkdir(parents=True, exist_ok=True)
+    ks = dest / "renpyslim.keystore"
+    if ks.exists():
+        ks = dest / f"renpyslim-{int(__import__('time').time())}.keystore"
+    cmd = [kt, "-genkeypair", "-keystore", str(ks), "-alias", alias,
+           "-keyalg", "RSA", "-keysize", "2048", "-validity", "10000",
+           "-storepass", password, "-keypass", password,
+           "-dname", "CN=RenPySlim, O=RenPySlim"]
+    proc = run_quiet(cmd, capture_output=True, timeout=120)
+    if proc.returncode != 0 or not ks.exists():
+        err = proc.stderr.decode("utf-8", "replace")[-300:]
+        raise ApkError(f"生成钥匙失败：{err}")
+    memo = ks.with_name(ks.stem + "-钥匙备忘.txt")
+    memo.write_text(
+        "RenPySlim 自动生成的签名钥匙（请妥善保管！）\n\n"
+        f"钥匙文件：{ks}\n"
+        f"别　　名：{alias}\n"
+        f"密　　码：{password}\n\n"
+        "重要：\n"
+        "1. 这个密码是打开钥匙的唯一凭据，丢了就无法再给这个应用签更新包。\n"
+        "2. 用这把钥匙签的包，玩家需先卸载旧版再安装（签名不同不能覆盖更新）。\n"
+        "3. 建议把钥匙文件和这份备忘一起备份到安全的地方。\n",
+        encoding="utf-8")
+    return {"keystore": str(ks), "password": password, "alias": alias,
+            "memo": str(memo)}
+
+
 def _extract_charset_from_apk(extract_root: Path,
                               opts: CharsetOptions) -> set[str]:
     """从 APK 里的编译脚本提取字符集（rpyc 字节流宽容解码）。"""
@@ -69,8 +132,16 @@ def slim_apk(apk_path: str, preset_name: str,
               ks_pass: Optional[str] = None,
               key_alias: Optional[str] = None,
               key_pass: Optional[str] = None,
+              generate_key: bool = False,
+              new_key_password: Optional[str] = None,
               progress: Optional[Progress] = None) -> dict:
-    """瘦身一个 APK。返回 {output, saved_bytes, signed, changes, warnings}。"""
+    """瘦身一个 APK。签名三种姿势：
+    ① 传 keystore+ks_pass → 用原钥匙（可覆盖安装旧版）
+    ② 传自有 keystore+密码 → 用自己的身份签
+    ③ generate_key=True → 现场生成新钥匙+密码备忘（新身份，需卸载重装）
+    都不传 → 未签名产出 + 警告。
+    返回 {output, saved_bytes, changes, signed, keystore, warnings}。
+    """
     p = progress or Progress()
     preset = PRESETS.get(preset_name, PRESETS["balanced"])
     cs_opts = charset_opts or CharsetOptions()
@@ -170,20 +241,34 @@ def slim_apk(apk_path: str, preset_name: str,
             if zipalign:
                 warnings.append("zipalign 对齐失败，产出未对齐的包（可安装，性能略差）。")
 
-        # 6. 签名
+        # 6. 签名（三种姿势）
         final = apk.parent / (apk.stem + "-瘦身" + apk.suffix)
         signed = False
-        if apksigner and keystore and ks_pass:
-            cmd = [apksigner, "sign", "--ks", keystore,
-                   "--ks-pass", f"pass:{ks_pass}"]
-            if key_alias:
-                cmd += ["--ks-key-alias", key_alias]
+        keystore_info = None
+        use_ks, use_pass = keystore, ks_pass
+        use_alias = key_alias
+        if not (use_ks and use_pass) and generate_key:
+            p.emit("apk", "正在生成新的签名钥匙……")
+            keystore_info = generate_keystore(str(apk.parent),
+                                              password=new_key_password)
+            use_ks = keystore_info["keystore"]
+            use_pass = keystore_info["password"]
+            use_alias = use_alias or keystore_info["alias"]
+        if apksigner and use_ks and use_pass:
+            cmd = [apksigner, "sign", "--ks", use_ks,
+                   "--ks-pass", f"pass:{use_pass}"]
+            if use_alias:
+                cmd += ["--ks-key-alias", use_alias]
             if key_pass:
                 cmd += ["--key-pass", f"pass:{key_pass}"]
             cmd += ["--out", str(final), str(aligned)]
             proc = run_quiet(cmd, capture_output=True, timeout=600)
             if proc.returncode == 0:
                 signed = True
+                if keystore_info:
+                    warnings.append(
+                        "已用新生成的钥匙签名。密码在钥匙旁边的备忘文件里，"
+                        "请妥善保管；玩家需先卸载旧版再安装本包。")
             else:
                 err = proc.stderr.decode("utf-8", "replace")[-400:]
                 warnings.append(f"重签名失败（钥匙或密码不对？）：{err}")
@@ -191,13 +276,14 @@ def slim_apk(apk_path: str, preset_name: str,
             shutil.copyfile(aligned, final)
             warnings.append(
                 "产出为未签名 APK（未提供 keystore/密码，或签名失败）。"
-                "未签名的 APK 无法直接安装，请提供签名信息后重跑。")
+                "未签名的 APK 无法直接安装；可加 --gen-key 自动生成新钥匙重跑。")
 
         return {
             "output": str(final),
             "saved_bytes": saved,
             "changes": changes,
             "signed": signed,
+            "keystore": keystore_info,
             "warnings": warnings,
         }
     finally:

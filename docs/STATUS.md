@@ -26,9 +26,9 @@ Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.9.0（自更新
 
 ## 下次开工可选方向（需用户点头）
 
-1. 拿 keystore 密码给 APK 重签名出正式可装版（钥匙在 E:\renpy\JIGSAW_PUZZLES\，密码用户保管）
-2. APK 瘦身上 UI（目前仅 CLI）
-3. F5 lint 自修、F7 语法资产；真实游戏成品等用户提供
+1. APK 瘦身上 UI（目前仅 CLI：slimapk，支持 --gen-key 现场造钥匙签名）
+2. F5 lint 自修、F7 语法资产；真实游戏成品等用户提供
+3. 签名常识：新钥匙签的包玩家需先卸载旧版再装（安卓签名规则）；钥匙+密码备忘文件要保管好
 
 ## 开工前例行检查
 
