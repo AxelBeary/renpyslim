@@ -4,7 +4,8 @@
 
 ## 当前版本：v0.10.0（界面大改版；v0.9.0 曾发布 GitHub Release，附 exe）
 
-仓库：https://github.com/AxelBeary/renpyslim （公开，Apache-2.0）
+仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
+用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
 Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.9.0（自更新检查的靶子）
 回归测试：68 项全绿（`pytest tests -q`，含审核修复回归 12 条）
 

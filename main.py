@@ -6,6 +6,14 @@
 
 运行期间系统托盘（右下角）常驻图标：右键可打开界面或退出工具。
 无头模式请用 cli.py。
+
+Copyright (C) 2026  RenPySlim contributors
+SPDX-License-Identifier: AGPL-3.0-or-later
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, version 3. This program is
+distributed in the hope that it will be useful, but WITHOUT ANY
+WARRANTY; see the LICENSE file for details.
 """
 from __future__ import annotations
 

@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安全问题 / Security issue
+    url: https://github.com/AxelBeary/renpyslim/security
+    about: 漏洞请走私密渠道，见 SECURITY.md / Please report privately, see SECURITY.md

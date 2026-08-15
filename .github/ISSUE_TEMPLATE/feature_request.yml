@@ -1,0 +1,25 @@
+name: 功能建议 / Feature request
+description: 想要新功能或改进 / Suggest an idea
+title: "[Idea] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 想解决什么问题 / Problem
+      description: 描述你的场景和痛点，而不是直接给方案 / Describe the scenario and pain point
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: 设想的方案（可选）/ Idea (optional)
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: 类型 / Type
+      options:
+        - label: 界面/交互 UI/UX
+        - label: 优化能力 Optimization
+        - label: 打包/发布 Packaging
+        - label: 文档/翻译 Docs/i18n

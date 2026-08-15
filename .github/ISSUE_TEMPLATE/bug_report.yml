@@ -1,0 +1,52 @@
+name: Bug 报告 / Bug report
+description: 工具出了问题 / Something isn't working
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      description: 一步步说清你做了什么、期望什么、实际看到什么 / Steps, expected vs actual
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: 界面左下角或右上角的版本号，如 v0.10.0
+    validations:
+      required: true
+  - type: dropdown
+    id: mode
+    attributes:
+      label: 出问题的功能 / Feature
+      options:
+        - 超级打包器 Slim & Pack
+        - 成品瘦身 Dist Slimming
+        - 字体瘦身 Font Slimming
+        - APK 瘦身 APK Slimming (CLI)
+        - 打包 Packaging
+        - 其他 Other
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: 系统 / OS
+      placeholder: Windows 11 25H2
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 报错与日志 / Errors & logs
+      description: |
+        界面里的报错原文、结果目录下的 crash 转储、_rtools_output 里的
+        changelog.json 等。注意去掉路径里的隐私信息。
+      render: text
+  - type: textarea
+    id: sample
+    attributes:
+      label: 样本情况 / Sample info
+      description: 输入是什么类型（工程/成品目录/zip/apk）、大约多大、是否带密码。不必上传样本本体。
