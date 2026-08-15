@@ -30,13 +30,22 @@ rtools/            核心引擎（不依赖 Web/CLI，可独立调用与测试�
   font_tool.py     独立字体瘦身流程（TTC/OTC 拆分、字符清单导出）
   image_optimizer.py 图片优化（临时文件策略，没变小不替换）
   audio_optimizer.py FFmpeg 转码（run_quiet 无窗口）
+  video_optimizer.py 视频重编码（实验性，默认关）
   refs.py          RefIndex：引用查找与改写（左守卫、长路径优先、编码往返）
   cleanup.py       垃圾清理、重复检测、无引用检测、隔离区
   verifier.py      官方 lint 验证
   rpa.py           RPA 封包读写（白名单反序列化，新旧格式自适应）
-  archives.py      zip/7z/RAR 解压、成品目录定位、回包
+  archives.py      zip/7z/RAR 解压、成品目录定位（含 Mac .app 深层）、回包
   packager.py      SDK 发现、官方打包调度、RPA 归档配置注入、用户配置
-  pipeline.py      编排层：run_project（A线）/ run_dist（B线）/ run_dist_smart
+  apk.py           APK 瘦身（x- 前缀体系、重打包保字节、重映射注入、三种签名）
+  remap.py         运行时重映射脚本生成（B9，py2/3 双兼容）
+  cache.py         增量缓存（SHA-256 + 动作键，原子写入）
+  backup.py        强制备份（in_place 前置）
+  crashdump.py     崩溃转储（~/.renpyslim/crashes/，保留 20 份）
+  updater.py       GitHub Releases 自更新检查（失败静默）
+  pipeline.py      编排层：run_project（A线）/ run_dist（B线）/ run_dist_smart；
+                   并行任务调度（_run_jobs）与取消支持
+  utils.py         fmt_size 等公共小工具
   runtime.py       端口登记文件、干净退出
   procutil.py      run_quiet：Windows 下外部调用不弹黑框
 tests/             pytest：conftest.py 统一 sys.path；按功能分文件
@@ -63,13 +72,19 @@ rpy 检测（有源码解锁格式转换）→ 优化（默认同名；RPA 内�
 引用改写（仅带源码时）→ 垃圾清理 → 无引用检测（默认只标记）→
 报告 →（smart 模式回包成 zip）
 
+### C 线（APK）apk.slim_apk（实验性，仅 CLI）
+解开 APK zip 清单 → 只提取 assets/x-game/ 下的图/音/字体（x-renpy 引擎不碰）→
+从包内 rpyc 提字符集 → 逐个优化；开了 --remap 则图转 WebP/音转 OGG，
+用 SDK 编译重映射脚本（rpyc）注入 x-scripts → 重打包（未动条目逐字节保留，
+旧签名移除）→ zipalign 对齐 → 三种姿势签名（原钥匙/自有钥匙/--gen-key 现场造）
+
 ## 4. 安全红线（修改任何代码前先读这里）
 
 1. **原件不动**：一切改动先落在工作副本；in_place 必须先强制备份 zip
 2. **没变小不替换**：所有优化器先写临时文件，比较后才 replace
 3. **引用门控**：查不到字面引用的资源绝不改名（图片因引擎自动加载机制
    永远不参与废资源判定与改名）
-4. **引擎目录保护**：成品模式 `renpy/`、`lib/` 一律不碰
+4. **引擎目录保护**：成品模式 `renpy/`、`lib/` 一律不碰；APK 模式 `assets/x-renpy/` 同样不碰
 5. **隔离不删除**：无引用文件只移入 `_rtools_quarantine`，永不直接删
 6. **空壳防御**：字体瘦身结果与预期字形数偏差过大即拒绝，原字体保留
 7. **编码无损往返**：脚本读写用 utf-8 → gb18030 降级链，禁止 errors="replace" 后回写
