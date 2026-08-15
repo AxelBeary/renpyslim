@@ -201,3 +201,22 @@ def test_flush_partial_changelog(tmp_path):
     assert data["cancelled"] is True
     assert data["saved_bytes"] == 123
     assert len(data["records"]) == 1
+
+
+# ---------------------------------------------------------------------------
+# 补修：lint 曾拿相对路径在 SDK 目录下找不到工程，空转还报“通过”假象
+# ---------------------------------------------------------------------------
+
+def test_lint_resolves_relative_path(tmp_path):
+    from rtools import packager, verifier
+    sdk = packager.find_sdk()
+    if not sdk:
+        pytest.skip("本机无 Ren'Py SDK")
+    proj = tmp_path / "LintProj"
+    (proj / "game").mkdir(parents=True)
+    (proj / "game" / "script.rpy").write_text(
+        'label start:\n    "hi"\n', encoding="utf-8")
+    r = verifier.lint_project(sdk, str(proj))
+    assert r["ran"] is True
+    # 关键断言：SDK 真的找到了工程，而不是报目录不存在空转
+    assert "does not exist" not in r.get("output", "")

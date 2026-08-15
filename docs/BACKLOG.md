@@ -57,6 +57,7 @@
 | F5 | lint 输出驱动的自动修复闭环 | renpybox | 💡 无排期 |
 | F6 | 进度字节级（处理中 x/y · 累计已省 X MB） | Rentool | ✅ 已实现 |
 | F7 | Ren'Py TextMate 语法资产（若未来加脚本查看器） | Rentool | 💡 无排期 |
+| F8 | 压缩包内直接装 APK 时自动转入 APK 瘦身流程 | Cadaver 复测发现 | 💡 无排期；当前 optimize dist 报“找不到成品目录”，需手动解包再 slimapk |
 
 ## 三、明确不做（红线与取舍记录）
 

@@ -22,6 +22,10 @@ def lint_project(sdk: str, project_dir: str, timeout: int = 600) -> dict:
     if not renpy_exe.exists():
         return {"ran": False, "ok": False, "summary": "SDK 不可用，跳过验证",
                 "output": ""}
+    # 审核补修：lint 以 SDK 目录为工作目录执行，相对路径会被当成
+    # SDK 下的路径找不到工程，导致 lint 空转还报“通过”假象；
+    # 一律转绝对路径再传入
+    project_dir = str(Path(project_dir).resolve())
     try:
         proc = run_quiet([str(renpy_exe), project_dir, "lint"],
                          capture_output=True, timeout=timeout, cwd=sdk)
