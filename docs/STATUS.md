@@ -37,6 +37,12 @@ Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更�
   requirements.txt 用宽容下限是刻意设计）；github-actions 正常收升级 PR
 - 用户曾在网页模板市场误开 Fortify/Conda 模板，已删除；再遇类似“其他
   CI workflows”模板先核实再留
+- CodeQL 首批 16 警报处理完毕（开放清零）：1 个真问题（ci.yml 缺最小权限
+  声明，已修）；11 个 py/path-injection 为本地工具典型误报（API 只听
+  127.0.0.1，路径来自本机用户就是工具本分），带理由关闭；1 个密码明文
+  备忘为拍板过的产品设计，带理由关闭。再遇 path-injection 警报先按此
+  模型核实；dismiss API 参数是 dismissed_reason/dismissed_comment，
+  且 comment 限 280 字符
 
 ## Cadaver 样本实测战绩（用户提供的真实游戏，全部实测通过）
 
