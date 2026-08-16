@@ -248,6 +248,10 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8v13H3V8"/><path d="M1 3h22v5H1z"/><path d="M10 12h4"/></svg>
       <span data-i18n="nav_dist">成品瘦身</span>
     </div>
+    <div class="nav-item" data-view="apk" onclick="go('apk')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="2" width="14" height="20" rx="3"/><line x1="12" y1="18" x2="12" y2="18"/></svg>
+      <span data-i18n="nav_apk">APK 瘦身</span>
+    </div>
     <div class="nav-item" data-view="font" onclick="go('font')">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 7 4 4 20 4 20 7"/><line x1="9" y1="20" x2="15" y2="20"/><line x1="12" y1="4" x2="12" y2="20"/></svg>
       <span data-i18n="nav_font">字体瘦身</span>
@@ -387,16 +391,65 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
         </div>
       </div>
 
-      <!-- 第 4 步：执行 -->
-      <div class="card hidden" id="runcard">
-        <h2><span class="stepnum">4</span><span data-i18n="s4_title">执行中</span>
-          <button class="btn ghost small" id="cancelbtn" style="margin-left:auto;display:none"
-                  data-i18n="cancel" onclick="cancelJob()">停止任务</button>
-        </h2>
-        <div class="desc" id="runstatus">—</div>
-        <div class="progress ind" id="progressbar"><i id="progressfill"></i></div>
-        <div id="log"></div>
-        <div id="resultarea"></div>
+    </div>
+
+    <!-- 第 4 步：执行（工作流与 APK 页共用的执行卡） -->
+    <div class="card hidden" id="runcard">
+      <h2><span class="stepnum">4</span><span data-i18n="s4_title">执行中</span>
+        <button class="btn ghost small" id="cancelbtn" style="margin-left:auto;display:none"
+                data-i18n="cancel" onclick="cancelJob()">停止任务</button>
+      </h2>
+      <div class="desc" id="runstatus">—</div>
+      <div class="progress ind" id="progressbar"><i id="progressfill"></i></div>
+      <div id="log"></div>
+      <div id="resultarea"></div>
+    </div>
+
+    <!-- ========== 视图：APK 瘦身（小白三步流） ========== -->
+    <div id="view-apk" class="hidden">
+      <div class="card">
+        <h2><span class="stepnum">1</span><span data-i18n="apk_s1">选择 APK 安装包</span></h2>
+        <div class="desc" data-i18n="apk_s1_desc">选你的游戏安卓安装包（.apk 文件）。引擎目录会自动保护，只动游戏资源。</div>
+        <div class="row">
+          <input type="text" id="apk_path" data-i18n-ph="apk_path_ph" placeholder="例如：E:\MyGame.apk">
+          <button class="btn ghost" data-i18n="apk_browse" onclick="browseFor('apk_path','apk')">浏览 APK</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2><span class="stepnum">2</span><span data-i18n="apk_s2">选择瘦身方案</span></h2>
+        <div class="desc" data-i18n="apk_s2_desc">默认配置就够用：完成后直接得到能安装的新包。注意：签名变了，手机上要先卸载旧版再装新版。</div>
+        <div class="group-title" data-i18n="grp_preset">压缩档位</div>
+        <select id="apk_preset">
+          <option value="conservative" data-i18n="preset_con">保守档：几乎无损，体积收益中等</option>
+          <option value="balanced" selected data-i18n="preset_bal">均衡档（推荐）：肉眼几乎无差，体积减 40~60%</option>
+          <option value="aggressive" data-i18n="preset_agg">激进档：体积优先，画质音质有可感损失</option>
+        </select>
+        <div class="group-title" data-i18n="apk_depth">瘦身深度</div>
+        <div class="opts" style="grid-template-columns:1fr">
+          <label class="opt"><input type="checkbox" id="apk_remap">
+            <span data-i18n="apk_remap">最大瘦身（实验性）：图片转 WebP、音频转 OGG，通常能多省一半以上<br><span class="hint">原理是注入一个小脚本透明改指，不改任何游戏文件；万一出问题，不勾此项重跑一次即可还原</span></span></label>
+        </div>
+        <div class="group-title" data-i18n="apk_sig_title">应用签名（安卓要求：必须签名才能安装）</div>
+        <div class="opts" style="grid-template-columns:1fr">
+          <label class="opt"><input type="radio" name="sigmode" value="gen" checked>
+            <span data-i18n="sig_gen">自动生成新钥匙并签名（推荐）<br><span class="hint">一键得到能直接安装的包；钥匙和密码备忘会存在 APK 旁边，请务必保管好</span></span></label>
+          <label class="opt"><input type="radio" name="sigmode" value="own">
+            <span data-i18n="sig_own">用我自己的钥匙签名<br><span class="hint">适合给已发布的游戏发更新包（签名一致可覆盖安装）</span></span></label>
+          <label class="opt"><input type="radio" name="sigmode" value="none">
+            <span data-i18n="sig_none">不签名<br><span class="hint">只适合后续自己签名的场景；产出的包装不进手机</span></span></label>
+        </div>
+        <div class="row hidden" id="ownkeyrow" style="margin-top:10px">
+          <input type="text" id="apk_ks" data-i18n-ph="apk_ks_ph" placeholder="钥匙文件路径（.keystore / .jks）">
+          <button class="btn ghost" data-i18n="apk_ks_browse" onclick="browseFor('apk_ks','file')">浏览钥匙</button>
+        </div>
+        <div class="row hidden" id="ownkeyrow2" style="margin-top:10px">
+          <input type="password" id="apk_kspass" data-i18n-ph="apk_kspass_ph" placeholder="钥匙密码">
+          <input type="text" id="apk_ksalias" data-i18n-ph="apk_ksalias_ph" placeholder="别名（可选，不填默认）" style="max-width:220px">
+        </div>
+        <div class="row" style="margin-top:18px">
+          <button class="btn primary" id="apkrunbtn" data-i18n="apk_run" onclick="runApkSlim()">开始瘦身</button>
+          <span class="note" data-i18n="apk_run_hint">大游戏约 3~10 分钟</span>
+        </div>
       </div>
     </div>
 
@@ -465,9 +518,11 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
 const I18N = {
 zh: {
   tagline: "Ren'Py 瘦身打包工具箱", nav_workspace: "工作台", nav_other: "其他",
-  nav_project: "超级打包器", nav_dist: "成品瘦身", nav_font: "字体瘦身", nav_settings: "设置",
+  nav_project: "超级打包器", nav_dist: "成品瘦身", nav_apk: "APK 瘦身",
+  nav_font: "字体瘦身", nav_settings: "设置",
   foot_running: "后台运行中 · 关页面不停工具", quit: "退出工具",
-  title_project: "超级打包器", title_dist: "成品瘦身", title_font: "字体瘦身", title_settings: "设置",
+  title_project: "超级打包器", title_dist: "成品瘦身", title_apk: "APK 瘦身",
+  title_font: "字体瘦身", title_settings: "设置",
   s1_title_p: "选择 Ren'Py 工程目录", s1_title_d: "选择已打包的成品",
   s1_desc_p: "选中包含 game 文件夹的那个目录（可点“浏览文件夹”直接挑）。工具会先复制到工作副本再处理，原件不会被改动。",
   s1_desc_d: "选成品目录，或直接选 zip / 7z / rar 压缩包（自动解压，瘦身后自动重新打包交付）。小贴士：把压缩包直接拖到工具图标上更省事。",
@@ -519,6 +574,26 @@ zh: {
   r_has_rpy: "检测到该成品带有 .rpy 源码：已启用格式转换（PNG/JPG→WebP、WAV/MP3→OGG），引用已同步改写，引擎下次启动会自动重编译。",
   r_pkg_ok: "打包成功：", r_pkg_out: "输出目录",
   r_charlist: "下载字符清单", r_warn_default: "· ",
+  /* APK 瘦身页 */
+  apk_s1: "选择 APK 安装包",
+  apk_s1_desc: "选你的游戏安卓安装包（.apk 文件）。引擎目录会自动保护，只动游戏资源；原包不会被改动。",
+  apk_path_ph: "例如：E:\\MyGame.apk，或把 APK 直接拖到工具图标上",
+  apk_browse: "浏览 APK",
+  apk_s2: "选择瘦身方案",
+  apk_s2_desc: "默认配置就够用：完成后直接得到能安装的新包。注意：签名变了，手机上要先卸载旧版再装新版。",
+  apk_depth: "瘦身深度",
+  apk_remap: "最大瘦身（实验性）：图片转 WebP、音频转 OGG，通常能多省一半以上<br><span class='hint'>原理是注入一个小脚本透明改指，不改任何游戏文件；万一出问题，不勾此项重跑一次即可还原</span>",
+  apk_sig_title: "应用签名（安卓要求：必须签名才能安装）",
+  sig_gen: "自动生成新钥匙并签名（推荐）<br><span class='hint'>一键得到能直接安装的包；钥匙和密码备忘会存在 APK 旁边，请务必保管好</span>",
+  sig_own: "用我自己的钥匙签名<br><span class='hint'>适合给已发布的游戏发更新包（签名一致可覆盖安装）</span>",
+  sig_none: "不签名<br><span class='hint'>只适合后续自己签名的场景；产出的包装不进手机</span>",
+  apk_ks_ph: "钥匙文件路径（.keystore / .jks）", apk_ks_browse: "浏览钥匙",
+  apk_kspass_ph: "钥匙密码", apk_ksalias_ph: "别名（可选，不填默认）",
+  apk_run: "开始瘦身", apk_run_hint: "大游戏约 3~10 分钟",
+  fill_apk: "请先填写 APK 路径", sig_own_need: "用自己的钥匙签名时，钥匙路径和密码都要填",
+  r_apk_saved: "体积省了", r_apk_changes: "资源改动数", r_apk_signed: "签名状态",
+  r_apk_signed_yes: "已签名，可直接安装", r_apk_signed_no: "未签名，装不进手机",
+  r_apk_out: "新包位置", r_apk_ks: "新钥匙", r_apk_ks_memo: "密码备忘",
   font_title: "字体瘦身 · 独立工具",
   font_desc: "不需要游戏工程：选一个字体 + 文本来源，输出瘦身后的新字体（永不覆盖原件）。支持 ttf / otf；ttc / otc 集合会拆开按字重分别输出。",
   font_step1: "1. 字体文件", font_step2: "2. 文本来源（文件夹或文件；多个用逗号分开）",
@@ -543,7 +618,7 @@ zh: {
   stages: { scan: "扫描", unpack: "解包", analyze: "分析", optimize: "优化", rewrite: "改写",
             rpa: "封包", clean: "清理", verify: "验证", package: "打包", backup: "备份",
             copy: "复制", done: "完成", error: "错误", font: "字体", repack: "回包",
-            junk: "清理", quarantine: "隔离" },
+            junk: "清理", quarantine: "隔离", apk: "APK" },
   quit_confirm: "确定退出 RenPySlim？\n正在执行的任务会被中断（原件不受影响）。",
   quit_ing: "正在退出…", quit_done: "工具已退出，可以关闭本页面了。",
   quit_sent: "退出请求已发送，稍后页面将无法连接——属正常现象。",
@@ -606,6 +681,26 @@ en: {
   r_has_rpy: "This dist ships .rpy sources: format conversion enabled (PNG/JPG→WebP, WAV/MP3→OGG) with references rewritten; the engine recompiles on next launch.",
   r_pkg_ok: "Packaged: ", r_pkg_out: "Output dir",
   r_charlist: "Download character list", r_warn_default: "· ",
+  /* APK slimming page */
+  apk_s1: "Pick the APK package",
+  apk_s1_desc: "Choose your game's Android package (.apk). Engine directories are protected automatically; only game assets are touched; the original stays untouched.",
+  apk_path_ph: "e.g. E:\\MyGame.apk, or drop the APK onto the tool icon",
+  apk_browse: "Browse APKs",
+  apk_s2: "Choose the slimming plan",
+  apk_s2_desc: "Defaults are fine: you get an installable package at the end. Note: the signature changes, so uninstall the old version on your phone first.",
+  apk_depth: "Slimming depth",
+  apk_remap: "Maximum slimming (experimental): images to WebP, audio to OGG — usually saves more than half<br><span class='hint'>Works by injecting a tiny redirect script; no game files are modified. If anything goes wrong, re-run without this option to revert</span>",
+  apk_sig_title: "App signing (Android requires a signature to install)",
+  sig_gen: "Generate a new key and sign (recommended)<br><span class='hint'>One click, installable result; the key and password memo are saved next to the APK — keep them safe</span>",
+  sig_own: "Sign with my own key<br><span class='hint'>For shipping updates to a released game (same signature = overlay install)</span>",
+  sig_none: "Don't sign<br><span class='hint'>Only if you'll sign it yourself later; the output can't be installed</span>",
+  apk_ks_ph: "Keystore file path (.keystore / .jks)", apk_ks_browse: "Browse keystore",
+  apk_kspass_ph: "Keystore password", apk_ksalias_ph: "Key alias (optional)",
+  apk_run: "Start slimming", apk_run_hint: "About 3~10 minutes for big games",
+  fill_apk: "Please enter the APK path first", sig_own_need: "Signing with your own key requires both keystore path and password",
+  r_apk_saved: "Saved", r_apk_changes: "Assets changed", r_apk_signed: "Signature",
+  r_apk_signed_yes: "Signed, installable", r_apk_signed_no: "Unsigned, not installable",
+  r_apk_out: "New package", r_apk_ks: "New keystore", r_apk_ks_memo: "Password memo",
   font_title: "Font Slimming · Standalone",
   font_desc: "No game project needed: pick a font + text sources, get a slimmed copy (originals never touched). Supports ttf/otf; ttc/otc collections are split by weight.",
   font_step1: "1. Font file", font_step2: "2. Text sources (folders or files; comma-separated)",
@@ -630,7 +725,7 @@ en: {
   stages: { scan: "scan", unpack: "unpack", analyze: "analyze", optimize: "optimize", rewrite: "rewrite",
             rpa: "rpa", clean: "clean", verify: "verify", package: "package", backup: "backup",
             copy: "copy", done: "done", error: "error", font: "font", repack: "repack",
-            junk: "clean", quarantine: "quarantine" },
+            junk: "clean", quarantine: "quarantine", apk: "APK" },
   quit_confirm: "Quit RenPySlim?\nRunning tasks will be interrupted (originals stay safe).",
   quit_ing: "Quitting…", quit_done: "Tool has quit. You can close this page now.",
   quit_sent: "Quit request sent — the page will lose connection shortly. This is normal.",
@@ -722,9 +817,9 @@ function applyLang() {
 
 /* ===================== 导航 ===================== */
 function applyViewText() {
-  document.getElementById("viewtitle").textContent =
-    t("title_" + (VIEW === "project" ? "project" : VIEW === "dist" ? "dist"
-        : VIEW === "font" ? "font" : "settings"));
+  const key = { project: "title_project", dist: "title_dist", apk: "title_apk",
+                font: "title_font", settings: "title_settings" }[VIEW];
+  document.getElementById("viewtitle").textContent = t(key);
   const isP = MODE === "project";
   document.getElementById("s1title").textContent = isP ? t("s1_title_p") : t("s1_title_d");
   document.getElementById("s1desc").textContent = isP ? t("s1_desc_p") : t("s1_desc_d");
@@ -736,6 +831,7 @@ function go(v) {
     n.classList.toggle("active", n.getAttribute("data-view") === v));
   const wf = v === "project" || v === "dist";
   document.getElementById("view-workflow").classList.toggle("hidden", !wf);
+  document.getElementById("view-apk").classList.toggle("hidden", v !== "apk");
   document.getElementById("view-font").classList.toggle("hidden", v !== "font");
   document.getElementById("view-settings").classList.toggle("hidden", v !== "settings");
   if (wf && v !== prev) {           // project ↔ dist 切换：重置工作流
@@ -790,11 +886,19 @@ function renderEnv() {
 
 /* ===================== 浏览选择框 / 最近路径 ===================== */
 function isArchiveName(s) { return /\.(zip|7z|rar)$/i.test(s.trim()); }
+function isApkName(s) { return /\.apk$/i.test(s.trim()); }
+
+/* 按文件类型把路径送进正确的入口（小白不用自己猜该用哪个页面） */
+function routePath(p) {
+  if (isApkName(p)) { go("apk"); document.getElementById("apk_path").value = p; return true; }
+  return false;
+}
 
 async function browse(kind) {
   const d = await api("/api/browse?kind=" + kind);
   if (!d.ok) { alert(d.error || t("browse_fail")); return; }
   if (!d.path) return;                 // 用户取消了选择
+  if (routePath(d.path)) return;
   document.getElementById("path").value = d.path;
   if (isArchiveName(d.path) && MODE !== "dist") go("dist");
 }
@@ -823,6 +927,7 @@ function renderRecent() {
 }
 function useRecent(el) {
   const p = el.getAttribute("data-path");
+  if (routePath(p)) return;
   document.getElementById("path").value = p;
   if (isArchiveName(p) && MODE !== "dist") go("dist");
 }
@@ -1036,9 +1141,11 @@ async function pollJob() {
     document.getElementById("resultarea").innerHTML =
       `<div class="box warn">${esc(d.error || "")}</div>`;
     document.getElementById("runbtn").disabled = false;
+    document.getElementById("apkrunbtn").disabled = false;
     return;
   }
   document.getElementById("runbtn").disabled = false;
+  document.getElementById("apkrunbtn").disabled = false;
   if (d.status === "error") {
     document.getElementById("runstatus").textContent = t("st_failed");
     document.getElementById("resultarea").innerHTML =
@@ -1060,6 +1167,23 @@ async function cancelJob() {
 /* ===================== 结果渲染 ===================== */
 function renderResult(res) {
   let html = "";
+  if (res.saved_bytes !== undefined && res.changes !== undefined) {
+    /* APK 瘦身结果（APK 页与压缩包自动转发共用此渲染） */
+    html += `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
+      `<div class="stat big"><b>${fmtSize(res.saved_bytes)}</b><span>${t("r_apk_saved")}</span></div>` +
+      `<div class="stat"><b>${res.changes}</b><span>${t("r_apk_changes")}</span></div>` +
+      `<div class="stat"><b style="font-size:13px;color:${res.signed ? "var(--ok)" : "var(--warn)"}">` +
+      `${res.signed ? t("r_apk_signed_yes") : t("r_apk_signed_no")}</b><span>${t("r_apk_signed")}</span></div></div>`;
+    html += `<div class="box ok">${t("r_apk_out")}：${esc(res.output)}` +
+      (res.keystore
+        ? `<br>${t("r_apk_ks")}：${esc(res.keystore.keystore)}` +
+          `<br>${t("r_apk_ks_memo")}：${esc(res.keystore.memo)}`
+        : "") + `</div>`;
+    if (res.warnings && res.warnings.length)
+      html += `<div class="box warn">${res.warnings.map(w => esc(w)).join("<br>")}</div>`;
+    document.getElementById("resultarea").innerHTML = html;
+    return;
+  }
   if (res.optimize) {
     const o = res.optimize;
     html += `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
@@ -1183,6 +1307,60 @@ function renderFontResult(r) {
   document.getElementById("fsresult").innerHTML = html;
 }
 
+/* ===================== APK 瘦身（图形界面） ===================== */
+function sigMode() {
+  return document.querySelector('input[name=sigmode]:checked').value;
+}
+document.querySelectorAll('input[name=sigmode]').forEach(r =>
+  r.addEventListener("change", () => {
+    const own = sigMode() === "own";
+    document.getElementById("ownkeyrow").classList.toggle("hidden", !own);
+    document.getElementById("ownkeyrow2").classList.toggle("hidden", !own);
+  }));
+
+function prepareRunCard() {
+  document.getElementById("runcard").classList.remove("hidden");
+  document.getElementById("log").textContent = "";
+  document.getElementById("resultarea").innerHTML = "";
+  document.getElementById("runstatus").textContent = t("st_preparing");
+  resetProgress();
+  LAST_RESULT = null;
+  LOGIDX = 0;
+  document.getElementById("runcard").scrollIntoView({ behavior: "smooth" });
+}
+
+async function runApkSlim() {
+  const path = document.getElementById("apk_path").value.trim();
+  if (!path) { alert(t("fill_apk")); return; }
+  const sig = sigMode();
+  const body = {
+    path,
+    preset: document.getElementById("apk_preset").value,
+    remap: document.getElementById("apk_remap").checked,
+    gen_key: sig === "gen",
+    keystore: sig === "own" ? document.getElementById("apk_ks").value.trim() : null,
+    ks_pass: sig === "own" ? document.getElementById("apk_kspass").value : null,
+    key_alias: sig === "own"
+      ? (document.getElementById("apk_ksalias").value.trim() || null) : null,
+  };
+  if (sig === "own" && (!body.keystore || !body.ks_pass)) {
+    alert(t("sig_own_need")); return;
+  }
+  prepareRunCard();
+  document.getElementById("apkrunbtn").disabled = true;
+  const d = await api("/api/slimapk", body);
+  if (!d.ok) {
+    document.getElementById("resultarea").innerHTML =
+      `<div class="box err">${esc(d.error)}</div>`;
+    document.getElementById("apkrunbtn").disabled = false;
+    return;
+  }
+  JOB = d.job;
+  const cb = document.getElementById("cancelbtn");
+  cb.style.display = ""; cb.disabled = false;
+  pollJob();
+}
+
 /* ===================== SDK 设置 ===================== */
 async function saveSdk() {
   const d = await api("/api/sdk", { sdk_path: document.getElementById("sdkpath").value.trim() });
@@ -1208,10 +1386,10 @@ async function shutdownTool() {
 async function handleOpenParam() {
   const open = new URLSearchParams(location.search).get("open");
   if (!open) return;
-  document.getElementById("path").value = open;
-  if (isArchiveName(open)) go("dist");
+  if (isApkName(open)) { go("apk"); document.getElementById("apk_path").value = open; }
+  else { document.getElementById("path").value = open; if (isArchiveName(open)) go("dist"); }
   history.replaceState(null, "", location.pathname);
-  await analyze();
+  if (!isApkName(open)) await analyze();   // APK 不自动开跑，由用户确认方案后手动开始
 }
 
 /* ===================== 启动 ===================== */

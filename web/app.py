@@ -16,7 +16,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from rtools import analyzer, archives, charset, font_tool, packager, pipeline, scanner
+from rtools import analyzer, apk, archives, charset, font_tool, packager, pipeline, scanner
 from rtools.config import (CharsetOptions, OptimizeOptions, PRESETS,
                            default_options)
 from rtools.models import Progress
@@ -171,6 +171,16 @@ class FontSlimReq(BaseModel):
     font: str
     sources: list[str]
     charset: dict = {}
+
+
+class SlimApkReq(BaseModel):
+    path: str
+    preset: str = "balanced"
+    remap: bool = False          # 实验性：图转 WebP/音转 OGG + 注入重映射脚本
+    gen_key: bool = False        # 自动生成新钥匙（小白推荐）
+    keystore: Optional[str] = None
+    ks_pass: Optional[str] = None
+    key_alias: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -404,6 +414,11 @@ def api_browse(kind: str = "file"):
                     title="选择字体文件",
                     filetypes=[("字体", "*.ttf *.otf *.ttc *.otc"),
                                ("所有文件", "*.*")])
+            elif kind == "apk":
+                p = filedialog.askopenfilename(
+                    title="选择 APK 文件",
+                    filetypes=[("安卓安装包", "*.apk"),
+                               ("所有文件", "*.*")])
             else:
                 p = filedialog.askopenfilename(
                     title="选择压缩包或成品文件",
@@ -478,6 +493,31 @@ def api_slimfont(req: FontSlimReq):
     def task():
         return font_tool.run_font_slim(req.font, req.sources, cs,
                                        progress=progress)
+
+    _run_in_thread(job_id, task)
+    return {"ok": True, "job": job_id}
+
+
+@app.post("/api/slimapk")
+def api_slimapk(req: SlimApkReq):
+    """APK 瘦身（图形界面入口，与 CLI slimapk 同一引擎）。"""
+    if not Path(req.path).exists():
+        return JSONResponse({"ok": False, "error": f"APK 不存在：{req.path}"})
+    job_id = _new_job("slimapk")
+    progress = Progress(lambda s, m: _job_log(job_id, s, m))
+
+    def task():
+        r = apk.slim_apk(req.path, req.preset,
+                          sdk=packager.find_sdk(),
+                          keystore=req.keystore, ks_pass=req.ks_pass,
+                          key_alias=req.key_alias,
+                          generate_key=req.gen_key,
+                          remap_convert=req.remap,
+                          progress=progress)
+        r = dict(r)
+        if r.get("keystore"):
+            r["keystore"] = dict(r["keystore"])   # 保证可 JSON 序列化
+        return r
 
     _run_in_thread(job_id, task)
     return {"ok": True, "job": job_id}

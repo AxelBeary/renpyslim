@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import analyzer, archives, backup, cache, charset, cleanup, font_tool, scanner, verifier
+from . import analyzer, apk, archives, backup, cache, charset, cleanup, font_tool, scanner, verifier
 from . import remap as remap_mod
 from .audio_optimizer import convert_audio, reencode_audio, find_ffmpeg
 from .font_optimizer import subset_font
@@ -972,7 +972,27 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     extract_dir = str(Path(work_root) / f"{src_name}-解压")
     p.emit("unpack", f"正在解压压缩包 {Path(path).name}……")
     archives.extract_archive(path, extract_dir, password)
-    dist_root = archives.find_dist_root(extract_dir)
+    try:
+        dist_root = archives.find_dist_root(extract_dir)
+    except archives.ArchiveError:
+        # F8：压缩包里装的是 APK 而不是成品目录 → 自动转入 APK 安全瘦身。
+        # 走保守的同名压缩档（不换格式不签名，不引入运行时钩子）；
+        # 想要全力瘦身/签名请用专门的 APK 瘦身入口直接选这个 APK。
+        apk_files = [f for f in Path(extract_dir).rglob("*")
+                     if f.is_file() and f.suffix.lower() == ".apk"]
+        if not apk_files:
+            raise
+        src_apk = sorted(apk_files, key=lambda f: len(f.parts))[0]
+        p.emit("apk", f"压缩包里装的是 APK，自动转入 APK 瘦身：{src_apk.name}")
+        r = apk.slim_apk(str(src_apk), "balanced", progress=p)
+        r = dict(r)
+        r["mode"] = "apk"
+        r["archive_input"] = path
+        r.setdefault("warnings", []).append(
+            "压缩包内是 APK：已按安全档瘦身（同名压缩、不换格式、未签名）。"
+            "如需最大瘦身（图转 WebP/音转 OGG）或签名安装，"
+            "请改用“APK 瘦身”页面直接选择这个 APK。")
+        return r
     p.emit("unpack", f"已定位成品目录：{Path(dist_root).name}")
 
     result = run_dist(dist_root, options, work_root, output_dir, p,

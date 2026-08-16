@@ -220,3 +220,25 @@ def test_lint_resolves_relative_path(tmp_path):
     assert r["ran"] is True
     # 关键断言：SDK 真的找到了工程，而不是报目录不存在空转
     assert "does not exist" not in r.get("output", "")
+
+
+# ---------------------------------------------------------------------------
+# F8：压缩包里装的是 APK 时自动转入 APK 流程（曾报“找不到成品目录”）
+# ---------------------------------------------------------------------------
+
+def test_dist_smart_routes_zip_with_apk(tmp_path):
+    import zipfile as zf_mod
+    from rtools.config import OptimizeOptions
+    from rtools.pipeline import run_dist_smart
+    # 造一个最小 APK（本质是 zip）再装进压缩包
+    apk_path = tmp_path / "fake.apk"
+    with zf_mod.ZipFile(apk_path, "w") as z:
+        z.writestr("assets/x-game/x-images/x-pic.png", b"not really png")
+    zip_path = tmp_path / "pack.zip"
+    with zf_mod.ZipFile(zip_path, "w") as z:
+        z.write(apk_path, "fake.apk")
+    r = run_dist_smart(str(zip_path), OptimizeOptions(),
+                       str(tmp_path / "work"), str(tmp_path / "out"))
+    assert r["mode"] == "apk"
+    assert r["archive_input"] == str(zip_path)
+    assert any("APK" in w for w in r["warnings"])

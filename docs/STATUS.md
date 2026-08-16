@@ -2,13 +2,26 @@
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.10.0（界面大改版；v0.9.0 曾发布 GitHub Release，附 exe）
+## 当前版本：v0.11.0（APK 瘦身进图形界面 + F8 自动路由；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
 Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更新检查靶子，
 附 v0.10.0 exe；已验证 updater 正确识别）
-回归测试：69 项全绿（`pytest tests -q`，含审核修复回归 12 条 + lint 路径回归）
+回归测试：70 项全绿（`pytest tests -q`，含审核修复回归 12 条 + lint 路径回归 + F8 路由回归）
+
+## 2026-08-16 v0.11.0（用户拍板“把值得做的搞定”）
+
+- APK 瘦身进图形界面：新增“APK 瘦身”导航页，小白三步流（选 APK →
+  选方案：档位/最大瘦身开关/签名三选一默认自动造钥匙 → 开始）；
+  后端 /api/slimapk 与 CLI 同引擎；选 .apk 文件时全部入口自动路由到该页
+- F8 完成：压缩包里装的是 APK 时，成品瘦身流程自动转入 APK 安全档
+  （同名压缩、不换格式、不签名，并提醒想用全力请用 APK 专页）
+- 实测：/api/slimapk 真跑 Cadaver 554MB APK，省 160.4MB/323 处/自动签名成功；
+  产物 Cadaver\无密码的单独apk-瘦身.Apk 即真机验收用包，钥匙在
+  Cadaver\renpyslim.keystore（密码在旁边备忘文件）
+- 待办：用户真机验收（装包听背景乐/音效，验证音频重映射——建议用
+  --remap 版本另打一包再验，当前交付包是安全档）；v0.11.0 发 Release（待用户点头）
 
 ## Cadaver 样本实测战绩（用户提供的真实游戏，全部实测通过）
 
