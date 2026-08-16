@@ -1,6 +1,8 @@
 """第二批功能回归测试：垃圾清理、废资源检测、重复检测、缺字报告、验证器兜底。"""
 from __future__ import annotations
 
+from pathlib import Path                                  # noqa: E402
+
 from rtools.charset import find_missing_glyphs            # noqa: E402
 from rtools.cleanup import (clean_junk, find_duplicates,  # noqa: E402
                             find_unused_assets, quarantine_files)

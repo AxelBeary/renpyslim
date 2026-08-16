@@ -1,0 +1,45 @@
+# 打版本号标签（v0.12.0 之类）后自动构建 exe 并发布 Release。
+# 发版流程：git tag v0.x.0 && git push origin v0.x.0 —— 剩下的全自动。
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pyinstaller
+
+      # 发布前先跑一遍回归，红了就不发版
+      - name: Sanity tests
+        run: python -m pytest tests -q
+
+      - name: Build exe (same recipe as build_exe.bat)
+        run: |
+          python -m PyInstaller --noconfirm --onefile --windowed --name RenPySlim `
+            --icon assets\icon.ico `
+            --add-data "web\static;web/static" `
+            --add-data "assets;assets" `
+            --hidden-import rtools.pipeline `
+            --hidden-import rtools.packager `
+            --hidden-import pystray._win32 main.py
+
+      - name: Create Release with exe attached
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh release create ${{ github.ref_name }} dist\RenPySlim.exe
+          --title "${{ github.ref_name }}"
+          --generate-notes

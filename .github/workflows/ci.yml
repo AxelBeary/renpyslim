@@ -1,0 +1,28 @@
+# 每次提交/PR 自动体检：静态检查（只查真错误）+ 全量回归测试
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt pytest ruff
+
+      # 只查真错误（未定义变量/未用导入/语法错等 F 类与 E9）；
+      # 风格类意见不拦：项目刻意使用宽容异常捕获等安全风格
+      - name: Static check (real errors only)
+        run: ruff check --select F,E9 rtools web cli.py main.py tests
+
+      - name: Run regression tests
+        run: python -m pytest tests -q

@@ -14,7 +14,6 @@ import os
 import random
 import shutil
 import string
-import subprocess
 import tempfile
 import zipfile
 from pathlib import Path
