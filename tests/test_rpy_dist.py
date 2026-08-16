@@ -4,8 +4,10 @@ from __future__ import annotations
 import wave
 from pathlib import Path
 
+import pytest                                       # noqa: E402
 
 from rtools import pipeline                          # noqa: E402
+from rtools.audio_optimizer import find_ffmpeg       # noqa: E402
 from rtools.config import default_options            # noqa: E402
 
 
@@ -40,6 +42,8 @@ def _make_dist_with_rpy(tmp_path: Path) -> Path:
     return dist
 
 
+@pytest.mark.skipif(not find_ffmpeg(),
+                    reason="本机无 ffmpeg，无法验证 WAV→OGG 转换")
 def test_dist_with_rpy_unlocks_conversion(tmp_path):
     dist = _make_dist_with_rpy(tmp_path)
     opts = default_options()
