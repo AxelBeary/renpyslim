@@ -1,11 +1,15 @@
-# 依赖安全与更新监控：每周检查 Python 依赖与 Actions 版本，
-# 发现安全漏洞自动提 PR 建议升级。
+# 依赖安全与更新监控：每周检查 Python 依赖与 Actions 版本。
+# pip 只收安全更新，不收纯版本 bump（requirements.txt 用的是
+# 宽容下限，Dependabot 抬下限只收紧兼容性无收益）。
 version: 2
 updates:
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update"]
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
