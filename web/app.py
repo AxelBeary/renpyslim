@@ -11,7 +11,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -24,6 +24,31 @@ from rtools.models import Progress
 STATIC_DIR = Path(__file__).parent / "static"
 
 app = FastAPI(title="Ren'Py 工具箱")
+
+# ---------------------------------------------------------------------------
+# 本地专用防护：只认本机来源的请求
+# ---------------------------------------------------------------------------
+# 服务已绑定 127.0.0.1，但还要防“域名重绑定”类手法：恶意网页
+# 让自己的域名解析到本机，借浏览器之手指挥本地服务。对策是
+# 核对请求的“门牌号”：Host 不是本机地址、或 Origin 来自别的
+# 网站，一律拒收。正常自用完全无感。
+_ALLOWED_HOSTS = {"127.0.0.1", "localhost"}
+
+
+@app.middleware("http")
+async def guard_local_only(request: Request, call_next):
+    host = request.headers.get("host", "").split(":")[0].lower()
+    if host and host not in _ALLOWED_HOSTS:
+        return JSONResponse({"ok": False, "error": "非本机请求，已拒绝"},
+                            status_code=403)
+    origin = request.headers.get("origin", "")
+    if origin:
+        from urllib.parse import urlparse
+        origin_host = (urlparse(origin).hostname or "").lower()
+        if origin_host and origin_host not in _ALLOWED_HOSTS:
+            return JSONResponse({"ok": False, "error": "非本机来源，已拒绝"},
+                                status_code=403)
+    return await call_next(request)
 
 # ---------------------------------------------------------------------------
 # 任务管理

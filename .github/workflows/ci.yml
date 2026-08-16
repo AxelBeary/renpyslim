@@ -21,7 +21,7 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pytest ruff
+        run: pip install -r requirements.txt pytest ruff httpx
 
       # 只查真错误（未定义变量/未用导入/语法错等 F 类与 E9）；
       # 风格类意见不拦：项目刻意使用宽容异常捕获等安全风格

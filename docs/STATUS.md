@@ -8,7 +8,7 @@
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
 Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更新检查靶子，
 附 v0.10.0 exe；已验证 updater 正确识别）
-回归测试：70 项全绿（`pytest tests -q`，含审核修复回归 12 条 + lint 路径回归 + F8 路由回归）
+回归测试：74 项全绿（`pytest tests -q`，含审核修复回归 12 条 + lint 路径回归 + F8 路由回归 + 后端本地防护 4 条）
 
 ## 2026-08-16 v0.11.0（用户拍板“把值得做的搞定”）
 
@@ -29,6 +29,10 @@ Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更�
   （--select F,E9，风格类不拦）+ 全量 pytest；windows-latest + Python 3.13。
   已踩坑记录：①CI 机无 FFmpeg/SDK，依赖它们的测试必须带 skip 保护；
   ②本地 ruff --fix 的改动要确认全部加进提交（曾漏两个测试文件导致 CI 红）
+- **后端本地防护**（用户拍板加）：web/app.py 中间件 guard_local_only
+  核对 Host/Origin，非本机来源一律 403（防 DNS 重绑定/恶意网页
+  指挥本地服务）；测试用 fastapi TestClient + base_url 指定本机
+  Host（默认 testserver 会被自己的防护拦下），需 httpx 依赖
 - **Release**（release.yml）：打 v* 标签自动构建 exe + 发 Release
   （发版命令：git tag v0.x.0 && git push origin v0.x.0，全自动）
 - **CodeQL**：用用户在网页开的仓库级默认扫描（default setup）；自定义
