@@ -8,7 +8,21 @@
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
 Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更新检查靶子，
 附 v0.10.0 exe；已验证 updater 正确识别）
-回归测试：74 项全绿（`pytest tests -q`，含审核修复回归 12 条 + lint 路径回归 + F8 路由回归 + 后端本地防护 4 条）
+回归测试：77 项全绿（`pytest tests -q`，含审核修复回归 12 条 + lint 路径回归 + F8 路由回归 + 后端本地防护 4 条 + i18n 字典完整性 3 条）
+
+## 2026-08-17 多语言四语上线（用户四步计划）
+
+- README 全量重排版（中文默认），新增 README.en/ru/es 三份翻译，
+  各 README 顶部语言行互链
+- 界面四语：语言选择器改 select + LANGS 注册表（选项由注册表生成），
+  浏览器语言自动识别（localStorage 手动选择 > navigator.language > 默认 zh）；
+  ru/es 字典完整手写，LOG_PATTERNS 日志模板同步四语化
+- 前端 TS 咨询拍板：**不引 TS**（维护单文件零依赖架构），替代方案为
+  tests/test_i18n.py 键完整性守卫（字典键集一致 + data-i18n 键全覆盖）；
+  抓出过 en 缺 nav_apk/title_apk、ru/es 缺 pwd_ph/browse_font 的真漏键
+- 贡献翻译指南进 CONTRIBUTING.md（新增语言四步：字典/注册/日志模板/文档）
+- 坑：解析 JS 字典顶层键必须字符串感知（值里 {n} 占位符会干扰花括号配对）；
+  一行多键写法不能靠行首正则提键
 
 ## 2026-08-16 v0.11.0（用户拍板“把值得做的搞定”）
 

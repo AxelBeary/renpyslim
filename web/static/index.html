@@ -122,6 +122,12 @@ button { font-family: var(--font); }
   display: grid; place-items: center; }
 .icon-btn:hover { border-color: var(--border-strong); }
 
+/* 语言选择器：多语言扩展结构，选项由 LANGS 注册表生成 */
+.lang-sel { background: var(--card2); color: var(--text); border: 1px solid var(--border);
+  border-radius: 999px; padding: 6px 12px; font-size: 12.5px; outline: none;
+  cursor: pointer; font-family: var(--font); }
+.lang-sel:hover { border-color: var(--border-strong); }
+
 /* ===================== 组件 ===================== */
 .card { background: var(--card); border: 1px solid var(--border);
   border-radius: var(--radius-card); padding: 22px; margin-bottom: 18px;
@@ -282,10 +288,8 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
       <div class="top-actions">
         <span class="note" id="verlabel"></span>
         <a class="updchip hidden" id="updchip" target="_blank"></a>
-        <div class="seg" id="langseg">
-          <button onclick="setLang('zh')">中文</button>
-          <button onclick="setLang('en')">EN</button>
-        </div>
+        <select id="langsel" class="lang-sel" onchange="setLang(this.value)"
+                title="Language / 语言"></select>
         <button class="icon-btn" id="themebtn" onclick="toggleTheme()">☀️</button>
       </div>
     </div>
@@ -632,9 +636,9 @@ zh: {
 },
 en: {
   tagline: "Ren'Py slimming & packaging toolkit", nav_workspace: "Workspace", nav_other: "More",
-  nav_project: "Slim & Pack", nav_dist: "Dist Slimming", nav_font: "Font Slimming", nav_settings: "Settings",
+  nav_project: "Slim & Pack", nav_dist: "Dist Slimming", nav_apk: "APK Slimming", nav_font: "Font Slimming", nav_settings: "Settings",
   foot_running: "Running in background · closing this page won't stop it", quit: "Quit tool",
-  title_project: "Slim & Pack", title_dist: "Dist Slimming", title_font: "Font Slimming", title_settings: "Settings",
+  title_project: "Slim & Pack", title_dist: "Dist Slimming", title_apk: "APK Slimming", title_font: "Font Slimming", title_settings: "Settings",
   s1_title_p: "Pick your Ren'Py project folder", s1_title_d: "Pick a packaged distribution",
   s1_desc_p: "Choose the folder containing the game directory (or use “Browse folders”). The tool works on a copy first — the original stays untouched.",
   s1_desc_d: "Pick a dist folder, or a zip / 7z / rar archive directly (auto-extract, auto-repack after slimming). Tip: dropping the archive onto the tool icon works too.",
@@ -739,12 +743,247 @@ en: {
   logs_note: "Tool run logs below (Chinese output)",
   warn_note: "The notices below come from the engine and are shown in their original wording.",
 },
+/* ===================== Русский ===================== */
+ru: {
+  tagline: "Инструмент сжатия и упаковки Ren'Py", nav_workspace: "Рабочая область", nav_other: "Ещё",
+  nav_project: "Сборка+оптимизация", nav_dist: "Сжатие сборки", nav_apk: "Сжатие APK",
+  nav_font: "Сжатие шрифтов", nav_settings: "Настройки",
+  foot_running: "Работает в фоне · закрытие страницы не останавливает его", quit: "Выйти",
+  title_project: "Сборка и оптимизация", title_dist: "Сжатие сборки", title_apk: "Сжатие APK",
+  title_font: "Сжатие шрифтов", title_settings: "Настройки",
+  s1_title_p: "Выберите папку проекта Ren'Py", s1_title_d: "Выберите готовую сборку",
+  s1_desc_p: "Выберите папку с каталогом game (можно через «Обзор папок»). Инструмент сначала создаёт рабочую копию — оригиналы не изменяются.",
+  s1_desc_d: "Выберите папку сборки или архив zip / 7z / rar (авто-распаковка и обратная упаковка после сжатия). Совет: просто перетащите архив на значок инструмента.",
+  path_ph: "Напр.: E:\\MyGame — или перетащите архив на значок инструмента",
+pwd_ph: "Пароль архива (только если zip/7z/rar защищён паролем)",
+    browse_zip: "Обзор архивов", browse_dir: "Обзор папок", browse_font: "Обзор шрифтов", analyze: "Анализировать", recent: "Недавние:",
+  analyzing: "Подготовка к сканированию…", analyze_done: "Анализ завершён, формируется отчёт…",
+  analyze_err_next: "Проверьте путь и пароль архива.",
+  not_dist_warn: "Скомпилированные скрипты .rpyc не найдены — не похоже на готовую сборку.",
+  s2_title: "Отчёт об анализе", report_expand: "Список ресурсов (нажмите, чтобы развернуть; можно пропустить)",
+  stat_assets: "Ресурсов", stat_size: "Общий размер",
+  stat_est: "Макс. экономия", stat_chars: "Символов в использовании",
+  s3_title: "Выберите оптимизации", s3_desc: "Настройки по умолчанию проверены — обычно достаточно нажать «Запустить».",
+  grp_basic: "Основное", grp_preset: "Пресет сжатия", grp_charset: "Резервный набор символов (защита от лишней обрезки)",
+  grp_adv: "Дополнительно и экспериментально", grp_plat: "Платформы сборки (упаковка после оптимизации)",
+  opt_img: "Оптимизация изображений<br><span class='hint'>Сжатие PNG/JPG; в режиме проекта крупные переводятся в WebP с правкой ссылок</span>",
+  opt_aud: "Оптимизация аудио<br><span class='hint'>WAV/MP3 → OGG; только файлы с явными ссылками в скриптах</span>",
+  opt_font: "Сжатие шрифтов<br><span class='hint'>Остаются только используемые глифы — обычно минус 80% и больше</span>",
+  opt_webp: "PNG → WebP (только режим проекта)<br><span class='hint'>Самый большой выигрыш; в режиме сборки игнорируется автоматически</span>",
+  preset_con: "Консервативный: почти без потерь, умеренная экономия",
+  preset_bal: "Сбалансированный (рекомендуется): разница на глаз незаметна, минус 40~60%",
+  preset_agg: "Агрессивный: приоритет размеру, заметные потери качества",
+  cs_latin: "Базовая латиница + цифры + пунктуация (настоятельно рекомендуется)", cs_cjk: "Частая пунктуация CJK (рекомендуется)",
+  cs_full: "Полноширинные символы", cs_kana: "Японская кана", cs_extra_ph: "Дополнительные символы (необязательно, просто вставьте)",
+  opt_inplace: "Изменять оригиналы напрямую (опасно)<br><span class='hint'>По умолчанию — рабочая копия; при включении сначала создаётся полная резервная копия</span>",
+  opt_delref: "Изолировать файлы без ссылок<br><span class='hint'>Режим сборки: перемещение в карантин вместо удаления; по умолчанию выключено</span>",
+  opt_quar: "Изолировать неиспользуемые ресурсы<br><span class='hint'>Режим проекта: аудио/видео/шрифты без ссылок перемещаются в карантин (изображения не проверяются)</span>",
+  opt_quant: "Глубокое сжатие PNG (экспериментально)<br><span class='hint'>Квантование полноцветных изображений с потерями: ещё минус 60~80%; возможны лёгкие полосы на градиентах</span>",
+  opt_video: "Сжатие видео (экспериментально)<br><span class='hint'>Перекодирование с тем же именем; самая хрупкая категория, по умолчанию выключено</span>",
+  opt_remap: "Принудительный WebP для сборки (экспериментально)<br><span class='hint'>Внедряется скрипт переназначения для подмены во время выполнения; для отката просто удалите скрипт</span>",
+  opt_nocache: "Отключить инкрементальный кэш<br><span class='hint'>По умолчанию включён: повторная обработка тех же файлов пропускается мгновенно</span>",
+  opt_rpa: "Упаковать ресурсы в архив RPA<br><span class='hint'>Официальный механизм: защищает от случайного копирования, но не от взлома</span>",
+  plat_android: "Android (впервые нужна настройка Android в лаунчере Ren'Py)",
+  inplace_warn: "Вы включили «изменять оригиналы»: сначала создаётся полная резервная копия, но сами изменения необратимы. Убедитесь, что это нужно.",
+  run: "Запустить", run_hint: "Обычно 3~8 минут", cancel: "Остановить",
+  s4_title: "Выполняется",
+  st_preparing: "Подготовка…", st_running: "Идёт работа — не закрывайте окно…",
+  st_stopping: "Остановка — завершаем текущий файл…",
+  st_done: "Готово", st_failed: "Ошибка", st_cancelled: "Остановлено",
+  err_next: "Проверьте путь и место на диске; если не понятно — отправьте это сообщение разработчику.",
+  fill_path: "Сначала укажите путь", fill_font: "Нужны и файл шрифта, и источники текста",
+  r_opt_done: "Оптимизация завершена: сэкономлено около", r_workdir: "Рабочая папка", r_report: "Отчёт", r_changelog: "Список изменений",
+  r_lint_ok: "Официальная проверка: lint пройден, ошибок нет", r_lint_head: "Официальная проверка: ",
+  r_extra_head: "Дополнительные проверки: ", r_junk: "Убрано воспроизводимого мусора: {n} шт. (освобождено {s})",
+  r_unused: "Ресурсов без ссылок: {n}", r_unused_q: ", изолировано {n}", r_unused_rep: " (только отчёт, не тронуто)",
+  r_dup: "Групп полных дубликатов: {n} (только отчёт — проверьте вручную)", r_glyph: "Отсутствующих глифов: {n} (см. предупреждения)",
+  r_dist_done: "Сжатие завершено: сэкономлено около", r_outdir: "Папка результата", r_deliver: "Итоговый архив",
+  r_has_rpy: "В сборке есть исходники .rpy: включено преобразование форматов (PNG/JPG→WebP, WAV/MP3→OGG), ссылки переписаны; движок перекомпилирует при следующем запуске.",
+  r_pkg_ok: "Упаковано: ", r_pkg_out: "Папка вывода",
+  r_charlist: "Скачать список символов", r_warn_default: "· ",
+  /* APK */
+  apk_s1: "Выберите APK",
+  apk_s1_desc: "Выберите установочный файл игры (.apk). Каталог движка защищён автоматически; изменяются только ресурсы игры; исходный файл не трогается.",
+  apk_path_ph: "Напр.: E:\\MyGame.apk — или перетащите APK на значок инструмента",
+  apk_browse: "Обзор APK",
+  apk_s2: "Выберите план сжатия",
+  apk_s2_desc: "Настроек по умолчанию достаточно: на выходе — готовый к установке пакет. Важно: подпись изменится — сначала удалите старую версию с телефона.",
+  apk_depth: "Глубина сжатия",
+  apk_remap: "Максимальное сжатие (экспериментально): изображения → WebP, аудио → OGG, обычно ещё минус половина<br><span class='hint'>Работает через маленький скрипт переназначения; файлы игры не изменяются. Если что-то не так — перезапустите без этого пункта</span>",
+  apk_sig_title: "Подпись приложения (Android требует подпись для установки)",
+  sig_gen: "Создать новый ключ и подписать (рекомендуется)<br><span class='hint'>Один клик — готовый к установке пакет; ключ и пароль сохраняются рядом с APK, храните их</span>",
+  sig_own: "Подписать моим ключом<br><span class='hint'>Для обновлений уже выпущенной игры (та же подпись = установка поверх)</span>",
+  sig_none: "Не подписывать<br><span class='hint'>Только если подпишете сами позже; такой пакет не устанавливается</span>",
+  apk_ks_ph: "Путь к хранилищу ключей (.keystore / .jks)", apk_ks_browse: "Обзор ключей",
+  apk_kspass_ph: "Пароль хранилища", apk_ksalias_ph: "Псевдоним ключа (необязательно)",
+  apk_run: "Начать сжатие", apk_run_hint: "Крупные игры: около 3~10 минут",
+  fill_apk: "Сначала укажите путь к APK", sig_own_need: "Для подписи своим ключом нужны и путь, и пароль",
+  r_apk_saved: "Сэкономлено", r_apk_changes: "Изменено ресурсов", r_apk_signed: "Подпись",
+  r_apk_signed_yes: "Подписан, устанавливается", r_apk_signed_no: "Не подписан, не устанавливается",
+  r_apk_out: "Новый пакет", r_apk_ks: "Новый ключ", r_apk_ks_memo: "Файл с паролем",
+  font_title: "Сжатие шрифтов · автономно",
+  font_desc: "Проект не нужен: выберите шрифт и источники текста — получите облегчённую копию (оригиналы не трогаются). Поддержка ttf/otf; коллекции ttc/otc разбиваются по начертаниям.",
+  font_step1: "1. Файл шрифта", font_step2: "2. Источники текста (папки или файлы; через запятую)",
+  font_step3: "3. Резервный набор символов (защита от лишней обрезки)",
+  font_ph: "Напр.: E:\\Fonts\\SourceHanSans.ttf", src_ph: "Напр.: E:\\MyGame\\game или отдельный скрипт/txt",
+  font_run: "Сжать шрифт", font_running: "Сжатие…",
+  font_done: "Готово: в наборе {n} символов", font_glyphs: "глифов {a} → {b}, ",
+  font_out: "Вывод", font_charlist: "Список символов",
+  set_sdk: "Путь к Ren'Py SDK", set_sdk_desc: "Для упаковки нужен официальный SDK. Обычно находится сам; если нет — укажите здесь.",
+  save: "Сохранить", saved: "Сохранено", set_env: "Окружение",
+  set_appearance: "Внешний вид",
+  set_appearance_desc: "Язык и тему можно переключать в правом верхнем углу; выбор запоминается. Без ручного выбора тема следует системе.",
+  env_sdk: "SDK", env_ffmpeg: "FFmpeg", env_java: "Java",
+  env_ready: "готово", env_sdk_miss: "не найден (упаковка недоступна)",
+  env_ff_miss: "не найден (оптимизация аудио недоступна)", env_java_miss: "не установлена (нужна для Android)",
+  env_ver: "Версия", upd_found: "Доступна новая версия {v} — скачать",
+  th_pri: "Приоритет", th_kind: "Тип", th_file: "Файл", th_size: "Размер", th_issue: "Проблема и совет",
+  kinds: { image: "Изображение", audio: "Аудио", video: "Видео", font: "Шрифт" },
+  kind_rpa: "·в RPA",
+  pri: { high: "Выс.", medium: "Сред.", low: "Низ." },
+  issue_tpl: "{m}<br><span style='color:var(--muted)'>Совет: {s}</span>",
+  stages: { scan: "скан", unpack: "расп.", analyze: "анализ", optimize: "оптим.", rewrite: "ссылки",
+            rpa: "rpa", clean: "очистка", verify: "lint", package: "упаковка", backup: "бэкап",
+            copy: "копия", done: "готово", error: "ошибка", font: "шрифт", repack: "переуп.",
+            junk: "очистка", quarantine: "карантин", apk: "APK" },
+  quit_confirm: "Выйти из RenPySlim?\nЗапущенные задачи будут прерваны (оригиналы в безопасности).",
+  quit_ing: "Выход…", quit_done: "Инструмент закрыт. Страницу можно закрыть.",
+  quit_sent: "Запрос на выход отправлен — страница скоро потеряет соединение. Это нормально.",
+  browse_fail: "Не удалось открыть диалог выбора файлов",
+  logs_note: "Ниже журнал работы (на китайском)",
+  warn_note: "Сообщения ниже идут от движка и показаны на языке оригинала.",
+},
+/* ===================== Español ===================== */
+es: {
+  tagline: "Herramienta de adelgazamiento y empaquetado de Ren'Py", nav_workspace: "Área de trabajo", nav_other: "Más",
+  nav_project: "Optimizar y empaquetar", nav_dist: "Adelgazar distribución", nav_apk: "Adelgazar APK",
+  nav_font: "Adelgazar fuentes", nav_settings: "Ajustes",
+  foot_running: "Funciona en segundo plano · cerrar la página no lo detiene", quit: "Salir",
+  title_project: "Optimizar y empaquetar", title_dist: "Adelgazar distribución", title_apk: "Adelgazar APK",
+  title_font: "Adelgazar fuentes", title_settings: "Ajustes",
+  s1_title_p: "Elige la carpeta del proyecto Ren'Py", s1_title_d: "Elige una distribución empaquetada",
+  s1_desc_p: "Elige la carpeta que contiene el directorio game (o usa «Examinar carpetas»). La herramienta trabaja sobre una copia: los originales no se tocan.",
+  s1_desc_d: "Elige una carpeta de distribución o un archivo zip / 7z / rar (se descomprime y se vuelve a empaquetar automáticamente). Consejo: arrastra el archivo al icono de la herramienta.",
+  path_ph: "P. ej.: E:\\MyGame — o arrastra el archivo al icono",
+pwd_ph: "Contraseña del archivo (solo si el zip/7z/rar está protegido)",
+    browse_zip: "Examinar archivos", browse_dir: "Examinar carpetas", browse_font: "Examinar fuentes", analyze: "Analizar", recent: "Recientes:",
+  analyzing: "Preparando el escaneo…", analyze_done: "Análisis completo, generando informe…",
+  analyze_err_next: "Comprueba la ruta y la contraseña del archivo.",
+  not_dist_warn: "No se encontraron scripts compilados .rpyc: no parece una distribución empaquetada.",
+  s2_title: "Informe del análisis", report_expand: "Detalle de recursos (clic para desplegar — lectura opcional)",
+  stat_assets: "Recursos", stat_size: "Tamaño total",
+  stat_est: "Ahorro máx. estimado", stat_chars: "Caracteres en uso",
+  s3_title: "Elige qué optimizar", s3_desc: "Los valores por defecto están verificados: normalmente basta con pulsar «Ejecutar».",
+  grp_basic: "Básico", grp_preset: "Preajuste de compresión", grp_charset: "Juego de caracteres de reserva (evita recortes excesivos)",
+  grp_adv: "Avanzado y experimental", grp_plat: "Plataformas de empaquetado (tras optimizar)",
+  opt_img: "Optimizar imágenes<br><span class='hint'>Compresión de PNG/JPG; en modo proyecto se convierten a WebP y se reescriben las referencias</span>",
+  opt_aud: "Optimizar audio<br><span class='hint'>WAV/MP3 → OGG; solo archivos con referencia explícita en los scripts</span>",
+  opt_font: "Adelgazar fuentes<br><span class='hint'>Solo se conservan los glifos usados: normalmente −80 % o más</span>",
+  opt_webp: "PNG → WebP (solo modo proyecto)<br><span class='hint'>El mayor ahorro; en modo distribución se ignora automáticamente</span>",
+  preset_con: "Conservador: casi sin pérdidas, ahorro moderado",
+  preset_bal: "Equilibrado (recomendado): diferencia imperceptible, −40~60 %",
+  preset_agg: "Agresivo: prioridad al tamaño, pérdida de calidad perceptible",
+  cs_latin: "Latino básico + dígitos + puntuación (muy recomendado)", cs_cjk: "Puntuación CJK frecuente (recomendado)",
+  cs_full: "Símbolos de ancho completo", cs_kana: "Kana japonés", cs_extra_ph: "Caracteres adicionales (opcional, pégalos directamente)",
+  opt_inplace: "Modificar los originales directamente (peligroso)<br><span class='hint'>Por defecto se trabaja en una copia; si lo activas, primero se crea una copia de seguridad completa</span>",
+  opt_delref: "Aislar archivos sin referencias<br><span class='hint'>Modo distribución: se mueven a cuarentena en vez de borrarlos; desactivado por defecto</span>",
+  opt_quar: "Aislar recursos sin uso<br><span class='hint'>Modo proyecto: audio/vídeo/fuentes sin referencia se mueven a cuarentena (las imágenes no se comprueban)</span>",
+  opt_quant: "Compresión profunda de PNG (experimental)<br><span class='hint'>Cuantificación con pérdidas para imágenes a color: −60~80 % extra; posible banding leve en degradados</span>",
+  opt_video: "Comprimir vídeo (experimental)<br><span class='hint'>Recodificación con el mismo nombre; la categoría más frágil, desactivada por defecto</span>",
+  opt_remap: "Forzar WebP en la distribución (experimental)<br><span class='hint'>Se inyecta un script de remapeo en tiempo de ejecución; para revertir, borra el script</span>",
+  opt_nocache: "Desactivar la caché incremental<br><span class='hint'>Activada por defecto: repetir con los mismos archivos se salta al instante</span>",
+  opt_rpa: "Empaquetar recursos en archivo RPA<br><span class='hint'>Canal oficial: evita la copia casual, pero no el crackeo</span>",
+  plat_android: "Android (la primera vez hay que configurarlo en el lanzador de Ren'Py)",
+  inplace_warn: "Activaste «modificar originales»: primero se crea una copia de seguridad completa, pero la operación es irreversible. Asegúrate de quererlo.",
+  run: "Ejecutar", run_hint: "Unos 3~8 minutos", cancel: "Detener",
+  s4_title: "En ejecución",
+  st_preparing: "Preparando…", st_running: "Trabajando: no cierres esta ventana…",
+  st_stopping: "Deteniendo: terminando el archivo en curso…",
+  st_done: "Hecho", st_failed: "Error", st_cancelled: "Detenido",
+  err_next: "Comprueba la ruta y el espacio en disco; si no lo entiendes, envía este mensaje al desarrollador.",
+  fill_path: "Introduce primero una ruta", fill_font: "Se necesitan la fuente y las fuentes de texto",
+  r_opt_done: "Optimización completada: ahorro de unos", r_workdir: "Carpeta de trabajo", r_report: "Informe", r_changelog: "Registro de cambios",
+  r_lint_ok: "Verificación oficial: lint superado, sin errores", r_lint_head: "Verificación oficial: ",
+  r_extra_head: "Comprobaciones extra: ", r_junk: "Basura regenerable limpiada: {n} elementos ({s} liberados)",
+  r_unused: "{n} recursos sin referencias", r_unused_q: ", {n} aislados", r_unused_rep: " (solo informe, sin tocar)",
+  r_dup: "{n} grupos de duplicados exactos (solo informe — revísalo a mano)", r_glyph: "{n} avisos de glifos faltantes (ver advertencias)",
+  r_dist_done: "Adelgazamiento completado: ahorro de unos", r_outdir: "Carpeta de resultado", r_deliver: "Archivo de entrega",
+  r_has_rpy: "La distribución incluye fuentes .rpy: se activó la conversión de formatos (PNG/JPG→WebP, WAV/MP3→OGG) y se reescribieron las referencias; el motor recompilará al iniciar.",
+  r_pkg_ok: "Empaquetado: ", r_pkg_out: "Carpeta de salida",
+  r_charlist: "Descargar lista de caracteres", r_warn_default: "· ",
+  /* APK */
+  apk_s1: "Elige el paquete APK",
+  apk_s1_desc: "Elige el instalador de tu juego (.apk). El directorio del motor queda protegido automáticamente; solo se tocan los recursos del juego; el original no se modifica.",
+  apk_path_ph: "P. ej.: E:\\MyGame.apk — o arrastra el APK al icono",
+  apk_browse: "Examinar APK",
+  apk_s2: "Elige el plan de adelgazamiento",
+  apk_s2_desc: "Los valores por defecto bastan: obtendrás un paquete instalable. Ojo: cambia la firma; desinstala antes la versión antigua del teléfono.",
+  apk_depth: "Profundidad de adelgazamiento",
+  apk_remap: "Adelgazamiento máximo (experimental): imágenes a WebP y audio a OGG; suele ahorrar más de la mitad<br><span class='hint'>Funciona inyectando un script de redirección; no se modifica ningún archivo del juego. Si algo falla, reejecuta sin esta opción</span>",
+  apk_sig_title: "Firma de la app (Android exige firma para instalar)",
+  sig_gen: "Generar una clave nueva y firmar (recomendado)<br><span class='hint'>Un clic y paquete instalable; la clave y la nota con la contraseña se guardan junto al APK — consérvalas</span>",
+  sig_own: "Firmar con mi propia clave<br><span class='hint'>Para publicar actualizaciones de un juego ya lanzado (misma firma = instalación encima)</span>",
+  sig_none: "No firmar<br><span class='hint'>Solo si vas a firmarlo tú después; el resultado no se puede instalar</span>",
+  apk_ks_ph: "Ruta del almacén de claves (.keystore / .jks)", apk_ks_browse: "Examinar claves",
+  apk_kspass_ph: "Contraseña del almacén", apk_ksalias_ph: "Alias de la clave (opcional)",
+  apk_run: "Empezar", apk_run_hint: "Juegos grandes: unos 3~10 minutos",
+  fill_apk: "Introduce primero la ruta del APK", sig_own_need: "Para firmar con tu clave se necesitan ruta y contraseña",
+  r_apk_saved: "Ahorrado", r_apk_changes: "Recursos modificados", r_apk_signed: "Firma",
+  r_apk_signed_yes: "Firmado, instalable", r_apk_signed_no: "Sin firmar, no instalable",
+  r_apk_out: "Nuevo paquete", r_apk_ks: "Nueva clave", r_apk_ks_memo: "Nota con la contraseña",
+  font_title: "Adelgazar fuentes · independiente",
+  font_desc: "No hace falta un proyecto: elige una fuente y fuentes de texto, y obtén una copia ligera (los originales no se tocan). Soporta ttf/otf; las colecciones ttc/otc se separan por peso.",
+  font_step1: "1. Archivo de fuente", font_step2: "2. Fuentes de texto (carpetas o archivos; separados por comas)",
+  font_step3: "3. Juego de caracteres de reserva (evita recortes excesivos)",
+  font_ph: "P. ej.: E:\\Fonts\\SourceHanSans.ttf", src_ph: "P. ej.: E:\\MyGame\\game, o un script/txt suelto",
+  font_run: "Adelgazar fuente", font_running: "Adelgazando…",
+  font_done: "Hecho: el juego tiene {n} caracteres", font_glyphs: "glifos {a} → {b}, ",
+  font_out: "Salida", font_charlist: "Lista de caracteres",
+  set_sdk: "Ruta del SDK de Ren'Py", set_sdk_desc: "El empaquetado necesita el SDK oficial. Suele detectarse solo; si no, indícalo aquí.",
+  save: "Guardar", saved: "Guardado", set_env: "Entorno",
+  set_appearance: "Apariencia",
+  set_appearance_desc: "Idioma y tema se cambian arriba a la derecha y se recuerdan. Sin elección manual, el tema sigue al sistema.",
+  env_sdk: "SDK", env_ffmpeg: "FFmpeg", env_java: "Java",
+  env_ready: "listo", env_sdk_miss: "no encontrado (empaquetado no disponible)",
+  env_ff_miss: "no encontrado (optimización de audio no disponible)", env_java_miss: "no instalado (necesario para Android)",
+  env_ver: "Versión", upd_found: "Nueva versión {v} disponible — descargar",
+  th_pri: "Prioridad", th_kind: "Tipo", th_file: "Archivo", th_size: "Tamaño", th_issue: "Problema y sugerencia",
+  kinds: { image: "Imagen", audio: "Audio", video: "Vídeo", font: "Fuente" },
+  kind_rpa: "·en RPA",
+  pri: { high: "Alta", medium: "Media", low: "Baja" },
+  issue_tpl: "{m}<br><span style='color:var(--muted)'>Sugerencia: {s}</span>",
+  stages: { scan: "escaneo", unpack: "descomp.", analyze: "análisis", optimize: "optim.", rewrite: "ref. scripts",
+            rpa: "rpa", clean: "limpieza", verify: "lint", package: "empaquetado", backup: "copia",
+            copy: "copia", done: "hecho", error: "error", font: "fuente", repack: "reemp.",
+            junk: "limpieza", quarantine: "cuarentena", apk: "APK" },
+  quit_confirm: "¿Salir de RenPySlim?\nLas tareas en curso se interrumpirán (los originales están a salvo).",
+  quit_ing: "Saliendo…", quit_done: "La herramienta se cerró. Ya puedes cerrar la página.",
+  quit_sent: "Solicitud de salida enviada: la página perderá la conexión en breve. Es normal.",
+  browse_fail: "No se pudo abrir el diálogo de archivos",
+  logs_note: "Registro de ejecución (en chino)",
+  warn_note: "Los avisos siguientes provienen del motor y se muestran en su idioma original.",
+},
 };
 
 /* ===================== 全局状态 ===================== */
 let MODE = "project";          // 工作流模式：project / dist
 let VIEW = "project";          // 当前视图：project / dist / font / settings
-let LANG = localStorage.getItem("rps-lang") || "zh";
+/* 语言注册表：新增语言的唯一入口——①在 I18N 加字典 ②在这里登记
+   ③给 LOG_PATTERNS 补该语言的日志模板 ④加 README.<码>.md */
+const LANGS = { zh: "中文", en: "English", ru: "Русский", es: "Español" };
+function detectInitialLang() {
+  /* 优先级：用户手动选择（记住）> 浏览器语言 > 默认中文 */
+  try {
+    const saved = localStorage.getItem("rps-lang");
+    if (saved && I18N[saved]) return saved;
+  } catch (e) {}
+  const nav = (navigator.language || "").toLowerCase();
+  for (const code of Object.keys(LANGS)) {
+    if (nav.startsWith(code)) return code;
+  }
+  return "zh";
+}
+let LANG = detectInitialLang();
 let REPORT = null;             // 最近一次分析报告
 let LAST_RESULT = null;        // 最近一次执行结果（切语言时重渲染）
 let LAST_CHARLIST = null;
@@ -766,46 +1005,126 @@ function fmtSize(b) {
   return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
 }
 
-/* ===================== 日志翻译（英文模式） =====================
-后端消息为中文输出；前端按高频句式模式匹配翻译，
-匹配不上的原样透传（不影响使用，只是双语混排）。 */
+/* ===================== 日志翻译（多语言） =====================
+后端消息为中文输出；前端按高频句式模式匹配翻译成当前语言，
+匹配不上的原样透传（不影响使用，只是多语混排）。
+模板结构：{语言码: 模板}，缺某语言时回退英文。 */
 const LOG_PATTERNS = [
-  [/^扫描资源 (\d+)\/(\d+)：(.*)$/, "Scanning assets $1/$2: $3"],
-  [/^扫描到 (\d+) 个资源文件，实际使用字符 (\d+) 个$/, "Found $1 assets, $2 characters actually used"],
-  [/^扫描到 (\d+) 个散落资源、(\d+) 个封包内资源，实际使用字符 (\d+) 个$/, "Found $1 loose + $2 archived assets, $3 characters actually used"],
-  [/^正在提取字符集…+$/, "Extracting charset…"],
-  [/^处理中 (\d+)\/(\d+) · 累计已省 (.+)$/, "Working $1/$2 · saved $3 so far"],
-  [/^正在复制工程到工作副本（原件保持不动）…+$/, "Copying project to a working copy (originals untouched)…"],
-  [/^正在复制成品到工作副本（原件保持不动）…+$/, "Copying distribution to a working copy (originals untouched)…"],
-  [/^直接修改原工程模式：正在生成强制备份压缩包…+$/, "In-place mode: making a forced backup zip first…"],
-  [/^直接修改原成品模式：正在生成强制备份压缩包…+$/, "In-place mode: making a forced backup zip first…"],
-  [/^正在解压压缩包 (.+)…+$/, "Unpacking archive $1…"],
-  [/^已定位成品目录：(.+)$/, "Located distribution folder: $1"],
-  [/^压缩包里装的是 APK，自动转入 APK 瘦身：(.+)$/, "Archive contains an APK — switching to APK slimming: $1"],
-  [/^正在改写 (\d+) 个资源的脚本引用…+$/, "Rewriting script references for $1 assets…"],
-  [/^正在重建封包 (.+)（替换 (\d+) 个文件）…+$/, "Rebuilding archive $1 (replacing $2 files)…"],
-  [/^正在清理缓存、日志等可再生垃圾…+$/, "Cleaning regenerable junk (cache, logs)…"],
-  [/^正在把 (\d+) 个无引用资源移入隔离区…+$/, "Moving $1 unreferenced assets to quarantine…"],
-  [/^正在用官方 lint 验证优化后的工程…+$/, "Running official lint on the optimized project…"],
-  [/^lint 结果：(.+)$/, "lint result: $1"],
-  [/^字体 (\d+)\/(\d+)：(.+)$/, "Font $1/$2: $3"],
-  [/^工程优化完成，共节省约 (.+)$/, "Project optimization done, saved about $1"],
-  [/^成品瘦身完成，共节省约 (.+)$/, "Distribution slimming done, saved about $1"],
-  [/^APK 共 (\d+) 个条目，可优化资源 (\d+) 个$/, "APK: $1 entries total, $2 optimizable"],
-  [/^从 APK 内脚本提取到 (\d+) 个字符$/, "Extracted $1 characters from APK scripts"],
-  [/^瘦身 (\d+)\/(\d+)：(.+)$/, "Slimming $1/$2: $3"],
-  [/^重新打包（替换 (\d+) 个条目）…+$/, "Repacking (replacing $1 entries)…"],
-  [/^正在生成新的签名钥匙…+$/, "Generating a new signing key…"],
-  [/^已注入重映射脚本，(\d+) 个资源将在运行时透明换格式（实验性）$/, "Remap script injected: $1 assets will transparently switch format at runtime (experimental)"],
-  [/^正在对齐 APK…+$/, "Aligning APK…"],
-  [/^分析完成$/, "Analysis complete"],
-  [/^正在扫描：(.+)$/, "Scanning: $1"],
-  [/^正在瘦身：(.+)$/, "Slimming: $1"],
+  [/^扫描资源 (\d+)\/(\d+)：(.*)$/, {
+    en: "Scanning assets $1/$2: $3",
+    ru: "Сканирование ресурсов $1/$2: $3",
+    es: "Escaneando recursos $1/$2: $3" }],
+  [/^扫描到 (\d+) 个资源文件，实际使用字符 (\d+) 个$/, {
+    en: "Found $1 assets, $2 characters actually used",
+    ru: "Найдено ресурсов: $1, реально используемых символов: $2",
+    es: "Se encontraron $1 recursos y $2 caracteres en uso real" }],
+  [/^扫描到 (\d+) 个散落资源、(\d+) 个封包内资源，实际使用字符 (\d+) 个$/, {
+    en: "Found $1 loose + $2 archived assets, $3 characters actually used",
+    ru: "Найдено $1 отдельных и $2 архивных ресурсов, символов: $3",
+    es: "Se encontraron $1 recursos sueltos y $2 en archivo; $3 caracteres en uso" }],
+  [/^正在提取字符集…+$/, {
+    en: "Extracting charset…", ru: "Извлечение набора символов…",
+    es: "Extrayendo el juego de caracteres…" }],
+  [/^处理中 (\d+)\/(\d+) · 累计已省 (.+)$/, {
+    en: "Working $1/$2 · saved $3 so far",
+    ru: "Обработка $1/$2 · сэкономлено $3",
+    es: "Procesando $1/$2 · ahorrado $3 hasta ahora" }],
+  [/^正在复制工程到工作副本（原件保持不动）…+$/, {
+    en: "Copying project to a working copy (originals untouched)…",
+    ru: "Копирование проекта в рабочую копию (оригинал не трогается)…",
+    es: "Copiando el proyecto a una copia de trabajo (originales intactos)…" }],
+  [/^正在复制成品到工作副本（原件保持不动）…+$/, {
+    en: "Copying distribution to a working copy (originals untouched)…",
+    ru: "Копирование сборки в рабочую копию (оригинал не трогается)…",
+    es: "Copiando la distribución a una copia de trabajo (originales intactos)…" }],
+  [/^直接修改原工程模式：正在生成强制备份压缩包…+$/, {
+    en: "In-place mode: making a forced backup zip first…",
+    ru: "Режим правки на месте: сначала создаётся резервная копия…",
+    es: "Modo in situ: creando primero una copia de seguridad obligatoria…" }],
+  [/^直接修改原成品模式：正在生成强制备份压缩包…+$/, {
+    en: "In-place mode: making a forced backup zip first…",
+    ru: "Режим правки на месте: сначала создаётся резервная копия…",
+    es: "Modo in situ: creando primero una copia de seguridad obligatoria…" }],
+  [/^正在解压压缩包 (.+)…+$/, {
+    en: "Unpacking archive $1…", ru: "Распаковка архива $1…",
+    es: "Descomprimiendo el archivo $1…" }],
+  [/^已定位成品目录：(.+)$/, {
+    en: "Located distribution folder: $1",
+    ru: "Найдена папка сборки: $1", es: "Carpeta de distribución localizada: $1" }],
+  [/^压缩包里装的是 APK，自动转入 APK 瘦身：(.+)$/, {
+    en: "Archive contains an APK — switching to APK slimming: $1",
+    ru: "В архиве найден APK — переключаюсь на его сжатие: $1",
+    es: "El archivo contiene un APK: cambiando al adelgazamiento de APK: $1" }],
+  [/^正在改写 (\d+) 个资源的脚本引用…+$/, {
+    en: "Rewriting script references for $1 assets…",
+    ru: "Переписывание ссылок в скриптах для $1 ресурсов…",
+    es: "Reescribiendo referencias de $1 recursos en los scripts…" }],
+  [/^正在重建封包 (.+)（替换 (\d+) 个文件）…+$/, {
+    en: "Rebuilding archive $1 (replacing $2 files)…",
+    ru: "Пересборка архива $1 (замена файлов: $2)…",
+    es: "Reconstruyendo el archivo $1 (reemplazando $2 archivos)…" }],
+  [/^正在清理缓存、日志等可再生垃圾…+$/, {
+    en: "Cleaning regenerable junk (cache, logs)…",
+    ru: "Очистка воспроизводимого мусора (кэш, логи)…",
+    es: "Limpiando basura regenerable (caché, registros)…" }],
+  [/^正在把 (\d+) 个无引用资源移入隔离区…+$/, {
+    en: "Moving $1 unreferenced assets to quarantine…",
+    ru: "Перемещение $1 ресурсов без ссылок в карантин…",
+    es: "Moviendo $1 recursos sin referencias a la cuarentena…" }],
+  [/^正在用官方 lint 验证优化后的工程…+$/, {
+    en: "Running official lint on the optimized project…",
+    ru: "Проверка оптимизированного проекта официальным lint…",
+    es: "Ejecutando el lint oficial sobre el proyecto optimizado…" }],
+  [/^lint 结果：(.+)$/, {
+    en: "lint result: $1", ru: "Результат lint: $1", es: "Resultado del lint: $1" }],
+  [/^字体 (\d+)\/(\d+)：(.+)$/, {
+    en: "Font $1/$2: $3", ru: "Шрифт $1/$2: $3", es: "Fuente $1/$2: $3" }],
+  [/^工程优化完成，共节省约 (.+)$/, {
+    en: "Project optimization done, saved about $1",
+    ru: "Оптимизация проекта завершена, сэкономлено около $1",
+    es: "Optimización del proyecto completada; ahorro de unos $1" }],
+  [/^成品瘦身完成，共节省约 (.+)$/, {
+    en: "Distribution slimming done, saved about $1",
+    ru: "Сжатие сборки завершено, сэкономлено около $1",
+    es: "Adelgazamiento de la distribución completado; ahorro de unos $1" }],
+  [/^APK 共 (\d+) 个条目，可优化资源 (\d+) 个$/, {
+    en: "APK: $1 entries total, $2 optimizable",
+    ru: "APK: всего записей $1, оптимизируемых $2",
+    es: "APK: $1 entradas en total, $2 optimizables" }],
+  [/^从 APK 内脚本提取到 (\d+) 个字符$/, {
+    en: "Extracted $1 characters from APK scripts",
+    ru: "Из скриптов APK извлечено символов: $1",
+    es: "Se extrajeron $1 caracteres de los scripts del APK" }],
+  [/^瘦身 (\d+)\/(\d+)：(.+)$/, {
+    en: "Slimming $1/$2: $3", ru: "Сжатие $1/$2: $3", es: "Adelgazando $1/$2: $3" }],
+  [/^重新打包（替换 (\d+) 个条目）…+$/, {
+    en: "Repacking (replacing $1 entries)…",
+    ru: "Перепаковка (замена записей: $1)…",
+    es: "Reempaquetando (reemplazando $1 entradas)…" }],
+  [/^正在生成新的签名钥匙…+$/, {
+    en: "Generating a new signing key…",
+    ru: "Создание нового ключа подписи…",
+    es: "Generando una nueva clave de firma…" }],
+  [/^已注入重映射脚本，(\d+) 个资源将在运行时透明换格式（实验性）$/, {
+    en: "Remap script injected: $1 assets will transparently switch format at runtime (experimental)",
+    ru: "Скрипт переназначения внедрён: $1 ресурсов прозрачно сменят формат при запуске (экспериментально)",
+    es: "Script de remapeo inyectado: $1 recursos cambiarán de formato en tiempo de ejecución (experimental)" }],
+  [/^正在对齐 APK…+$/, {
+    en: "Aligning APK…", ru: "Выравнивание APK…", es: "Alineando el APK…" }],
+  [/^分析完成$/, {
+    en: "Analysis complete", ru: "Анализ завершён", es: "Análisis completado" }],
+  [/^正在扫描：(.+)$/, {
+    en: "Scanning: $1", ru: "Сканирование: $1", es: "Escaneando: $1" }],
+  [/^正在瘦身：(.+)$/, {
+    en: "Slimming: $1", ru: "Сжатие: $1", es: "Adelgazando: $1" }],
 ];
 function trLog(msg) {
   if (LANG === "zh") return msg;
-  for (const [re, en] of LOG_PATTERNS) {
-    if (re.test(msg)) return msg.replace(re, en);
+  for (const [re, tpl] of LOG_PATTERNS) {
+    if (re.test(msg)) {
+      const t = tpl[LANG] || tpl.en;   // 缺该语言模板时回退英文
+      return msg.replace(re, t);
+    }
   }
   return msg;
 }
@@ -855,9 +1174,8 @@ function applyLang() {
     const v = I18N[LANG][el.getAttribute("data-i18n-ph")];
     if (v !== undefined) el.placeholder = v;
   });
-  const seg = document.getElementById("langseg").children;
-  seg[0].classList.toggle("on", LANG === "zh");
-  seg[1].classList.toggle("on", LANG === "en");
+  const sel = document.getElementById("langsel");
+  if (sel && sel.value !== LANG) sel.value = LANG;
   /* 动态内容跟随语言重渲染 */
   applyViewText();
   renderEnv();
@@ -1449,6 +1767,16 @@ async function handleOpenParam() {
 }
 
 /* ===================== 启动 ===================== */
+/* 语言选择器选项：按 LANGS 注册表动态生成（多语言免改 HTML） */
+(function initLangSel() {
+  const sel = document.getElementById("langsel");
+  for (const [code, name] of Object.entries(LANGS)) {
+    const o = document.createElement("option");
+    o.value = code; o.textContent = name;
+    sel.appendChild(o);
+  }
+  sel.value = LANG;
+})();
 applyModeUI();
 applyLang();
 applyThemeBtn();
