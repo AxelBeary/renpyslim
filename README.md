@@ -6,6 +6,8 @@
 
 **协议：[AGPL-3.0](LICENSE)** · 第三方声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
+> 使用ai深度拉屎，建议您在使用前检查代码，开发者对错误使用造成的任何后果概不负责。**数据无价！**
+
 ---
 
 ## 这是什么
