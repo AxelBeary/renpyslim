@@ -316,10 +316,13 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
       <div class="card hidden" id="reportcard">
         <h2><span class="stepnum">2</span><span data-i18n="s2_title">分析报告</span></h2>
         <div class="stats" id="reportstats"></div>
-        <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:13px">
-          <table id="reporttable"></table>
-        </div>
-        <div id="reportwarn"></div>
+        <details class="advgroup">
+          <summary data-i18n="report_expand">资源明细清单（点一下展开，不看不影响继续）</summary>
+          <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:13px">
+            <table id="reporttable"></table>
+          </div>
+          <div id="reportwarn"></div>
+        </details>
       </div>
 
       <!-- 第 3 步：选项 -->
@@ -533,7 +536,8 @@ zh: {
   analyzing: "准备扫描…", analyze_done: "分析完成，正在生成报告…",
   analyze_err_next: "下一步：检查路径与压缩包密码是否正确。",
   not_dist_warn: "这个目录里没找到 .rpyc 编译脚本，看起来不像已打包的成品。",
-  s2_title: "分析报告", stat_assets: "资源总数", stat_size: "总体积",
+  s2_title: "分析报告", report_expand: "资源明细清单（点一下展开，不看不影响继续）",
+  stat_assets: "资源总数", stat_size: "总体积",
   stat_est: "预计最多可省", stat_chars: "实际用字",
   s3_title: "选择优化项目", s3_desc: "默认配置已经过安全验证，一般直接开始即可。",
   grp_basic: "基础项", grp_preset: "压缩档位", grp_charset: "字体保底字符集（防误删安全垫）",
@@ -624,6 +628,7 @@ zh: {
   quit_sent: "退出请求已发送，稍后页面将无法连接——属正常现象。",
   browse_fail: "无法打开选择框",
   logs_note: "以下为工具运行日志（中文输出）",
+  warn_note: "The notices below come from the engine and are shown in their original wording.",
 },
 en: {
   tagline: "Ren'Py slimming & packaging toolkit", nav_workspace: "Workspace", nav_other: "More",
@@ -640,7 +645,8 @@ en: {
   analyzing: "Preparing to scan…", analyze_done: "Analysis complete, building report…",
   analyze_err_next: "Next: check the path and archive password.",
   not_dist_warn: "No .rpyc compiled scripts found here — this doesn't look like a packaged distribution.",
-  s2_title: "Analysis report", stat_assets: "Assets", stat_size: "Total size",
+  s2_title: "Analysis report", report_expand: "Asset details (click to expand — optional reading)",
+  stat_assets: "Assets", stat_size: "Total size",
   stat_est: "Est. max saving", stat_chars: "Chars used",
   s3_title: "Choose what to optimize", s3_desc: "Defaults are safety-verified — usually just hit Run.",
   grp_basic: "Basics", grp_preset: "Compression preset", grp_charset: "Font safety charset (prevents over-trimming)",
@@ -731,6 +737,7 @@ en: {
   quit_sent: "Quit request sent — the page will lose connection shortly. This is normal.",
   browse_fail: "Cannot open the file dialog",
   logs_note: "Tool run logs below (Chinese output)",
+  warn_note: "The notices below come from the engine and are shown in their original wording.",
 },
 };
 
@@ -757,6 +764,55 @@ function esc(s) {
 function fmtSize(b) {
   if (b == null) return "";
   return b >= 1048576 ? (b / 1048576).toFixed(1) + " MB" : Math.round(b / 1024) + " KB";
+}
+
+/* ===================== 日志翻译（英文模式） =====================
+后端消息为中文输出；前端按高频句式模式匹配翻译，
+匹配不上的原样透传（不影响使用，只是双语混排）。 */
+const LOG_PATTERNS = [
+  [/^扫描资源 (\d+)\/(\d+)：(.*)$/, "Scanning assets $1/$2: $3"],
+  [/^扫描到 (\d+) 个资源文件，实际使用字符 (\d+) 个$/, "Found $1 assets, $2 characters actually used"],
+  [/^扫描到 (\d+) 个散落资源、(\d+) 个封包内资源，实际使用字符 (\d+) 个$/, "Found $1 loose + $2 archived assets, $3 characters actually used"],
+  [/^正在提取字符集…+$/, "Extracting charset…"],
+  [/^处理中 (\d+)\/(\d+) · 累计已省 (.+)$/, "Working $1/$2 · saved $3 so far"],
+  [/^正在复制工程到工作副本（原件保持不动）…+$/, "Copying project to a working copy (originals untouched)…"],
+  [/^正在复制成品到工作副本（原件保持不动）…+$/, "Copying distribution to a working copy (originals untouched)…"],
+  [/^直接修改原工程模式：正在生成强制备份压缩包…+$/, "In-place mode: making a forced backup zip first…"],
+  [/^直接修改原成品模式：正在生成强制备份压缩包…+$/, "In-place mode: making a forced backup zip first…"],
+  [/^正在解压压缩包 (.+)…+$/, "Unpacking archive $1…"],
+  [/^已定位成品目录：(.+)$/, "Located distribution folder: $1"],
+  [/^压缩包里装的是 APK，自动转入 APK 瘦身：(.+)$/, "Archive contains an APK — switching to APK slimming: $1"],
+  [/^正在改写 (\d+) 个资源的脚本引用…+$/, "Rewriting script references for $1 assets…"],
+  [/^正在重建封包 (.+)（替换 (\d+) 个文件）…+$/, "Rebuilding archive $1 (replacing $2 files)…"],
+  [/^正在清理缓存、日志等可再生垃圾…+$/, "Cleaning regenerable junk (cache, logs)…"],
+  [/^正在把 (\d+) 个无引用资源移入隔离区…+$/, "Moving $1 unreferenced assets to quarantine…"],
+  [/^正在用官方 lint 验证优化后的工程…+$/, "Running official lint on the optimized project…"],
+  [/^lint 结果：(.+)$/, "lint result: $1"],
+  [/^字体 (\d+)\/(\d+)：(.+)$/, "Font $1/$2: $3"],
+  [/^工程优化完成，共节省约 (.+)$/, "Project optimization done, saved about $1"],
+  [/^成品瘦身完成，共节省约 (.+)$/, "Distribution slimming done, saved about $1"],
+  [/^APK 共 (\d+) 个条目，可优化资源 (\d+) 个$/, "APK: $1 entries total, $2 optimizable"],
+  [/^从 APK 内脚本提取到 (\d+) 个字符$/, "Extracted $1 characters from APK scripts"],
+  [/^瘦身 (\d+)\/(\d+)：(.+)$/, "Slimming $1/$2: $3"],
+  [/^重新打包（替换 (\d+) 个条目）…+$/, "Repacking (replacing $1 entries)…"],
+  [/^正在生成新的签名钥匙…+$/, "Generating a new signing key…"],
+  [/^已注入重映射脚本，(\d+) 个资源将在运行时透明换格式（实验性）$/, "Remap script injected: $1 assets will transparently switch format at runtime (experimental)"],
+  [/^正在对齐 APK…+$/, "Aligning APK…"],
+  [/^分析完成$/, "Analysis complete"],
+  [/^正在扫描：(.+)$/, "Scanning: $1"],
+  [/^正在瘦身：(.+)$/, "Slimming: $1"],
+];
+function trLog(msg) {
+  if (LANG === "zh") return msg;
+  for (const [re, en] of LOG_PATTERNS) {
+    if (re.test(msg)) return msg.replace(re, en);
+  }
+  return msg;
+}
+/* 警告条前的小注解（英文模式下提醒详情保留原文） */
+function warnNote() {
+  return LANG === "zh" ? ""
+    : `<div class="note" style="margin-bottom:6px">${t("warn_note")}</div>`;
 }
 async function api(url, body) {
   const r = await fetch(url, body === undefined ? undefined :
@@ -958,8 +1014,8 @@ async function pollAnalyze(path) {
   const lines = [];
   for (const l of d.logs) {
     ANALYZE_IDX++;
-    lines.push(`[${t("stages")[l.stage] || l.stage}] ${l.message}`);
-    if (stateEl) stateEl.textContent = l.message;
+    lines.push(`[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}`);
+    if (stateEl) stateEl.textContent = trLog(l.message);
   }
   if (logEl && lines.length) {
     const all = (logEl.textContent + lines.join("\n") + "\n").split("\n").filter(Boolean);
@@ -1016,7 +1072,7 @@ function renderReport(r, mode) {
 
   let warnHtml = "";
   if (r.warnings && r.warnings.length)
-    warnHtml += `<div class="box warn">${r.warnings.map(w => esc(w)).join("<br>")}</div>`;
+    warnHtml += `<div class="box warn">${warnNote()}${r.warnings.map(w => esc(w)).join("<br>")}</div>`;
   if (r.charset_size && LAST_CHARLIST)
     warnHtml += `<div class="row" style="margin-top:10px">` +
       `<button class="btn ghost small" onclick="downloadCharlist()">${t("r_charlist")}</button></div>`;
@@ -1123,7 +1179,7 @@ async function pollJob() {
   if (!d.ok) return;
   const log = document.getElementById("log");
   for (const l of d.logs) {
-    log.textContent += `[${t("stages")[l.stage] || l.stage}] ${l.message}\n`;
+    log.textContent += `[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}\n`;
     LOGIDX++;
     tickProgress(l.message);
   }
@@ -1180,7 +1236,7 @@ function renderResult(res) {
           `<br>${t("r_apk_ks_memo")}：${esc(res.keystore.memo)}`
         : "") + `</div>`;
     if (res.warnings && res.warnings.length)
-      html += `<div class="box warn">${res.warnings.map(w => esc(w)).join("<br>")}</div>`;
+      html += `<div class="box warn">${warnNote()}${res.warnings.map(w => esc(w)).join("<br>")}</div>`;
     document.getElementById("resultarea").innerHTML = html;
     return;
   }
@@ -1211,7 +1267,7 @@ function renderResult(res) {
       extra.push(tf("r_glyph", { n: Object.keys(o.missing_glyphs).length }));
     if (extra.length) html += `<div class="box ok">${t("r_extra_head")}${extra.map(esc).join("<br>")}</div>`;
     if (o.warnings && o.warnings.length)
-      html += `<div class="box warn">${o.warnings.slice(0, 10).map(w => esc(w)).join("<br>")}</div>`;
+      html += `<div class="box warn">${warnNote()}${o.warnings.slice(0, 10).map(w => esc(w)).join("<br>")}</div>`;
   } else if (res.saved_bytes !== undefined) {
     html += `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
       `<div class="stat big"><b>${fmtSize(res.saved_bytes)}</b><span>${t("r_dist_done").split("：")[0].split(": ")[0]}</span></div>` +
@@ -1222,7 +1278,7 @@ function renderResult(res) {
       + `</div>`;
     if (res.has_rpy) html += `<div class="box ok">${t("r_has_rpy")}</div>`;
     if (res.warnings && res.warnings.length)
-      html += `<div class="box warn">${res.warnings.slice(0, 10).map(w => esc(w)).join("<br>")}</div>`;
+      html += `<div class="box warn">${warnNote()}${res.warnings.slice(0, 10).map(w => esc(w)).join("<br>")}</div>`;
   }
   if (res.package) {
     const p = res.package;
@@ -1278,7 +1334,7 @@ async function pollFontSlim() {
   for (const l of d.logs) {
     FS_IDX++;
     if (logEl) logEl.textContent +=
-      `[${t("stages")[l.stage] || l.stage}] ${l.message}\n`;
+      `[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}\n`;
   }
   if (d.status === "running") { setTimeout(pollFontSlim, 500); return; }
   document.getElementById("fsrun").disabled = false;
