@@ -6,8 +6,8 @@
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更新检查靶子，
-附 v0.10.0 exe；已验证 updater 正确识别）
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.11.0（自更新检查靶子，
+附 v0.11.0 exe；release.yml 首次挂过一次：sanity 测试缺 pytest/httpx，已修）
 回归测试：77 项全绿（`pytest tests -q`，含审核修复回归 12 条 + lint 路径回归 + F8 路由回归 + 后端本地防护 4 条 + i18n 字典完整性 3 条）
 
 ## 2026-08-17 多语言四语上线（用户四步计划）
@@ -23,6 +23,12 @@ Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更�
 - 贡献翻译指南进 CONTRIBUTING.md（新增语言四步：字典/注册/日志模板/文档）
 - 坑：解析 JS 字典顶层键必须字符串感知（值里 {n} 占位符会干扰花括号配对）；
   一行多键写法不能靠行首正则提键
+- **v0.11.0 已发版**（tag 触发自动流水线，exe 已挂 Release）；首次触发挂在
+  sanity 测试缺 pytest/httpx，修复后重打标签成功。发版命令不变：
+  git tag v0.x.0 && git push origin v0.x.0
+- 会话环境坑：上下文压缩后沙箱可能把高风险标记的 git 推送路由进断网沙箱
+  （remote-https Permission denied）；重发标签时用户手动推了一条
+  （git push --force origin v0.11.0）。新会话接手时沙箱应已恢复
 
 ## 2026-08-16 v0.11.0（用户拍板“把值得做的搞定”）
 
