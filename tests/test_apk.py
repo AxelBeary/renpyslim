@@ -1,7 +1,6 @@
 """APK 瘦身（F1）的回归测试：构造假 APK 验证核心安全行为。"""
 from __future__ import annotations
 
-import os
 import zipfile
 from pathlib import Path
 

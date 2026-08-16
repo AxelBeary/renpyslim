@@ -4,7 +4,6 @@ from __future__ import annotations
 import wave
 from pathlib import Path
 
-import pytest
 
 from rtools import pipeline                          # noqa: E402
 from rtools.config import default_options            # noqa: E402
