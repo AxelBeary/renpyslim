@@ -1,4 +1,4 @@
-pillow>=10.0
+pillow>=12.3.0
 fonttools>=4.40
 fastapi>=0.110
 uvicorn>=0.29
