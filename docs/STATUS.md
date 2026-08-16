@@ -23,6 +23,21 @@ Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.10.0（自更�
 - 待办：用户真机验收（装包听背景乐/音效，验证音频重映射——建议用
   --remap 版本另打一包再验，当前交付包是安全档）；v0.11.0 发 Release（待用户点头）
 
+## GitHub 自动化配置（2026-08-17 就位，用户拍板全套）
+
+- **CI**（.github/workflows/ci.yml）：每次提交/PR 自动跑 ruff 真错误检查
+  （--select F,E9，风格类不拦）+ 全量 pytest；windows-latest + Python 3.13。
+  已踩坑记录：①CI 机无 FFmpeg/SDK，依赖它们的测试必须带 skip 保护；
+  ②本地 ruff --fix 的改动要确认全部加进提交（曾漏两个测试文件导致 CI 红）
+- **Release**（release.yml）：打 v* 标签自动构建 exe + 发 Release
+  （发版命令：git tag v0.x.0 && git push origin v0.x.0，全自动）
+- **CodeQL**：用用户在网页开的仓库级默认扫描（default setup）；自定义
+  workflow 与其互斥已删除，别再建 codeql.yml
+- **Dependabot**：pip 只收安全更新（纯版本 bump 已配 ignore，因
+  requirements.txt 用宽容下限是刻意设计）；github-actions 正常收升级 PR
+- 用户曾在网页模板市场误开 Fortify/Conda 模板，已删除；再遇类似“其他
+  CI workflows”模板先核实再留
+
 ## Cadaver 样本实测战绩（用户提供的真实游戏，全部实测通过）
 
 ### 2026-08-16 v0.10.0 复测（修复后重跑，产物在 _cad_v10\）
