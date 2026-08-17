@@ -2,7 +2,7 @@
 
 > Инструмент «всё в одном» для сжатия ресурсов и упаковки игр Ren'Py
 
-**🌐 Язык:** [简体中文](README.md) | [English](README.en.md) | **Русский** | [Español](README.es.md)
+**🌐 Язык:** [简体中文](README.md) | [English](README.en.md) | **Русский** | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 **Лицензия: [AGPL-3.0](LICENSE)** · Сторонние компоненты: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
@@ -43,7 +43,7 @@ python main.py            # запуск графического интерфе
 
 ## Графический интерфейс (рекомендуется)
 
-Боковая панель, поддержка **中文 / English / Русский / Español** и
+Боковая панель, поддержка **中文 / English / Русский / Español / Português (BR) / Türkçe / Deutsch / Français** и
 **светлой/тёмной темы** (переключение в правом верхнем углу; без ручного выбора
 следует языку браузера и системному оформлению, выбор запоминается).
 Четыре входа: **Оптимизация и упаковка / Сжатие сборки / Сжатие APK / Сжатие шрифтов**.
@@ -139,7 +139,7 @@ python cli.py slimapk <apk> --remap --gen-key      # сжатие APK (WebP/OGG 
 оптимизации шрифтов/изображений, разбор rpyc, сжатие APK (защита движка / удаление
 подписи / преобразование путей x- / генерация ключей), отмену и дампы сбоев,
 безопасные значения по умолчанию, регрессии исправлений, локальную защиту бэкенда
-и полноту словарей локализации — 77 тестов.
+и полноту словарей локализации для восьми языков — 114 тестов.
 
 ## Разработка
 
@@ -164,6 +164,10 @@ build_exe.bat             # пересборка exe
 | English | ✅ | [README.en.md](README.en.md) | Доступно |
 | Русский | ✅ | [README.ru.md](README.ru.md) | Доступно |
 | Español | ✅ | [README.es.md](README.es.md) | Доступно |
+| Português (BR) | ✅ | [README.pt.md](README.pt.md) | Доступно |
+| Türkçe | ✅ | [README.tr.md](README.tr.md) | Доступно |
+| Deutsch | ✅ | [README.de.md](README.de.md) | Доступно |
+| Français | ✅ | [README.fr.md](README.fr.md) | Доступно |
 
 Хотите добавить новый язык? См. «Руководство по переводу» в
 [CONTRIBUTING.md](CONTRIBUTING.md) — добавьте один словарь в интерфейс и один

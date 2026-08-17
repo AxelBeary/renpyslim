@@ -2,7 +2,7 @@
 
 > Herramienta todo en uno para adelgazar recursos y empaquetar juegos de Ren'Py
 
-**🌐 Idioma:** [简体中文](README.md) | [English](README.en.md) | [Русский](README.ru.md) | **Español**
+**🌐 Idioma:** [简体中文](README.md) | [English](README.en.md) | [Русский](README.ru.md) | **Español** | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 **Licencia: [AGPL-3.0](LICENSE)** · Avisos de terceros en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
@@ -44,7 +44,7 @@ python main.py            # iniciar la interfaz gráfica
 
 ## Interfaz gráfica (recomendada)
 
-Diseño con barra lateral, compatible con **中文 / English / Русский / Español** y
+Diseño con barra lateral, compatible con **中文 / English / Русский / Español / Português (BR) / Türkçe / Deutsch / Français** y
 **tema claro/oscuro** (cambio en la esquina superior derecha; sin elección manual
 sigue el idioma del navegador y la apariencia del sistema, y tu elección se
 recuerda). Cuatro entradas: **Optimizar y empaquetar / Adelgazar distribución / Adelgazar APK / Adelgazar fuentes**.
@@ -141,7 +141,7 @@ optimizadores de fuentes/imágenes no dañen originales, análisis de rpyc, adel
 de APK (protección del motor / eliminación de firma / conversión de rutas x- /
 generación de claves), cancelación y volcados de fallos, valores por defecto
 seguros, regresiones de correcciones, protección local del backend e integridad de
-los diccionarios de localización — 77 pruebas.
+los diccionarios de localización de los ocho idiomas — 114 pruebas.
 
 ## Desarrollo
 
@@ -165,7 +165,11 @@ build_exe.bat             # recompilar el exe
 | 简体中文 | ✅ por defecto | ✅ documento principal | Disponible |
 | English | ✅ | [README.en.md](README.en.md) | Disponible |
 | Русский | ✅ | [README.ru.md](README.ru.md) | Disponible |
-| Español | ✅ | [README.es.md](README.es.md) | Disponible |
+| Español | ✅ | ✅ este documento | Disponible |
+| Português (BR) | ✅ | [README.pt.md](README.pt.md) | Disponible |
+| Türkçe | ✅ | [README.tr.md](README.tr.md) | Disponible |
+| Deutsch | ✅ | [README.de.md](README.de.md) | Disponible |
+| Français | ✅ | [README.fr.md](README.fr.md) | Disponible |
 
 ¿Quieres añadir un idioma nuevo? Consulta la «Guía de traducción» en
 [CONTRIBUTING.md](CONTRIBUTING.md) — añade un diccionario a la interfaz y un

@@ -2,11 +2,11 @@
 
 > 一站式 Ren'Py 资源瘦身与打包工具 · Ren'Py asset slimming & packaging toolkit
 
-**🌐 语言 / Language：** **简体中文** | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md)
+**🌐 语言 / Language：** **简体中文** | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 **协议：[AGPL-3.0](LICENSE)** · 第三方声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
-> 使用ai深度拉屎，建议您在使用前检查代码，开发者对错误使用造成的任何后果概不负责。**数据无价！**
+> 本项目使用 AI 深度参与开发，建议您在使用前检查代码，开发者对错误使用造成的任何后果概不负责。**数据无价！**
 
 ---
 
@@ -44,7 +44,7 @@ python main.py            # 启动图形界面
 
 ## 图形界面（推荐）
 
-界面为侧边栏布局，支持**中文 / English / Русский / Español** 与
+界面为侧边栏布局，支持**中文 / English / Русский / Español / Português (BR) / Türkçe / Deutsch / Français** 与
 **亮色/暗色双主题**（右上角切换；不手动选时跟随浏览器语言与系统外观，
 选择会被记住）。四个入口：**超级打包器 / 成品瘦身 / APK 瘦身 / 字体瘦身**。
 
@@ -142,7 +142,7 @@ python cli.py slimapk <apk> --remap --gen-key      # APK 瘦身（图转WebP/音
 覆盖 RPA 封包读写（含新旧两代格式与恶意封包拦截）、引用改写安全、
 字体/图片优化不损坏原文件、rpyc 解析、APK 瘦身（引擎保护/签名移除/
 x- 前缀路径换算/钥匙生成）、取消与崩溃转储、安全默认值、审核修复回归、
-后端本地防护、界面四语字典完整性，共 77 项。
+后端本地防护、界面八语字典完整性，共 114 项。
 
 ## 开发
 
@@ -167,6 +167,10 @@ build_exe.bat             # 重新打包 exe
 | English | ✅ | [README.en.md](README.en.md) | 已上线 |
 | Русский | ✅ | [README.ru.md](README.ru.md) | 已上线 |
 | Español | ✅ | [README.es.md](README.es.md) | 已上线 |
+| Português (BR) | ✅ | [README.pt.md](README.pt.md) | 已上线 |
+| Türkçe | ✅ | [README.tr.md](README.tr.md) | 已上线 |
+| Deutsch | ✅ | [README.de.md](README.de.md) | 已上线 |
+| Français | ✅ | [README.fr.md](README.fr.md) | 已上线 |
 
 想添加新语言？见 [CONTRIBUTING.md](CONTRIBUTING.md) 的"翻译指南"——
 界面加一份字典、文档加一个 README.<语言码>.md 即可。

@@ -2,7 +2,7 @@
 
 > All-in-one Ren'Py asset slimming & packaging toolkit
 
-**🌐 Language:** [简体中文](README.md) | **English** | [Русский](README.ru.md) | [Español](README.es.md)
+**🌐 Language:** [简体中文](README.md) | **English** | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 **License: [AGPL-3.0](LICENSE)** · Third-party notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
@@ -43,7 +43,7 @@ python main.py            # launch the GUI
 
 ## Graphical interface (recommended)
 
-Sidebar layout, supporting **中文 / English / Русский / Español** and
+Sidebar layout, supporting **中文 / English / Русский / Español / Português (BR) / Türkçe / Deutsch / Français** and
 **light/dark themes** (switch in the top-right corner; without a manual choice it
 follows the browser language and system appearance, and your choice is remembered).
 Four entry points: **Slim & Pack / Dist Slimming / APK Slimming / Font Slimming**.
@@ -138,7 +138,7 @@ Covers RPA archive read/write (both format generations plus malicious-archive
 blocking), reference-rewrite safety, font/image optimizers not corrupting originals,
 rpyc parsing, APK slimming (engine protection / signature removal / x- prefix path
 translation / key generation), cancellation and crash dumps, safe defaults, review-fix
-regressions, backend local-only guard, and i18n dictionary completeness — 77 tests.
+regressions, backend local-only guard, and eight-language i18n dictionary completeness — 114 tests.
 
 ## Development
 
@@ -163,6 +163,10 @@ build_exe.bat             # rebuild the exe
 | English | ✅ | [README.en.md](README.en.md) | Live |
 | Русский | ✅ | [README.ru.md](README.ru.md) | Live |
 | Español | ✅ | [README.es.md](README.es.md) | Live |
+| Português (BR) | ✅ | [README.pt.md](README.pt.md) | Live |
+| Türkçe | ✅ | [README.tr.md](README.tr.md) | Live |
+| Deutsch | ✅ | [README.de.md](README.de.md) | Live |
+| Français | ✅ | [README.fr.md](README.fr.md) | Live |
 
 Want to add a new language? See the "Translation guide" in
 [CONTRIBUTING.md](CONTRIBUTING.md) — add one dictionary to the UI and one

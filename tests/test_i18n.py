@@ -1,4 +1,4 @@
-"""i18n 完整性回归测试：四本语言字典键必须齐全一致，页面键必须都有翻译。
+"""i18n 完整性回归测试：八本语言字典键必须齐全一致，页面键必须都有翻译。
 
 这是"不引 TypeScript 也要字典类型安全"的平价方案：
 任何一本字典漏键/页面新增 data-i18n 忘了翻译，这里立刻红。
@@ -7,7 +7,7 @@ import re
 from pathlib import Path
 
 HTML_PATH = Path(__file__).resolve().parent.parent / "web" / "static" / "index.html"
-LANGS = ("zh", "en", "ru", "es")
+LANGS = ("zh", "en", "ru", "es", "pt", "tr", "de", "fr")
 
 _STR_CHARS = "\"'`"
 _KEY_FORM = re.compile(r"[a-z_$][a-z_0-9$]*")
