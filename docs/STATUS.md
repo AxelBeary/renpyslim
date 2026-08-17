@@ -6,8 +6,9 @@
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.11.0（自更新检查靶子，
-附 v0.11.0 exe；release.yml 首次挂过一次：sanity 测试缺 pytest/httpx，已修）
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.13.0（自更新检查靶子，
+附 exe；历史坑：v0.11.0 首次挂过一次（sanity 缺 pytest/httpx，已修）；
+v0.12.0 发布步遭 GitHub 503，已本地同配方补发）
 回归测试：114 项全绿（`pytest tests -q`，含 2026-08-17 任务队列回归 5 条 + 审核修复回归 22 条 + 视频/反编译回归 + 早期审核回归 12 条）
 
 ## 2026-08-17 v0.13.0 发版（用户拍板：多开不冲突 + 关页不丢任务）
