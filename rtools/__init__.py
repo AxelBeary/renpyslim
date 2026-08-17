@@ -8,4 +8,4 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 本包按 AGPL-3.0 发布，详见仓库根目录 LICENSE。
 """
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"

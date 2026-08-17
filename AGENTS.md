@@ -42,7 +42,10 @@ python cli.py env [--sdk SDK路径]
 
 - `--mode` 可省略：有 `game/*.rpy` 源码自动判 `project`，否则 `dist`（成品）。
 - 直接输入 zip/7z/RAR 压缩包也可以（成品瘦身直进直出）；有密码就加 `--password`。
-- `--preset` 三档：`conservative`（无损优先）/ `balanced`（默认，推荐）/ `aggressive`（体积优先）。
+- `--preset` 三档：`conservative`（默认，画质优先）/ `balanced`（均衡）/ `aggressive`（体积优先）。
+- 实验性开关（默认全关，开启前必须征得用户同意）：`--png-quant`（PNG 有损量化）、
+  `--videos`（视频重编码）、`--av1`（视频 AV1，仅 8.0+ 引擎）、`--remap`（成品注入重映射）、
+  `--decompile`（反编译 rpyc 解锁无源码成品的格式转换）。
 - 产物默认写到输入路径旁边的 `_rtools_work/`（中间产物）和 `_rtools_output/`
   （报告 analysis.json、改动清单 changelog.json、校验 validation.txt、成品包）。
   可用 `--work-root` / `--output` 改位置。
@@ -117,7 +120,11 @@ Notes:
 - `--mode` is optional: auto-detected as `project` when `game/*.rpy` sources
   exist, otherwise `dist` (built game).
 - zip/7z/RAR archives are accepted directly; add `--password` if protected.
-- Presets: `conservative` / `balanced` (default) / `aggressive`.
+- Presets: `conservative` (default, quality-first) / `balanced` / `aggressive`.
+- Experimental flags (all off by default; get user consent first): `--png-quant`
+  (lossy PNG quantization), `--videos` (video re-encode), `--av1` (AV1 video,
+  Ren'Py 8.0+ only), `--remap` (runtime remap injection for dists),
+  `--decompile` (decompile rpyc to unlock format conversion on source-less games).
 - Outputs go to `_rtools_work/` (intermediate) and `_rtools_output/`
   (analysis.json, changelog.json, validation.txt, final packages) next to the
   input; override with `--work-root` / `--output`.

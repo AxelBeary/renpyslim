@@ -235,9 +235,22 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
   .opts, .stats { grid-template-columns: 1fr; }
   .main { padding: 16px 14px 40px; }
 }
+/* 任务队列面板（用户要求 2026-08-17）：固定右下角，有任务在跑/排队才显示 */
+#queuepanel { position: fixed; right: 18px; bottom: 18px; z-index: 60; width: 300px;
+  background: var(--card); border: 1px solid var(--border); border-radius: 13px;
+  padding: 12px 14px; font-size: 13px; }
+#queuepanel h3 { margin: 0 0 4px; font-size: 13px; }
+.qitem { display: flex; align-items: center; justify-content: space-between;
+  gap: 10px; padding: 7px 0; border-top: 1px solid var(--border); }
+.qitem .qstate { color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
+<!-- 任务队列面板：固定右下角，有执行中/排队中任务时自动出现 -->
+<div id="queuepanel" class="hidden">
+  <h3 data-i18n="q_title">任务队列</h3>
+  <div id="queuelist"></div>
+</div>
 <div class="shell">
   <!-- ===================== 侧边栏 ===================== -->
   <aside class="sidebar">
@@ -576,6 +589,8 @@ zh: {
   s4_title: "执行中",
   st_preparing: "准备中…", st_running: "执行中，请勿关闭窗口……",
   st_stopping: "正在停止，等手头的文件处理完……",
+  st_queued: "排队中，前一个任务结束后自动开始……",
+  st_resumed: "已接回之前的任务，继续执行中……",
   st_done: "完成", st_failed: "执行失败", st_cancelled: "已停止",
   err_next: "下一步：检查路径是否正确、磁盘空间是否足够；看不懂的话把这段内容发给开发者。",
   fill_path: "请先填写路径", fill_font: "字体文件和文本来源都要填",
@@ -633,6 +648,11 @@ zh: {
             rpa: "封包", clean: "清理", verify: "验证", package: "打包", backup: "备份",
             copy: "复制", done: "完成", error: "错误", font: "字体", repack: "回包",
             junk: "清理", quarantine: "隔离", apk: "APK" },
+  q_title: "任务队列",
+  q_kinds: { analyze: "分析", optimize: "瘦身", full: "瘦身+打包", package: "打包",
+             slimapk: "APK 瘦身", slimfont: "字体瘦身" },
+  q_states: { running: "执行中", queued: "排队中", done: "已完成",
+              canceled: "已取消", error: "出错" },
   quit_confirm: "确定退出 RenPySlim？\n正在执行的任务会被中断（原件不受影响）。",
   quit_ing: "正在退出…", quit_done: "工具已退出，可以关闭本页面了。",
   quit_sent: "退出请求已发送，稍后页面将无法连接——属正常现象。",
@@ -687,6 +707,8 @@ en: {
   s4_title: "Running",
   st_preparing: "Preparing…", st_running: "Working — please don't close this window…",
   st_stopping: "Stopping — finishing the file in hand…",
+  st_queued: "Queued — starts automatically when the previous task finishes…",
+  st_resumed: "Reconnected to your previous task — still going…",
   st_done: "Done", st_failed: "Failed", st_cancelled: "Stopped",
   err_next: "Next: check the path and disk space; if unsure, send the message to the developer.",
   fill_path: "Please enter a path first", fill_font: "Both font file and text sources are required",
@@ -744,6 +766,11 @@ en: {
             rpa: "rpa", clean: "clean", verify: "verify", package: "package", backup: "backup",
             copy: "copy", done: "done", error: "error", font: "font", repack: "repack",
             junk: "clean", quarantine: "quarantine", apk: "APK" },
+  q_title: "Task queue",
+  q_kinds: { analyze: "Analyze", optimize: "Slim", full: "Slim + pack", package: "Pack",
+             slimapk: "APK slim", slimfont: "Font slim" },
+  q_states: { running: "Running", queued: "Queued", done: "Done",
+              canceled: "Canceled", error: "Error" },
   quit_confirm: "Quit RenPySlim?\nRunning tasks will be interrupted (originals stay safe).",
   quit_ing: "Quitting…", quit_done: "Tool has quit. You can close this page now.",
   quit_sent: "Quit request sent — the page will lose connection shortly. This is normal.",
@@ -799,6 +826,8 @@ pwd_ph: "Пароль архива (только если zip/7z/rar защищ�
   s4_title: "Выполняется",
   st_preparing: "Подготовка…", st_running: "Идёт работа — не закрывайте окно…",
   st_stopping: "Остановка — завершаем текущий файл…",
+  st_queued: "В очереди — начнётся после завершения предыдущей задачи…",
+  st_resumed: "Восстановлена предыдущая задача — ещё выполняется…",
   st_done: "Готово", st_failed: "Ошибка", st_cancelled: "Остановлено",
   err_next: "Проверьте путь и место на диске; если не понятно — отправьте это сообщение разработчику.",
   fill_path: "Сначала укажите путь", fill_font: "Нужны и файл шрифта, и источники текста",
@@ -856,6 +885,11 @@ pwd_ph: "Пароль архива (только если zip/7z/rar защищ�
             rpa: "rpa", clean: "очистка", verify: "lint", package: "упаковка", backup: "бэкап",
             copy: "копия", done: "готово", error: "ошибка", font: "шрифт", repack: "переуп.",
             junk: "очистка", quarantine: "карантин", apk: "APK" },
+  q_title: "Очередь задач",
+  q_kinds: { analyze: "Анализ", optimize: "Сжатие", full: "Сжатие+упаковка", package: "Упаковка",
+             slimapk: "APK-сжатие", slimfont: "Сжатие шрифта" },
+  q_states: { running: "Выполняется", queued: "В очереди", done: "Готово",
+              canceled: "Отменено", error: "Ошибка" },
   quit_confirm: "Выйти из RenPySlim?\nЗапущенные задачи будут прерваны (оригиналы в безопасности).",
   quit_ing: "Выход…", quit_done: "Инструмент закрыт. Страницу можно закрыть.",
   quit_sent: "Запрос на выход отправлен — страница скоро потеряет соединение. Это нормально.",
@@ -911,6 +945,8 @@ pwd_ph: "Contraseña del archivo (solo si el zip/7z/rar está protegido)",
   s4_title: "En ejecución",
   st_preparing: "Preparando…", st_running: "Trabajando: no cierres esta ventana…",
   st_stopping: "Deteniendo: terminando el archivo en curso…",
+  st_queued: "En cola — empezará al terminar la tarea anterior…",
+  st_resumed: "Se recuperó tu tarea anterior — sigue en curso…",
   st_done: "Hecho", st_failed: "Error", st_cancelled: "Detenido",
   err_next: "Comprueba la ruta y el espacio en disco; si no lo entiendes, envía este mensaje al desarrollador.",
   fill_path: "Introduce primero una ruta", fill_font: "Se necesitan la fuente y las fuentes de texto",
@@ -968,6 +1004,11 @@ pwd_ph: "Contraseña del archivo (solo si el zip/7z/rar está protegido)",
             rpa: "rpa", clean: "limpieza", verify: "lint", package: "empaquetado", backup: "copia",
             copy: "copia", done: "hecho", error: "error", font: "fuente", repack: "reemp.",
             junk: "limpieza", quarantine: "cuarentena", apk: "APK" },
+  q_title: "Cola de tareas",
+  q_kinds: { analyze: "Análisis", optimize: "Adelgazar", full: "Adelgazar+empaquetar", package: "Empaquetar",
+             slimapk: "Adelgazar APK", slimfont: "Adelgazar fuente" },
+  q_states: { running: "En ejecución", queued: "En cola", done: "Hecho",
+              canceled: "Cancelado", error: "Error" },
   quit_confirm: "¿Salir de RenPySlim?\nLas tareas en curso se interrumpirán (los originales están a salvo).",
   quit_ing: "Saliendo…", quit_done: "La herramienta se cerró. Ya puedes cerrar la página.",
   quit_sent: "Solicitud de salida enviada: la página perderá la conexión en breve. Es normal.",
@@ -1516,6 +1557,7 @@ async function runJob() {
     return;
   }
   JOB = d.job;
+  saveJob(d.job);
   JOB_RUNNING = true;
   const cb = document.getElementById("cancelbtn");
   cb.style.display = ""; cb.disabled = false;
@@ -1548,8 +1590,9 @@ async function pollJob(gen) {
   if (gen !== JOB_GEN) return;
   if (!d.ok) {
     /* 审核修复（中-29）：任务被清理/断连时恢复按钮并给出状态，
-       不再永久卡在"执行中"（高-2 的前端放大器） */
+       不再永久卡在“执行中”（高-2 的前端放大器） */
     JOB_RUNNING = false;
+    clearSavedJob();
     document.getElementById("cancelbtn").style.display = "none";
     document.getElementById("progressbar").classList.remove("ind");
     document.getElementById("runstatus").textContent =
@@ -1573,7 +1616,17 @@ async function pollJob(gen) {
     setTimeout(() => pollJob(gen), 800);
     return;
   }
+  /* 任务队列（用户要求 2026-08-17）：排队中不是终态，继续等位 */
+  if (d.status === "queued") {
+    JOB_RUNNING = true;
+    document.getElementById("runstatus").textContent = t("st_queued");
+    document.getElementById("cancelbtn").style.display = "";
+    document.getElementById("cancelbtn").disabled = false;
+    setTimeout(() => pollJob(gen), 800);
+    return;
+  }
   JOB_RUNNING = false;
+  clearSavedJob();
   document.getElementById("cancelbtn").style.display = "none";
   document.getElementById("progressbar").classList.remove("ind");
   if (d.status === "canceled") {
@@ -1602,6 +1655,61 @@ async function cancelJob() {
   if (!JOB) return;
   document.getElementById("cancelbtn").disabled = true;
   await api(`/api/job/${JOB}/cancel`, {});
+}
+
+/* ===================== 任务队列与断线重连（用户要求 2026-08-17） ===================== */
+/* 任务编号存本地：关掉网页再打开，能接回还在跑/排队的任务 */
+function saveJob(id) { try { localStorage.setItem("rps-job", id); } catch (e) {} }
+function clearSavedJob() { try { localStorage.removeItem("rps-job"); } catch (e) {} }
+
+function kindName(k) { const d = t("q_kinds"); return (d && d[k]) || k; }
+
+/* 右下角队列面板：有执行中/排队中任务就自动出现，兼顾“提醒” */
+async function refreshQueue() {
+  const panel = document.getElementById("queuepanel");
+  const d = await api("/api/jobs");
+  if (!d.ok) { panel.classList.add("hidden"); return; }
+  const active = d.jobs.filter(j => j.status === "running" || j.status === "queued");
+  if (!active.length) { panel.classList.add("hidden"); return; }
+  panel.classList.remove("hidden");
+  const states = t("q_states");
+  document.getElementById("queuelist").innerHTML = active.map(j =>
+    `<div class="qitem"><span>${esc(kindName(j.kind))} · ` +
+    `<span class="qstate">${esc(states[j.status] || j.status)}</span></span>` +
+    `<button class="btn ghost small" data-qid="${j.id}">${esc(t("cancel"))}</button></div>`).join("");
+}
+
+/* 断线重连：打开页面时后台还有执行中/排队中的任务，自动接回进度卡
+   （优先接本页上次提交的那个；接回后轮询链自行跟进直到出结果） */
+const RESUMABLE_KINDS = ["optimize", "full", "package", "slimapk"];
+async function tryResumeJob() {
+  const d = await api("/api/jobs");
+  if (!d.ok) return;
+  const alive = j => RESUMABLE_KINDS.includes(j.kind) &&
+    (j.status === "running" || j.status === "queued");
+  let saved = null;
+  try { saved = localStorage.getItem("rps-job"); } catch (e) {}
+  const job = d.jobs.find(j => j.id === saved && alive(j)) ||
+              d.jobs.find(j => alive(j) && j.status === "running") ||
+              d.jobs.find(j => alive(j));
+  if (!job) { if (saved) clearSavedJob(); return; }
+  saveJob(job.id);
+  JOB = job.id; LOGIDX = 0; JOB_GEN++;
+  const gen = JOB_GEN;
+  document.getElementById("runcard").classList.remove("hidden");
+  document.getElementById("log").textContent = "";
+  document.getElementById("resultarea").innerHTML = "";
+  resetProgress();
+  document.getElementById("runbtn").disabled = true;
+  document.getElementById("apkrunbtn").disabled = true;
+  document.getElementById("runstatus").textContent =
+    job.status === "queued" ? t("st_queued") : t("st_resumed");
+  JOB_RUNNING = true;
+  /* APK 瘦身跑起来后引擎层停不下来，不显示无效停止键；排队中都能退队 */
+  document.getElementById("cancelbtn").style.display =
+    (job.kind === "slimapk" && job.status === "running") ? "none" : "";
+  document.getElementById("cancelbtn").disabled = false;
+  pollJob(gen);
 }
 
 /* ===================== 结果渲染 ===================== */
@@ -1812,6 +1920,7 @@ async function runApkSlim() {
     return;
   }
   JOB = d.job;
+  saveJob(d.job);
   JOB_RUNNING = true;
   /* 审核修复（中-27）：APK 瘦身引擎层无取消通道，不显示无效的
      "停止任务"按钮（不再让用户看到"正在停止…"却停不下来） */
@@ -1867,6 +1976,17 @@ applyThemeBtn();
 loadEnv();
 loadRecent();
 handleOpenParam();
+/* 任务队列：右下角面板每 2 秒看一眼后台；打开页面先接回未完成任务 */
+document.getElementById("queuelist").addEventListener("click", async e => {
+  const btn = e.target.closest("[data-qid]");
+  if (!btn) return;
+  btn.disabled = true;
+  await api(`/api/job/${btn.dataset.qid}/cancel`, {});
+  refreshQueue();
+});
+refreshQueue();
+setInterval(refreshQueue, 2000);
+tryResumeJob();
 </script>
 </body>
 </html>

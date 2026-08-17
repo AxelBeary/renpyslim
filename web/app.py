@@ -8,6 +8,7 @@ import threading
 import time
 import traceback
 import uuid
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -57,6 +58,15 @@ async def guard_local_only(request: Request, call_next):
 JOBS: dict[str, dict] = {}
 JOBS_LOCK = threading.Lock()
 
+# 任务队列（用户要求 2026-08-17）：重任务（瘦身/打包/APK/字体）同一时刻
+# 只跑一个——并发会共用 _rtools_work/_rtools_output，固定名称的产物互相
+# 覆盖，还抢 CPU/磁盘。后提交的任务自动排队，前一个结束自动接着跑；
+# 只读分析不产出文件，不参与排队，随时可并发跑。
+_JOB_TASKS: dict[str, callable] = {}   # 排队中任务的可执行体，开跑时弹出
+_QUEUE: deque[str] = deque()           # 排队任务编号，先进先出
+_QUEUE_LOCK = threading.Lock()
+_RUNNING = {"id": None}                # 当前正在跑的重任务编号
+
 
 def _new_job(kind: str) -> str:
     job_id = uuid.uuid4().hex[:8]
@@ -97,6 +107,58 @@ def _job_log(job_id: str, stage: str, message: str) -> None:
                                 "message": message})
 
 
+def _dispatch_job(job_id: str, fn) -> None:
+    """提交任务：没有重任务在跑就立即开跑，否则排队等位。
+
+    排队时把可执行体存进 _JOB_TASKS（不放 JOBS：任务字典要原样
+    过 JSON 接口，callable 塞不进去）。
+    """
+    with _QUEUE_LOCK:
+        with JOBS_LOCK:
+            busy = _RUNNING["id"] and JOBS.get(_RUNNING["id"], {}).get(
+                "status") == "running"
+        if not busy:
+            _RUNNING["id"] = job_id
+            _run_in_thread(job_id, fn)
+            return
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if job:
+                job["status"] = "queued"
+        _JOB_TASKS[job_id] = fn
+        _QUEUE.append(job_id)
+
+
+def _scheduler_loop():
+    """后台调度：排队任务一个个接着跑（由 _run_in_thread 收尾时唤醒）。"""
+    while True:
+        with _QUEUE_LOCK:
+            job_id = None
+            while _QUEUE:
+                cand = _QUEUE.popleft()
+                with JOBS_LOCK:
+                    job = JOBS.get(cand)
+                if job and job["status"] == "queued":
+                    job_id = cand
+                    break
+                _JOB_TASKS.pop(cand, None)   # 排队时被取消的，丢弃
+            if not job_id:
+                _RUNNING["id"] = None
+                return
+            _RUNNING["id"] = job_id
+            fn = _JOB_TASKS.pop(job_id)
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if job and job["status"] == "queued":
+                job["status"] = "running"
+        _run_in_thread(job_id, fn)
+
+
+def _notify_job_done(_job_id: str) -> None:
+    """任务结束（含排队中途被取消）：有排队的就接着跑，否则收工。"""
+    threading.Thread(target=_scheduler_loop, daemon=True).start()
+
+
 def _run_in_thread(job_id: str, fn) -> None:
     def wrapper():
         # 审核修复（高-2）：kind 在任务还在时先捕获，后面不依赖
@@ -134,6 +196,8 @@ def _run_in_thread(job_id: str, fn) -> None:
                     job["logs"].append(
                         {"t": time.time(), "stage": "error",
                          "message": traceback.format_exc(limit=5)})
+        finally:
+            _notify_job_done(job_id)
 
     threading.Thread(target=wrapper, daemon=True).start()
 
@@ -261,7 +325,6 @@ def api_analyze(req: AnalyzeReq):
         p = path
         scan_log = lambda i, total, name: _job_log(
             job_id, "scan", f"扫描资源 {i}/{total}：{name}")
-
         cleanup_dir = None
         try:
             # 压缩包直接进：解压到临时目录，分析完清理
@@ -356,7 +419,7 @@ def api_optimize(req: OptimizeReq):
                                         cancel=lambda: _job_cancelled(job_id))
         return _clean_result(r)
 
-    _run_in_thread(job_id, task)
+    _dispatch_job(job_id, task)
     return {"ok": True, "job": job_id}
 
 
@@ -374,7 +437,7 @@ def api_package(req: PackageReq):
                                         log=lambda m: _job_log(job_id, "package", m),
                                         archive_rpa=req.archive_rpa)
 
-    _run_in_thread(job_id, task)
+    _dispatch_job(job_id, task)
     return {"ok": True, "job": job_id, "sdk": sdk}
 
 
@@ -406,8 +469,19 @@ def api_full(req: FullReq):
                                        archive_rpa=req.archive_rpa)
         return {"optimize": _clean_result(opt), "package": pkg}
 
-    _run_in_thread(job_id, task)
+    _dispatch_job(job_id, task)
     return {"ok": True, "job": job_id}
+
+
+@app.get("/api/jobs")
+def api_jobs():
+    """任务队列总览：排队中/执行中/已结束，供前端队列面板与断线重连用。"""
+    with JOBS_LOCK:
+        items = [{"id": j["id"], "kind": j["kind"], "status": j["status"],
+                  "created": j["created"]}
+                 for j in JOBS.values()]
+    items.sort(key=lambda x: x["created"])
+    return {"ok": True, "jobs": items}
 
 
 @app.get("/api/job/{job_id}")
@@ -418,6 +492,7 @@ def api_job(job_id: str, since: int = 0):
             return JSONResponse({"ok": False, "error": "任务不存在"})
         logs = job["logs"][since:]
         return {"ok": True, "status": job["status"],
+                "kind": job["kind"],
                 "logs": logs, "next": since + len(logs),
                 "result": job["result"], "error": job["error"],
                 "cancel_requested": job["cancel"]}
@@ -429,7 +504,12 @@ def api_job_cancel(job_id: str):
         job = JOBS.get(job_id)
         if not job:
             return JSONResponse({"ok": False, "error": "任务不存在"})
-        job["cancel"] = True
+        if job["status"] == "queued":
+            # 还在排队：直接退队，调度器见到非 queued 状态会自动跳过
+            job["status"] = "canceled"
+            job["error"] = "用户已取消（任务尚未开始）。"
+        else:
+            job["cancel"] = True
     return {"ok": True}
 
 
@@ -555,7 +635,7 @@ def api_slimfont(req: FontSlimReq):
         return font_tool.run_font_slim(req.font, req.sources, cs,
                                        progress=progress)
 
-    _run_in_thread(job_id, task)
+    _dispatch_job(job_id, task)
     return {"ok": True, "job": job_id}
 
 
@@ -580,7 +660,7 @@ def api_slimapk(req: SlimApkReq):
             r["keystore"] = dict(r["keystore"])   # 保证可 JSON 序列化
         return r
 
-    _run_in_thread(job_id, task)
+    _dispatch_job(job_id, task)
     return {"ok": True, "job": job_id}
 
 
