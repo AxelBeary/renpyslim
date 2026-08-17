@@ -261,6 +261,6 @@ def test_safe_defaults():
     opts = default_options()
     assert opts.in_place is False                # 默认不动原件
     assert opts.delete_unreferenced is False     # 默认不删文件
-    assert opts.preset == "balanced"
+    assert opts.preset == "conservative"          # 用户拍板：默认画质优先档
     assert opts.charset.base_latin is True       # 保底字符集默认开
     assert opts.do_videos is False               # 视频默认关

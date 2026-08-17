@@ -110,21 +110,29 @@ def run_font_slim(font_path: str, text_sources: list[str],
             col = TTCollection(str(fp), lazy=True)
         except Exception as e:
             raise FontSlimError(f"字体集合打不开：{e}")
-        fonts = col.fonts
-        for i, font in enumerate(fonts, start=1):
-            face_ext = _face_ext(font)
-            out = _unique_path(out_dir / f"{fp.stem}-{i}-slim{face_ext}")
-            p.emit("slim", f"正在瘦身第 {i}/{len(fonts)} 个字重……")
+        # 审核修复（中-24）：TTCollection 句柄正常/异常路径都要关，
+        # Windows 上被占句柄会让后续原地替换 PermissionError
+        try:
+            fonts = col.fonts
+            for i, font in enumerate(fonts, start=1):
+                face_ext = _face_ext(font)
+                out = _unique_path(out_dir / f"{fp.stem}-{i}-slim{face_ext}")
+                p.emit("slim", f"正在瘦身第 {i}/{len(fonts)} 个字重……")
+                try:
+                    res = subset_font_object(font, str(out), chars)
+                    outputs.append({
+                        "src": f"{fp.name}（字重 {i}）", "out": str(out),
+                        "old_size": None, "new_size": res["new_size"],
+                        "glyphs_before": res["glyphs_before"],
+                        "glyphs_after": res["glyphs_after"],
+                    })
+                except Exception as e:
+                    warnings.append(f"字重 {i} 瘦身失败，已跳过：{e}")
+        finally:
             try:
-                res = subset_font_object(font, str(out), chars)
-                outputs.append({
-                    "src": f"{fp.name}（字重 {i}）", "out": str(out),
-                    "old_size": None, "new_size": res["new_size"],
-                    "glyphs_before": res["glyphs_before"],
-                    "glyphs_after": res["glyphs_after"],
-                })
-            except Exception as e:
-                warnings.append(f"字重 {i} 瘦身失败，已跳过：{e}")
+                col.close()
+            except Exception:
+                pass
 
     if not outputs:
         raise FontSlimError("没有任何字重瘦身成功，请检查字体文件。")

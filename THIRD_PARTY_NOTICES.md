@@ -26,7 +26,17 @@ scripts (`build_exe.bat`) so recipients can relink a modified pystray.
 pystray 以独立库形式被调用；按 LGPL 要求，其源码可从上方链接获取，
 本仓库同时提供完整应用源码与重建脚本，允许用户替换 pystray 后重新打包。
 
-## 2. Build & test tools / 构建与测试工具（不随产品分发）
+## 2. Vendored source / 内嵌第三方源码
+
+| Component / 组件 | License / 协议 | Notes / 说明 |
+|---|---|---|
+| [unrpyc](https://github.com/CensoredUsername/unrpyc) | MIT | Ren'Py script decompiler, vendored at
+`rtools/vendor/unrpyc/` (full license text in that directory). Used by the
+optional experimental "decompile scripts" feature. Ren'Py 脚本反编译器，
+源码内嵌于 `rtools/vendor/unrpyc/`（完整许可证文本见该目录），
+仅用于可选的实验性"反编译脚本"功能。 |
+
+## 3. Build & test tools / 构建与测试工具（不随产品分发）
 
 | Tool / 工具 | License / 协议 | Notes / 说明 |
 |---|---|---|
@@ -35,7 +45,7 @@ generated executable under any license, including AGPL here. 其 bootloader
 例外条款明确允许以任意协议分发生成的 exe。 |
 | [pytest](https://pytest.org) | MIT | Tests only / 仅测试用 |
 
-## 3. External programs invoked at runtime / 运行时调用的外部程序（不打包、不分发）
+## 4. External programs invoked at runtime / 运行时调用的外部程序（不打包、不分发）
 
 RenPySlim does **not** bundle or distribute any of these. They are looked up
 on the user's own machine, and the user installs them independently, so their
@@ -50,7 +60,7 @@ licenses do not apply to RenPySlim's distribution.
 | [Ren'Py SDK](https://www.renpy.org) | MIT | Packaging & rpyc compilation, delegated to the official launcher / 打包与脚本编译 |
 | Android SDK build-tools (`zipalign`, `apksigner`), JDK `keytool` | Apache-2.0 / GPL+CE (OpenJDK) | APK alignment, signing, keystore generation / APK 对齐、签名、钥匙生成 |
 
-## 4. File-format implementations / 文件格式参考实现
+## 5. File-format implementations / 文件格式参考实现
 
 - **RPA archive format & rpyc compiled-script layout**: RenPySlim's pure-Python
   reader/writer (`rtools/rpa.py`, `rtools/charset.py`) was written by studying
@@ -64,7 +74,7 @@ licenses do not apply to RenPySlim's distribution.
   `zipfile` and Android's official tooling listed above.
   APK/ZIP 容器通过 Python 标准库与上方列出的官方工具处理。
 
-## 5. Assets / 素材
+## 6. Assets / 素材
 
 - The application icon is an original asset provided by the project author.
   应用图标为项目作者提供的原创素材。

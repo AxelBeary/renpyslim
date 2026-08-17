@@ -1,8 +1,10 @@
 """备份与工作副本：所有破坏性操作前的安全网。"""
 from __future__ import annotations
 
+import os
 import shutil
 import time
+import uuid
 import zipfile
 from pathlib import Path
 
@@ -29,14 +31,27 @@ def make_working_copy(project_dir: str, dest_root: str) -> str:
 
 
 def make_backup_zip(target_dir: str, dest_zip: str) -> str:
-    """把目录整体压成 zip 备份（直接修改原件前的强制备份）。"""
+    """把目录整体压成 zip 备份（直接修改原件前的强制备份）。
+
+    审核修复（中-9）：先写 tmp 再原子落位——备份是 in_place 模式
+    唯一的救命稻草，旧写法中途失败会留下"能打开但缺文件"的
+    合法残缺备份，误导用户以为备份完好。
+    """
     target = Path(target_dir)
     out = Path(dest_zip)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
-        for p in target.rglob("*"):
-            if p.is_file():
-                if any(part in _BACKUP_SKIP for part in p.relative_to(target).parts):
-                    continue
-                zf.write(p, p.relative_to(target.parent))
+    tmp = out.with_name(f"{out.name}.{uuid.uuid4().hex}.tmp")
+    try:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED,
+                             compresslevel=6) as zf:
+            for p in target.rglob("*"):
+                if p.is_file():
+                    if any(part in _BACKUP_SKIP
+                           for part in p.relative_to(target).parts):
+                        continue
+                    zf.write(p, p.relative_to(target.parent))
+        os.replace(tmp, out)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
     return str(out)

@@ -110,31 +110,47 @@ class RpaArchive:
         # RPA-3.0 有两代写法，用前缀字段自动区分：
         #   现行官方（8.x）：前缀为空，偏移、长度都异或
         #   旧版（7.x 及更早）：前缀存前 25 字节，只有偏移异或
-        new_style = all(
-            (seg[2] == b"" if len(seg) == 3 else True)
-            for value in index.values()
-            for seg in ([value] if isinstance(value, tuple) else value)
-        )
-        for name, value in index.items():
-            if isinstance(value, tuple):
-                value = [value]
-            norm: Entry = []
-            for seg in value:
-                if len(seg) == 3:
-                    off, length, prefix = seg
-                    if not isinstance(prefix, bytes):
-                        prefix = bytes(prefix)
-                elif len(seg) == 2:
-                    off, length = seg
-                    prefix = b""
-                else:
-                    raise RpaError(f"封包条目格式异常：{name}")
-                if self.version == "RPA-3.0":
-                    off ^= self.key
-                    if new_style:
-                        length ^= self.key
-                norm.append((off, length, prefix))
-            self._entries[str(name)] = norm
+        # 审核修复（中-12）：索引来自不可信 pickle，整段包 try 把
+        # TypeError/ValueError 转 RpaError——一个结构异常的 .rpa
+        # 应该被跳过而非让整个扫描/优化任务崩溃
+        try:
+            new_style = all(
+                (seg[2] == b"" if len(seg) == 3 else True)
+                for value in index.values()
+                for seg in ([value] if isinstance(value, tuple) else value)
+            )
+            for name, value in index.items():
+                if isinstance(value, tuple):
+                    value = [value]
+                norm: Entry = []
+                for seg in value:
+                    if len(seg) == 3:
+                        off, length, prefix = seg
+                        if not isinstance(prefix, bytes):
+                            prefix = bytes(prefix)
+                    elif len(seg) == 2:
+                        off, length = seg
+                        prefix = b""
+                    else:
+                        raise RpaError(f"封包条目格式异常：{name}")
+                    # 显式类型校验：脏索引可能塞进非整数
+                    if not isinstance(off, int) or not isinstance(length, int) \
+                            or off < 0 or length < 0:
+                        raise RpaError(f"封包条目偏移/长度异常：{name}")
+                    if self.version == "RPA-3.0":
+                        off ^= self.key
+                        if new_style:
+                            length ^= self.key
+                    # 审核修复（中-13）：length < 前缀长时负数 read 语义是
+                    # "读到 EOF"，会把封包尾部当文件内容整段读进内存
+                    if length < len(prefix):
+                        raise RpaError(f"封包条目长度异常：{name}")
+                    norm.append((off, length, prefix))
+                self._entries[str(name)] = norm
+        except RpaError:
+            raise
+        except (TypeError, ValueError, IndexError) as e:
+            raise RpaError(f"封包索引条目结构异常：{self.path}（{e}）")
 
     def names(self) -> List[str]:
         return sorted(self._entries.keys())
@@ -148,6 +164,9 @@ class RpaArchive:
             raise RpaError(f"封包内不存在文件：{name}")
         chunks = []
         for off, length, prefix in self._entries[name]:
+            # 审核修复（中-13）：读取前再校验一次（双保险）
+            if off < 0 or length < len(prefix):
+                raise RpaError(f"封包条目数据异常：{name}")
             # 文件体中前 len(prefix) 字节是冗余副本，跳过
             self._f.seek(off + len(prefix))
             chunks.append(prefix + self._f.read(length - len(prefix)))
@@ -210,11 +229,15 @@ class RpaWriter:
 
 
 def rebuild_archive(src_rpa: str, dest_rpa: str,
-                    replacements: Dict[str, str]) -> Tuple[int, int]:
-    """复制重建一个封包：replacements 把 封包内路径 -> 优化后的本地文件路径。
+                    replacements: Dict[str, object]) -> Tuple[int, int]:
+    """复制重建一个封包，返回 (替换数, 总文件数)。
 
-    未替换的文件原样复制；重建时沿用源封包的密钥（兼容性最保守）。
-    返回 (替换数, 总文件数)。
+    replacements 把 封包内路径 -> 替换来源，两种形式：
+    - str：同名替换（本地文件路径，封包内名字不变）
+    - (new_name, 本地文件路径)：改名替换——旧条目剔除，新名字
+      入包（格式转换后"按原样包回 rpa"用；引用已同步改写，
+      引擎按新名字从封包里加载）。重建时沿用源封包的密钥
+      （兼容性最保守）。
     """
     replaced = 0
     total = 0
@@ -225,7 +248,12 @@ def rebuild_archive(src_rpa: str, dest_rpa: str,
             for name in arc.names():
                 total += 1
                 if name in replacements:
-                    writer.add_file(name, replacements[name])
+                    val = replacements[name]
+                    if isinstance(val, tuple):
+                        new_name, local = val
+                        writer.add_file(new_name, local)
+                    else:
+                        writer.add_file(name, val)
                     replaced += 1
                 else:
                     writer.add(name, arc.read(name))

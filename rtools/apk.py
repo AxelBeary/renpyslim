@@ -4,7 +4,9 @@ Ren'Py 安卓版结构：assets/x-game/** 是游戏资源，assets/x-renpy/** �
 策略（同名同格式，绝不改名）：
 - 只压 assets/x-game/ 下的图片/音频/字体；引擎目录一律不碰
 - 字体字符集来自 APK 内的编译脚本（x-scripts/x-tl 的 rpyc）+ 保底字符集
-- 重打包时未改动的条目逐字节原样保留（含压缩方式），只替换改动项
+- 重打包时未改动的条目保留原内容与原压缩方式标记（审核修复
+  中-16：DEFLATE 条目经 zipfile 重压字节流可能变，"逐字节保留"
+  仅对 STORED 条目成立），只替换改动项
 - 改动后原签名必然失效：删除旧签名；提供了钥匙和密码就用
   Android SDK 的 apksigner 重签，否则产出未签名包并明确警告
 """
@@ -22,7 +24,7 @@ from typing import Optional
 from . import charset as charset_mod
 from . import remap as remap_mod
 from .audio_optimizer import convert_audio, reencode_audio
-from .config import PRESETS, CharsetOptions
+from .config import PRESETS, DEFAULT_PRESET, CharsetOptions
 from .font_optimizer import subset_font
 from .image_optimizer import optimize_image
 from .models import AssetKind, Progress, kind_of
@@ -95,6 +97,38 @@ def find_build_tools(sdk: str) -> tuple[Optional[str], Optional[str]]:
         if za.exists() and signer.exists():
             return str(za), str(signer)
     return None, None
+
+
+def _find_java() -> Optional[str]:
+    """找 java：PATH -> JAVA_HOME。"""
+    found = shutil.which("java")
+    if found:
+        return found
+    java_home = os.environ.get("JAVA_HOME")
+    if java_home:
+        name = "java.exe" if os.name == "nt" else "java"
+        cand = Path(java_home) / "bin" / name
+        if cand.exists():
+            return str(cand)
+    return None
+
+
+# 回退 .bat 时密码里出现这些字符会被 cmd.exe 解释（拆参/注入）
+_CMD_DANGEROUS = set('"%&|<>^')
+
+
+def _apksigner_cmd(signer: str) -> list:
+    """拼 apksigner 调用命令。
+
+    审核修复（中-14）：优先 java -jar 直调——apksigner.bat 由 cmd.exe
+    解释命令行，密码/路径含 \" % & 等字符会拆断参数甚至命令注入；
+    java -jar 无 shell 层，参数按列表直传。
+    """
+    jar = Path(signer).parent / "lib" / "apksigner.jar"
+    java = _find_java()
+    if jar.exists() and java:
+        return [java, "-jar", str(jar)]
+    return [signer]
 
 
 def find_keytool() -> Optional[str]:
@@ -203,7 +237,7 @@ def slim_apk(apk_path: str, preset_name: str,
     返回 {output, saved_bytes, changes, signed, keystore, warnings}。
     """
     p = progress or Progress()
-    preset = PRESETS.get(preset_name, PRESETS["balanced"])
+    preset = PRESETS.get(preset_name, PRESETS[DEFAULT_PRESET])
     cs_opts = charset_opts or CharsetOptions()
 
     apk = Path(apk_path)
@@ -240,15 +274,29 @@ def slim_apk(apk_path: str, preset_name: str,
             targets.append(name)
         p.emit("apk", f"APK 共 {len(names)} 个条目，可优化资源 {len(targets)} 个")
 
+        skipped: set[str] = set()        # 审核修复（中-11）：被拒/解出失败的条目
+        extracted_names: set[str] = set()  # 已解出到 work 的条目（中-16 复用）
         for name in targets + script_entries:
             # 审核修复：条目名来自不可信输入，净化后再落盘（防 zip-slip）
             out = safe_join(work, name)
             if out is None:
                 warnings.append(f"条目名异常（疑似路径穿越），已跳过：{name}")
+                skipped.add(name)
                 continue
             out.parent.mkdir(parents=True, exist_ok=True)
-            with zf.open(name) as src_f:
-                out.write_bytes(src_f.read())
+            try:
+                with zf.open(name) as src_f:
+                    out.write_bytes(src_f.read())
+            except (OSError, KeyError, RuntimeError,
+                    zipfile.BadZipFile) as e:
+                # 审核修复（中-11）：解出失败也得移出 targets，否则
+                # 优化循环 stat 直接 FileNotFoundError 崩掉整个瘦身
+                warnings.append(f"条目解出失败，已跳过：{name}（{e}）")
+                skipped.add(name)
+                continue
+            extracted_names.add(name)
+        if skipped:
+            targets = [n for n in targets if n not in skipped]
 
         # 2. 从脚本提取字符集（供字体瘦身）
         chars = _extract_charset_from_apk(work, cs_opts)
@@ -264,20 +312,25 @@ def slim_apk(apk_path: str, preset_name: str,
         pending_remap = []   # (旧条目, 新条目名, 本地新文件, 节省字节)
         # 审核修复：预检同名撞车——foo.png 与 foo.jpg 都会变 foo.webp，
         # 撞车项不转换（降级同名压缩），避免互覆丢文件
+        # 审核修复（中-33）：参照集合并入全部资源名，转换目标与
+        # 现存资源同名（如 foo.png 撞上已有的 foo.webp）也拦截
+        all_game_rels = [r for r in (apk_entry_to_game_rel(n) for n in targets)
+                         if r]
         clash_webp = find_suffix_clashes(
-            [apk_entry_to_game_rel(n) for n in targets
-             if apk_entry_to_game_rel(n)
-             and Path(n).suffix.lower() in (".png", ".jpg", ".jpeg")],
-            ".webp")
+            [r for r in all_game_rels
+             if Path(r).suffix.lower() in (".png", ".jpg", ".jpeg")],
+            ".webp", existing=all_game_rels)
         clash_ogg = find_suffix_clashes(
-            [apk_entry_to_game_rel(n) for n in targets
-             if apk_entry_to_game_rel(n)
-             and Path(n).suffix.lower() in (".wav", ".mp3")],
-            ".ogg")
+            [r for r in all_game_rels
+             if Path(r).suffix.lower() in (".wav", ".mp3")],
+            ".ogg", existing=all_game_rels)
         for i, name in enumerate(targets, start=1):
             if i % 10 == 1 or i == len(targets):
                 p.emit("apk", f"瘦身 {i}/{len(targets)}：{name}")
             f = work / name
+            # 审核修复（中-11）：双保险，文件不在直接跳过
+            if not f.exists():
+                continue
             ext = f.suffix.lower()
             size_before = f.stat().st_size
             game_rel = apk_entry_to_game_rel(name)
@@ -324,7 +377,9 @@ def slim_apk(apk_path: str, preset_name: str,
                 if kind_of(ext) == AssetKind.IMAGE and ext != ".gif" \
                         and size_before >= preset.min_size_kb * 1024:
                     res = optimize_image(str(f), str(f), preset.image_quality)
-                elif kind_of(ext) == AssetKind.AUDIO and ext == ".ogg":
+                elif kind_of(ext) == AssetKind.AUDIO and ext in (".ogg", ".mp3"):
+                    # 审核补漏：MP3 以前被漏掉（成品侧早已支持），同名
+                    # 同格式降码率重编码，APK 里引用焊死也无妨
                     res = reencode_audio(str(f), str(f), preset.audio_bitrate_k)
                 elif kind_of(ext) == AssetKind.FONT and ext in (".ttf", ".otf") \
                         and size_before >= 256 * 1024:
@@ -390,7 +445,13 @@ def slim_apk(apk_path: str, preset_name: str,
                     new_info.compress_type = zipfile.ZIP_DEFLATED
                     out_zf.writestr(new_info, data)
                 else:
-                    out_zf.writestr(info, zf.read(info.filename))
+                    # 审核修复（中-16）：优先读 work 下已解出的文件，
+                    # 消除大 APK 全量二次解压的重复开销
+                    if info.filename in extracted_names:
+                        data = (work / info.filename).read_bytes()
+                    else:
+                        data = zf.read(info.filename)
+                    out_zf.writestr(info, data)
             # 新增条目：WebP 新图 + 重映射脚本（原清单里没有，循环后追加）
             for new_entry, local in new_entries.items():
                 out_zf.writestr(new_entry, local.read_bytes())
@@ -401,8 +462,16 @@ def slim_apk(apk_path: str, preset_name: str,
         zipalign, apksigner = find_build_tools(sdk) if sdk else (None, None)
         aligned = work / "slim-aligned.apk"
         if zipalign:
-            run_quiet([zipalign, "-f", "4", str(out_apk), str(aligned)],
-                      capture_output=True, timeout=600)
+            # 审核修复（中-15）：超时/异常捕获后走"未对齐+警告"回退，
+            # 不再让整个瘦身失败；returncode 也查（旧版只看文件存在）
+            try:
+                za_proc = run_quiet([zipalign, "-f", "4", str(out_apk),
+                                     str(aligned)],
+                                    capture_output=True, timeout=600)
+                if za_proc.returncode != 0:
+                    aligned.unlink(missing_ok=True)
+            except Exception:
+                aligned.unlink(missing_ok=True)
         if not aligned.exists():
             aligned = out_apk
             if zipalign:
@@ -424,25 +493,42 @@ def slim_apk(apk_path: str, preset_name: str,
         if apksigner and use_ks and use_pass:
             # apksigner(Java) 对含乱码/生僻字符的输出路径会报 Bad pathname，
             # 先签到纯英文临时路径再落位，稳
-            tmp_signed = work / "slim-signed.apk"
-            cmd = [apksigner, "sign", "--ks", use_ks,
-                   "--ks-pass", f"pass:{use_pass}"]
-            if use_alias:
-                cmd += ["--ks-key-alias", use_alias]
-            if key_pass:
-                cmd += ["--key-pass", f"pass:{key_pass}"]
-            cmd += ["--out", str(tmp_signed), str(aligned)]
-            proc = run_quiet(cmd, capture_output=True, timeout=600)
-            if proc.returncode == 0 and tmp_signed.exists():
-                shutil.copyfile(tmp_signed, final)
-                signed = True
-                if keystore_info:
-                    warnings.append(
-                        "已用新生成的钥匙签名。密码在钥匙旁边的备忘文件里，"
-                        "请妥善保管；玩家需先卸载旧版再安装本包。")
+            signer_cmd = _apksigner_cmd(apksigner)
+            via_bat = signer_cmd[0] == apksigner
+            secret = (use_pass or "") + (key_pass or "")
+            if via_bat and any(c in _CMD_DANGEROUS for c in secret):
+                # 审核修复（中-14）：回退 .bat 且密码含 cmd 特殊字符，
+                # 有拆参/注入风险，拒签并给出人话指引
+                warnings.append(
+                    "密码含有签名工具无法安全处理的特殊字符，已跳过签名。"
+                    "安装 JDK（java 命令可用）后会自动改用安全通道，"
+                    "或换一个不含特殊字符的密码重跑。")
             else:
-                err = proc.stderr.decode("utf-8", "replace")[-400:]
-                warnings.append(f"重签名失败（钥匙或密码不对？）：{err}")
+                tmp_signed = work / "slim-signed.apk"
+                cmd = [*signer_cmd, "sign", "--ks", use_ks,
+                       "--ks-pass", f"pass:{use_pass}"]
+                if use_alias:
+                    cmd += ["--ks-key-alias", use_alias]
+                if key_pass:
+                    cmd += ["--key-pass", f"pass:{key_pass}"]
+                cmd += ["--out", str(tmp_signed), str(aligned)]
+                try:
+                    # 审核修复（中-15）：超时/异常捕获，不再让整个瘦身失败
+                    proc = run_quiet(cmd, capture_output=True, timeout=600)
+                except Exception as e:
+                    proc = None
+                    warnings.append(f"签名工具调用异常（{e}），产出未签名的包。")
+                if proc is not None and proc.returncode == 0 and tmp_signed.exists():
+                    shutil.copyfile(tmp_signed, final)
+                    signed = True
+                    if keystore_info:
+                        warnings.append(
+                            "已用新生成的钥匙签名。密码在钥匙旁边的备忘文件里，"
+                            "请妥善保管；玩家需先卸载旧版再安装本包。")
+                else:
+                    err = (proc.stderr.decode("utf-8", "replace")[-400:]
+                           if proc is not None else "")
+                    warnings.append(f"重签名失败（钥匙或密码不对？）：{err}")
         if not signed:
             shutil.copyfile(aligned, final)
             warnings.append(

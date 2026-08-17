@@ -18,6 +18,11 @@ from typing import Optional
 CACHE_DIR = Path.home() / ".renpyslim" / "cache"
 # 超过该体积的文件不做哈希缓存（哈希+复制本身比处理还贵时没意义）
 MAX_CACHEABLE_MB = 80
+# 审核修复（中-23）：缓存目录只写不清会无限膨胀，设容量上限，
+# 超阈按最旧先删（淘汰检查限频，避免每次入库都扫全盘）
+MAX_CACHE_BYTES = 2 * 1024 ** 3
+_PRUNE_MIN_INTERVAL = 300.0
+_last_prune = [0.0]
 
 
 def _hash_file(path: str) -> Optional[str]:
@@ -54,8 +59,51 @@ def store_hash(file_hash: str, action_key: str, optimized: str) -> None:
         tmp = entry.with_name(f"{entry.name}.{uuid.uuid4().hex}.tmp")
         shutil.copyfile(optimized, tmp)
         os.replace(tmp, entry)
+        _prune_if_needed()
     except OSError:
         pass
+
+
+def store_self(optimized: str, action_key: str) -> None:
+    """登记"已处理"自映射：产物自身哈希 -> 产物自身（审核修复 中-10）。
+
+    in_place 反复运行时，上一轮的产物成为本轮的输入；没有这条
+    自映射，JPG/WebP 等有损重编码会逐轮叠加（代际累积退化）。
+    """
+    h = _hash_file(optimized)
+    if h:
+        store_hash(h, action_key, optimized)
+
+
+def _prune_if_needed() -> None:
+    """缓存总体积超上限时，从最旧的文件开始淘汰到 90% 以下。"""
+    import time
+    now = time.time()
+    if now - _last_prune[0] < _PRUNE_MIN_INTERVAL:
+        return
+    _last_prune[0] = now
+    try:
+        files = []
+        for f in CACHE_DIR.rglob("*"):
+            if f.is_file():
+                try:
+                    files.append((f, f.stat()))
+                except OSError:
+                    continue
+    except OSError:
+        return
+    total = sum(st.st_size for _, st in files)
+    if total <= MAX_CACHE_BYTES:
+        return
+    files.sort(key=lambda t: t[1].st_mtime)   # 最旧优先
+    for f, st in files:
+        if total <= MAX_CACHE_BYTES * 9 // 10:
+            break
+        try:
+            f.unlink()
+            total -= st.st_size
+        except OSError:
+            continue
 
 
 def lookup(src: str, action_key: str) -> Optional[str]:
@@ -84,10 +132,20 @@ def store(src: str, action_key: str, optimized: str) -> None:
 
 
 def apply_cached(cached_path: str, dst: str) -> bool:
-    """把缓存内容复制到目标位置。"""
+    """把缓存内容复制到目标位置。
+
+    审核修复（中-4）：先写随机 tmp 再原子替换——直写目标时
+    IO 故障会把待优化文件本身写成半截。
+    """
+    tmp = None
     try:
-        Path(dst).parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(cached_path, dst)
+        dst_p = Path(dst)
+        dst_p.parent.mkdir(parents=True, exist_ok=True)
+        tmp = dst_p.with_name(f"{dst_p.name}.{uuid.uuid4().hex}.tmp")
+        shutil.copyfile(cached_path, tmp)
+        os.replace(tmp, dst_p)
         return True
     except OSError:
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
         return False

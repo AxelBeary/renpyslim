@@ -18,7 +18,7 @@ from pydantic import BaseModel
 
 from rtools import analyzer, apk, archives, charset, font_tool, packager, pipeline, scanner
 from rtools.config import (CharsetOptions, OptimizeOptions, PRESETS,
-                           default_options)
+                           DEFAULT_PRESET, default_options)
 from rtools.models import Progress
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -63,8 +63,12 @@ def _new_job(kind: str) -> str:
     with JOBS_LOCK:
         # 清理旧任务，防止长期运行时内存无限增长：
         # 超过 2 小时的直接丢，剩下的只保留最近 30 个
+        # 审核修复（高-2）：超时清理必须跳过运行中的任务——
+        # 旧版无状态检查，长任务跑超 2 小时后一建新任务就被删，
+        # 线程收尾 KeyError、状态永久卡死、还写假崩溃转储
         now = time.time()
-        for k in [k for k, v in JOBS.items() if now - v["created"] > 7200]:
+        for k in [k for k, v in JOBS.items()
+                  if now - v["created"] > 7200 and v["status"] != "running"]:
             del JOBS[k]
         if len(JOBS) > 30:
             for k, _ in sorted(JOBS.items(), key=lambda kv: kv[1]["created"])[:-30]:
@@ -95,36 +99,48 @@ def _job_log(job_id: str, stage: str, message: str) -> None:
 
 def _run_in_thread(job_id: str, fn) -> None:
     def wrapper():
+        # 审核修复（高-2）：kind 在任务还在时先捕获，后面不依赖
+        # JOBS[job_id] 下标（任务字典可能被清理删掉）
+        with JOBS_LOCK:
+            kind = JOBS.get(job_id, {}).get("kind", "job")
         try:
             result = fn()
             with JOBS_LOCK:
-                JOBS[job_id]["status"] = "done"
-                JOBS[job_id]["result"] = result
+                job = JOBS.get(job_id)
+                if job:
+                    job["status"] = "done"
+                    job["result"] = result
         except pipeline.PipelineCancelled:
             with JOBS_LOCK:
-                JOBS[job_id]["status"] = "canceled"
-                JOBS[job_id]["error"] = "用户已取消，已完成的部分成果保留在结果目录。"
+                job = JOBS.get(job_id)
+                if job:
+                    job["status"] = "canceled"
+                    job["error"] = "用户已取消，已完成的部分成果保留在结果目录。"
         except scanner.ScanCancelled:
             with JOBS_LOCK:
-                JOBS[job_id]["status"] = "canceled"
-                JOBS[job_id]["error"] = "用户已取消扫描。"
+                job = JOBS.get(job_id)
+                if job:
+                    job["status"] = "canceled"
+                    job["error"] = "用户已取消扫描。"
         except Exception as e:
             from rtools import crashdump
-            dump = crashdump.write_crash(JOBS.get(job_id, {}).get("kind", "job"))
+            dump = crashdump.write_crash(kind)
             with JOBS_LOCK:
-                JOBS[job_id]["status"] = "error"
-                JOBS[job_id]["error"] = str(e) + (
-                    f"\n崩溃详情已存：{dump}" if dump else "")
-                JOBS[job_id]["logs"].append(
-                    {"t": time.time(), "stage": "error",
-                     "message": traceback.format_exc(limit=5)})
+                job = JOBS.get(job_id)
+                if job:
+                    job["status"] = "error"
+                    job["error"] = str(e) + (
+                        f"\n崩溃详情已存：{dump}" if dump else "")
+                    job["logs"].append(
+                        {"t": time.time(), "stage": "error",
+                         "message": traceback.format_exc(limit=5)})
 
     threading.Thread(target=wrapper, daemon=True).start()
 
 
 def _options_from_dict(d: dict) -> OptimizeOptions:
     opts = default_options()
-    opts.preset = d.get("preset", "balanced")
+    opts.preset = d.get("preset") or DEFAULT_PRESET
     opts.do_images = d.get("do_images", True)
     opts.do_audio = d.get("do_audio", True)
     opts.do_fonts = d.get("do_fonts", True)
@@ -134,6 +150,8 @@ def _options_from_dict(d: dict) -> OptimizeOptions:
     opts.quarantine_unused = d.get("quarantine_unused", False)
     opts.png_quant = d.get("png_quant", False)
     opts.experimental_remap = d.get("experimental_remap", False)
+    opts.experimental_av1 = d.get("experimental_av1", False)
+    opts.experimental_decompile = d.get("experimental_decompile", False)
     opts.do_videos = d.get("do_videos", False)
     opts.use_cache = d.get("use_cache", True)
     cs = CharsetOptions()
@@ -200,7 +218,7 @@ class FontSlimReq(BaseModel):
 
 class SlimApkReq(BaseModel):
     path: str
-    preset: str = "balanced"
+    preset: str = DEFAULT_PRESET
     remap: bool = False          # 实验性：图转 WebP/音转 OGG + 注入重映射脚本
     gen_key: bool = False        # 自动生成新钥匙（小白推荐）
     keystore: Optional[str] = None
@@ -247,14 +265,18 @@ def api_analyze(req: AnalyzeReq):
         cleanup_dir = None
         try:
             # 压缩包直接进：解压到临时目录，分析完清理
-            if archives.is_archive(str(p)):
+            is_archive = archives.is_archive(str(p))
+            if is_archive:
                 _job_log(job_id, "unpack", f"正在解压压缩包 {p.name}…")
                 cleanup_dir = tempfile.mkdtemp(prefix="rtools_unpack_")
                 archives.extract_archive(str(p), cleanup_dir, req.password)
                 p = Path(archives.find_dist_root(cleanup_dir))
                 _job_log(job_id, "unpack", f"已定位成品目录：{p.name}")
 
-            mode = req.mode or _detect_mode(p)
+            # 审核修复（中-31）：压缩包输入强制走 dist 分析——
+            # 旧版沿用页面传来的 mode，project 页手输 zip 路径会报
+            # "缺少 game 目录"的误导错
+            mode = _detect_mode(p) if is_archive else (req.mode or _detect_mode(p))
 
             if mode == "project":
                 if not (p / "game").is_dir():
@@ -276,9 +298,12 @@ def api_analyze(req: AnalyzeReq):
                     loose = scanner.scan_assets(str(p), probe=True,
                                                 progress=scan_log,
                                                 cancel=lambda: _job_cancelled(job_id))
+                    # 审核修复（中-25）：与优化执行路径对齐传
+                    # extract_scripts，避免分析口径与执行口径不一致
                     packed = scanner.scan_rpa_assets(str(p), str(work),
                                                      probe=True, progress=scan_log,
-                                                     cancel=lambda: _job_cancelled(job_id))
+                                                     cancel=lambda: _job_cancelled(job_id),
+                                                     extract_scripts=True)
                     report = analyzer.analyze(loose + packed, str(p), "dist")
                 finally:
                     shutil.rmtree(work, ignore_errors=True)
@@ -420,9 +445,17 @@ def api_get_sdk():
     return {"ok": True, "sdk_path": packager.load_config().get("sdk_path")}
 
 
+# 审核修复（中-28）：tkinter 非线程安全，选择框必须串行化，
+# 连点两下浏览按钮曾有两个并发 Tk 实例带崩服务进程的风险
+_BROWSE_LOCK = threading.Lock()
+
+
 @app.get("/api/browse")
 def api_browse(kind: str = "file"):
     """在服务端弹出原生文件/文件夹选择框（本机工具的特权，网页做不到）。"""
+    if not _BROWSE_LOCK.acquire(blocking=False):
+        return JSONResponse({"ok": False,
+                             "error": "已有一个选择框打开，请先在那边完成选择。"})
     result: dict = {}
 
     def run():
@@ -457,12 +490,15 @@ def api_browse(kind: str = "file"):
     t = threading.Thread(target=run)
     t.start()
     t.join(180)
-    if t.is_alive():
-        return JSONResponse({"ok": False, "error": "选择框超时，请重试。"})
-    if "error" in result:
-        return JSONResponse({"ok": False,
-                             "error": "无法弹出选择框：" + result["error"]})
-    return {"ok": True, "path": result.get("path", "")}
+    try:
+        if t.is_alive():
+            return JSONResponse({"ok": False, "error": "选择框超时，请重试。"})
+        if "error" in result:
+            return JSONResponse({"ok": False,
+                                 "error": "无法弹出选择框：" + result["error"]})
+        return {"ok": True, "path": result.get("path", "")}
+    finally:
+        _BROWSE_LOCK.release()
 
 
 @app.get("/api/recent")

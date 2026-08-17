@@ -18,27 +18,32 @@ class Preset:
     png_to_webp: bool          # 是否把 PNG 转成 WebP（仅工程模式，会改引用）
     audio_bitrate_k: int       # OGG 音频码率
     font_subset: bool          # 是否做字体瘦身
-    min_size_kb: int           # 小于该体积的文件不值得折腾，直接跳过
+    min_size_kb: int           # 小于该体积的文件直接跳过（已降到极低，小文件也要榨）
 
 
 PRESETS: dict[str, Preset] = {
     "conservative": Preset(
-        name="conservative", label="保守档（无损优先）",
-        image_quality=95, png_to_webp=False, audio_bitrate_k=192,
-        font_subset=True, min_size_kb=32,
+        name="conservative", label="保守档（画质优先）",
+        # 用户拍板（2026-08-17）：默认首选画质优先——q95 接近视觉无损；
+        # WebP q95 同样接近视觉无损但体积显著更小，故开启转换；
+        # 体积门槛降到 1KB：几十 KB 的小图转 WebP 后只剩几 KB，
+        # 数量又多，能榨的每一丝都榨干（多核放开后处理成本不再是理由）
+        image_quality=95, png_to_webp=True, audio_bitrate_k=192,
+        font_subset=True, min_size_kb=1,
     ),
     "balanced": Preset(
-        name="balanced", label="均衡档（推荐）",
+        name="balanced", label="均衡档",
         image_quality=85, png_to_webp=True, audio_bitrate_k=128,
-        font_subset=True, min_size_kb=16,
+        font_subset=True, min_size_kb=1,
     ),
     "aggressive": Preset(
         name="aggressive", label="激进档（体积优先）",
         image_quality=70, png_to_webp=True, audio_bitrate_k=96,
-        font_subset=True, min_size_kb=8,
+        font_subset=True, min_size_kb=1,
     ),
 }
-DEFAULT_PRESET = "balanced"
+# 用户拍板（2026-08-17）：默认档位改为画质优先的保守档
+DEFAULT_PRESET = "conservative"
 
 # ---------------------------------------------------------------------------
 # 体积阈值（分析报告用）
@@ -129,6 +134,8 @@ class OptimizeOptions:
     quarantine_unused: bool = False  # 工程模式：确认无引用的资源移入隔离区（默认只报告）
     png_quant: bool = False          # 实验性：PNG 有损量化深度压缩（BACKLOG B5）
     experimental_remap: bool = False  # 实验性：成品注入运行时重映射脚本（BACKLOG B9）
+    experimental_av1: bool = False   # 实验性：视频用 AV1 编码（官方支持且更省，仅 8.0+ 引擎能放）
+    experimental_decompile: bool = False  # 实验性：反编译 rpyc 解锁无源码成品的格式转换（unrpyc）
     use_cache: bool = True            # 增量缓存（BACKLOG B6）
     in_place: bool = False   # 直接修改原件（危险）：默认关，开启后流水线会强制先备份
 

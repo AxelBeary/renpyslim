@@ -21,13 +21,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import signal
 import sys
 from pathlib import Path
 
 from rtools import packager, pipeline, scanner, analyzer, charset, font_tool
 from rtools import archives
 from rtools import __version__
-from rtools.config import OptimizeOptions, CharsetOptions, PRESETS
+from rtools.config import OptimizeOptions, CharsetOptions, PRESETS, DEFAULT_PRESET
 from rtools.models import Progress
 
 
@@ -51,14 +52,36 @@ def _fail(msg: str) -> int:
     return 1
 
 
+def _make_cancel():
+    """把 Ctrl+C 映射为取消回调（审核修复 中-3）。
+
+    不传 cancel 时 SIGINT 既不触发 futures.cancel 也不落部分清单，
+    还要等正在跑的长任务自然结束；现在按取消路径干净收尾。
+    """
+    flag = {"v": False}
+
+    def _handler(sig, frame):
+        if not flag["v"]:
+            _log("cancel", "收到取消请求，正在停下并保存已完成部分的清单……")
+        flag["v"] = True
+
+    try:
+        signal.signal(signal.SIGINT, _handler)
+    except ValueError:
+        pass   # 非主线程（测试场景）注册不了，忽略
+    return lambda: flag["v"]
+
+
 def _build_options(args) -> OptimizeOptions:
     opts = OptimizeOptions()
-    opts.preset = getattr(args, "preset", "balanced") or "balanced"
+    opts.preset = getattr(args, "preset", None) or DEFAULT_PRESET
     opts.in_place = getattr(args, "in_place", False)
     opts.delete_unreferenced = getattr(args, "delete_unreferenced", False)
     opts.quarantine_unused = getattr(args, "quarantine_unused", False)
     opts.png_quant = getattr(args, "png_quant", False)
     opts.experimental_remap = getattr(args, "remap", False)
+    opts.experimental_av1 = getattr(args, "av1", False)
+    opts.experimental_decompile = getattr(args, "decompile", False)
     opts.do_videos = getattr(args, "videos", False)
     if getattr(args, "no_cache", False):
         opts.use_cache = False
@@ -88,7 +111,17 @@ def cmd_analyze(args) -> int:
             archives.extract_archive(str(path), cleanup_dir, args.password)
             path = Path(archives.find_dist_root(cleanup_dir))
         except archives.ArchiveError as e:
+            # 审核修复（中-32）：解压失败路径以前直接 return，
+            # 泄漏临时目录（外层 try/finally 尚未进入）
+            import shutil
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
+            cleanup_dir = None
             return _fail(str(e))
+        except Exception:
+            import shutil
+            shutil.rmtree(cleanup_dir, ignore_errors=True)
+            cleanup_dir = None
+            raise
 
     try:
         # 工程有 .rpy 源码，成品只有 .rpyc，以此自动区分
@@ -114,8 +147,11 @@ def cmd_analyze(args) -> int:
             extract = Path(tempfile.mkdtemp(prefix="rtools_analyze_"))
             try:
                 loose = scanner.scan_assets(str(path), progress=scan_log)
+                # 审核修复（中-25）：与优化执行路径对齐传 extract_scripts，
+                # 避免分析口径与执行口径不一致（潜伏地雷）
                 packed = scanner.scan_rpa_assets(str(path), str(extract),
-                                                 progress=scan_log)
+                                                 progress=scan_log,
+                                                 extract_scripts=True)
                 report = analyzer.analyze(loose + packed, str(path), "dist")
             finally:
                 shutil.rmtree(extract, ignore_errors=True)
@@ -143,15 +179,17 @@ def cmd_optimize(args) -> int:
     output_dir = args.output or str(path.parent / "_rtools_output")
     Path(work_root).mkdir(parents=True, exist_ok=True)
     progress = Progress(_log)
+    cancel = _make_cancel()   # 审核修复（中-3）：Ctrl+C 走取消路径
     try:
         if mode == "project":
             result = pipeline.run_project(str(path), opts, work_root,
-                                          output_dir, progress)
+                                          output_dir, progress, cancel=cancel)
         else:
             # run_dist_smart 兼容目录与压缩包输入，压缩包会自动回包
             result = pipeline.run_dist_smart(str(path), opts, work_root,
                                              output_dir, progress,
-                                             password=args.password)
+                                             password=args.password,
+                                             cancel=cancel)
     except (pipeline.PipelineError, archives.ArchiveError) as e:
         return _fail(str(e))
     result.pop("report_dict", None)
@@ -169,7 +207,9 @@ def cmd_package(args) -> int:
         result = packager.package_project(sdk, args.path, platforms,
                                           args.destination, log=_log_wrapper,
                                           archive_rpa=args.archive_rpa)
-    except FileNotFoundError as e:
+    except Exception as e:
+        # 审核修复（中-32）：不只捕 FileNotFoundError，权限/超时等
+        # 同样要以 JSON 出口收场
         return _fail(str(e))
     return _ok({"sdk": sdk, "result": result})
 
@@ -188,9 +228,10 @@ def cmd_full(args) -> int:
     output_dir = args.output or str(path.parent / "_rtools_output")
     Path(work_root).mkdir(parents=True, exist_ok=True)
     progress = Progress(_log)
+    cancel = _make_cancel()   # 审核修复（中-3）：Ctrl+C 走取消路径
     try:
         opt_result = pipeline.run_project(str(path), opts, work_root,
-                                          output_dir, progress)
+                                          output_dir, progress, cancel=cancel)
     except pipeline.PipelineError as e:
         return _fail(str(e))
 
@@ -198,10 +239,16 @@ def cmd_full(args) -> int:
     if not sdk:
         return _fail("优化完成，但找不到 Ren'Py SDK，无法打包。请用 --sdk 指定。")
     platforms = [p.strip() for p in (args.platforms or "pc").split(",") if p.strip()]
-    pkg_result = packager.package_project(sdk, opt_result["working_dir"],
-                                          platforms, args.destination,
-                                          log=_log_wrapper,
-                                          archive_rpa=args.archive_rpa)
+    try:
+        # 审核修复（中-32）：打包段以前完全无异常捕获，
+        # PermissionError/OSError/TimeoutExpired 裸 traceback 退出，
+        # stdout 无 JSON，违反"结果 JSON 走 stdout"契约
+        pkg_result = packager.package_project(sdk, opt_result["working_dir"],
+                                              platforms, args.destination,
+                                              log=_log_wrapper,
+                                              archive_rpa=args.archive_rpa)
+    except Exception as e:
+        return _fail(f"优化已完成但打包失败：{e}")
     opt_result.pop("report_dict", None)
     opt_result["report"] = str(opt_result["report"])
     opt_result["changelog"] = str(opt_result["changelog"])
@@ -265,7 +312,7 @@ def main(argv=None) -> int:
         p = sub.add_parser(name, help=help_)
         p.add_argument("path")
         p.add_argument("--mode", choices=["project", "dist"], default=None)
-        p.add_argument("--preset", choices=list(PRESETS), default="balanced")
+        p.add_argument("--preset", choices=list(PRESETS), default=DEFAULT_PRESET)
         p.add_argument("--work-root", default=None)
         p.add_argument("--output", default=None)
         p.add_argument("--in-place", action="store_true",
@@ -278,8 +325,13 @@ def main(argv=None) -> int:
                        help="实验性：PNG 有损量化深度压缩（大图再省 60~80%%）")
         p.add_argument("--videos", action="store_true",
                        help="实验性：同名重编码压缩视频")
+        p.add_argument("--av1", action="store_true",
+                       help="实验性：视频用 AV1 编码（官方支持且更省，仅 Ren'Py 8.0+ 构建的游戏能放）")
         p.add_argument("--remap", action="store_true",
                        help="实验性：成品注入运行时重映射脚本（无源码也能转 WebP）")
+        p.add_argument("--decompile", action="store_true",
+                       help="实验性：反编译 rpyc 解锁无源码成品的格式转换"
+                            "（unrpyc，转换后资源按原样包回封包；处理后请试跑游戏）")
         p.add_argument("--no-cache", action="store_true",
                        help="禁用增量缓存")
         p.add_argument("--extra-chars", default="", help="字体瘦身手动追加字符")
@@ -296,7 +348,7 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("slimapk", help="APK 瘦身（实验性）")
     p.add_argument("apk", help="APK 文件路径")
-    p.add_argument("--preset", choices=list(PRESETS), default="balanced")
+    p.add_argument("--preset", choices=list(PRESETS), default=DEFAULT_PRESET)
     p.add_argument("--sdk", default=None, help="Ren'Py SDK 路径（用于找签名工具）")
     p.add_argument("--keystore", default=None, help="签名 keystore 文件")
     p.add_argument("--ks-pass", default=None, help="keystore 密码")
@@ -330,7 +382,12 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_package)
 
     args = ap.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except Exception as e:
+        # 审核修复（中-32）：统一顶层兜底，任何异常都保证以结果
+        # JSON 收场，不再裸 traceback 破坏 stdout 契约
+        return _fail(f"意外错误：{type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":

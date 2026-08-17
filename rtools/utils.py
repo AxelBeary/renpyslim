@@ -33,15 +33,25 @@ def safe_join(base: Path, member: str) -> Optional[Path]:
     return out
 
 
-def find_suffix_clashes(rels: Iterable[str], new_ext: str) -> set[str]:
-    """找出换后缀转换会撞车的目标：多个源文件换后同名。
+def find_suffix_clashes(rels: Iterable[str], new_ext: str,
+                        existing: Iterable[str] = ()) -> set[str]:
+    """找出换后缀转换会撞车的目标，返回撞车目标相对路径集合。
 
-    例如 foo.png 和 foo.jpg 都要转 foo.webp——并行转换会互覆，
-    重映射表也会两个键指同一目标。返回撞车的目标相对路径集合，
-    调用方对这些目标降级为同名压缩。
+    两种撞车（调用方对这些目标降级为同名压缩）：
+    1. 多个源文件换后同名（foo.png 和 foo.jpg 都要变 foo.webp，
+       并行转换会互覆，重映射表也会两个键指同一目标）；
+    2. 审核修复（高-3/中-33）：转换目标与现存资源同名（含封包内
+       资源）——转换会直接覆写既有文件/静默遮蔽封包资源，
+       通过 existing 参照集传入全部资源名即可拦截。
     """
     seen: dict[str, int] = {}
+    targets: set[str] = set()
     for rel in rels:
         target = Path(rel).with_suffix(new_ext).as_posix()
         seen[target] = seen.get(target, 0) + 1
-    return {t for t, n in seen.items() if n > 1}
+        targets.add(target)
+    clashes = {t for t, n in seen.items() if n > 1}
+    if existing:
+        existing_norm = {Path(r).as_posix() for r in existing}
+        clashes |= targets & existing_norm
+    return clashes

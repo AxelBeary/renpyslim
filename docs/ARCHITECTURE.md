@@ -30,16 +30,18 @@ rtools/            核心引擎（不依赖 Web/CLI，可独立调用与测试�
   font_tool.py     独立字体瘦身流程（TTC/OTC 拆分、字符清单导出）
   image_optimizer.py 图片优化（临时文件策略，没变小不替换）
   audio_optimizer.py FFmpeg 转码（run_quiet 无窗口）
-  video_optimizer.py 视频重编码（实验性，默认关）
-  refs.py          RefIndex：引用查找与改写（左守卫、长路径优先、编码往返）
-  cleanup.py       垃圾清理、重复检测、无引用检测、隔离区
-  verifier.py      官方 lint 验证
-  rpa.py           RPA 封包读写（白名单反序列化，新旧格式自适应）
-  archives.py      zip/7z/RAR 解压、成品目录定位（含 Mac .app 深层）、回包
+  video_optimizer.py 视频重编码（实验性，默认关；同编码安全重编，AV1 实验选项）
+  refs.py          RefIndex：引用查找与改写（左右守卫、长路径优先、编码往返）
+  cleanup.py       垃圾清理（限已知安全位置）、重复检测、无引用检测、隔离区
+  verifier.py      官方 lint 验证（全分支 suspects 键、cp936 解码回退）
+  rpa.py           RPA 封包读写（白名单反序列化，新旧格式自适应，改名替换重建）
+  archives.py      zip/7z/RAR 解压（GBK 中文名还原、密码编码重试）、成品定位、回包
   packager.py      SDK 发现、官方打包调度、RPA 归档配置注入、用户配置
   apk.py           APK 瘦身（x- 前缀体系、重打包保字节、重映射注入、三种签名）
   remap.py         运行时重映射脚本生成（B9，py2/3 双兼容）
-  cache.py         增量缓存（SHA-256 + 动作键，原子写入）
+  decompile.py     脚本反编译封装（unrpyc，解锁无源码成品的格式转换）
+  vendor/unrpyc/   内嵌第三方源码：unrpyc v2.x（MIT，署名见 THIRD_PARTY_NOTICES）
+  cache.py         增量缓存（SHA-256 + 动作键，原子写入，2GB 淘汰）
   backup.py        强制备份（in_place 前置）
   crashdump.py     崩溃转储（~/.renpyslim/crashes/，保留 20 份）
   updater.py       GitHub Releases 自更新检查（失败静默）

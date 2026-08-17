@@ -45,6 +45,33 @@ def _zip_is_encrypted(path: str) -> bool:
     return False
 
 
+def _repair_zip_name(info: zipfile.ZipInfo) -> None:
+    """还原未置 UTF-8 标志条目的中文文件名（审核修复 严重-2）。
+
+    国产压缩工具（资源管理器/WinRAR/好压/360/Bandizip 默认项）
+    打包中文文件名用 GBK 且不置 UTF-8 标志，Python zipfile 按
+    cp437 解码，中文全部变乱码——落盘后资源加载失败，回包时
+    乱码还会永久化。修法：未置标志的条目先用 cp437 还原原始
+    字节，再按 utf-8 → gb18030 回解，成功则覆写文件名；均失败
+    保持原名（真西文名不受影响）。
+    """
+    if info.flag_bits & 0x800:      # 已置 UTF-8 标志，名字无需修复
+        return
+    try:
+        raw = info.filename.encode("cp437")
+    except UnicodeEncodeError:
+        return
+    for enc in ("utf-8", "gb18030"):
+        try:
+            name = raw.decode(enc)
+        except UnicodeDecodeError:
+            continue
+        if not name or "\x00" in name:
+            return
+        info.filename = name
+        return
+
+
 def extract_archive(src: str, dest_dir: str,
                     password: Optional[str] = None) -> str:
     """解压压缩包到 dest_dir，返回解压根目录。
@@ -62,13 +89,40 @@ def extract_archive(src: str, dest_dir: str,
         if ext == ".zip":
             if _zip_is_encrypted(src) and not pwd:
                 raise ArchiveError("这个压缩包有密码，请在高级选项里填写密码后重试。")
-            try:
-                with zipfile.ZipFile(src) as zf:
-                    zf.extractall(dest_p, pwd=pwd)
-            except RuntimeError as e:
-                if "password" in str(e).lower() or "Bad password" in str(e):
-                    raise ArchiveError("密码不对，解压失败。请检查密码后重试。")
-                raise ArchiveError(f"压缩包损坏或格式异常：{e}")
+            # 审核修复（中-18）：中文 Windows 工具可能把中文密码按 GBK
+            # 编码，强制 utf-8 必然解密失败；失败后依次重试 gbk/cp437
+            pwds = [pwd] if pwd else [None]
+            if pwd:
+                for enc in ("gbk", "cp437"):
+                    try:
+                        cand = password.encode(enc)
+                    except UnicodeEncodeError:
+                        continue
+                    if cand not in pwds:
+                        pwds.append(cand)
+            ok = False
+            for cand in pwds:
+                try:
+                    with zipfile.ZipFile(src) as zf:
+                        infos = zf.infolist()
+                        # 审核修复（中-18）：WinZip AES（compress_type=99）
+                        # zipfile 不支持，明说而非误报"压缩包损坏"
+                        if any(i.compress_type == 99 for i in infos):
+                            raise ArchiveError(
+                                "这个压缩包用了 WinZip AES 加密，本工具暂不支持。"
+                                "请改用其他工具重新压缩（选标准 ZipCrypto 加密），"
+                                "或自行解压后选择文件夹处理。")
+                        for info in infos:
+                            _repair_zip_name(info)
+                            zf.extract(info, dest_p, pwd=cand)
+                    ok = True
+                    break
+                except RuntimeError as e:
+                    if "password" in str(e).lower():
+                        continue     # 密码不对：试下一种密码编码
+                    raise ArchiveError(f"压缩包损坏或格式异常：{e}")
+            if not ok:
+                raise ArchiveError("密码不对，解压失败。请检查密码后重试。")
         elif ext == ".7z":
             import py7zr
             try:
@@ -97,6 +151,12 @@ def extract_archive(src: str, dest_dir: str,
             proc = run_quiet(cmd, capture_output=True, timeout=7200)
             if proc.returncode != 0:
                 err = proc.stderr.decode("utf-8", "replace")[-500:]
+                # 审核修复（中-17）：stdin 已隔离，加密 RAR 无密码时
+                # 会快速失败而非挂死；把"可能缺密码"说清楚
+                if not password:
+                    raise ArchiveError(
+                        f"RAR 解压失败。如果这个压缩包有密码，请在高级选项里"
+                        f"填写后重试。（{err}）")
                 raise ArchiveError(f"RAR 解压失败（密码错误或文件损坏）：{err}")
         else:
             raise ArchiveError(f"不支持的压缩包类型：{ext}")
@@ -108,18 +168,22 @@ def extract_archive(src: str, dest_dir: str,
     return str(dest_p)
 
 
-def find_dist_root(extract_dir: str) -> str:
-    """在解压目录里定位真正的成品目录：含 game 文件夹的那一层。
+def find_dist_roots(extract_dir: str) -> list[str]:
+    """在解压目录里定位全部成品根（含 game 文件夹的那一层）。
+
+    审核修复（高-4）：多平台发布包（PC+Mac 三合一等）里有多个
+    game 目录，旧版只返回一个、其余平台被静默丢弃；现返回全部
+    候选，由调用方决定逐个处理还是要求拆包。
 
     兼容三种常见结构：
     - 解压出来直接就是成品（含 game/）
     - 成品套在顶层文件夹里
     - Mac 版 .app 包：game 藏在 Contents/Resources/autorun/ 多层深处
-    候选多个时，优先选"长得像游戏目录"（含脚本/gui/图片）且最浅的那个。
+    排序规则："长得像游戏目录"（含脚本/gui/图片）优先，再按深度。
     """
     root = Path(extract_dir)
     if (root / "game").is_dir():
-        return str(root)
+        return [str(root)]
 
     candidates = [d for d in root.rglob("game") if d.is_dir()]
 
@@ -130,21 +194,35 @@ def find_dist_root(extract_dir: str) -> str:
 
     real = [d for d in candidates if looks_real(d)]
     pool = real or candidates
-    if pool:
-        pool.sort(key=lambda d: len(d.parts))
-        # 返回"包含 game 的那一层"（成品根），不是 game 本身
-        return str(pool[0].parent)
-    raise ArchiveError(
-        "解压后找不到成品目录（特征是里面有 game 文件夹）。"
-        "请确认压缩包里是完整的 Ren'Py 发布成品。")
+    if not pool:
+        raise ArchiveError(
+            "解压后找不到成品目录（特征是里面有 game 文件夹）。"
+            "请确认压缩包里是完整的 Ren'Py 发布成品。")
+    pool.sort(key=lambda d: len(d.parts))
+    # 返回"包含 game 的那一层"（成品根），不是 game 本身；去重保序
+    roots: list[str] = []
+    for g in pool:
+        r = str(g.parent)
+        if r not in roots:
+            roots.append(r)
+    return roots
+
+
+def find_dist_root(extract_dir: str) -> str:
+    """定位"最可能是主成品"的根（单成品场景兼容入口）。"""
+    return find_dist_roots(extract_dir)[0]
 
 
 def create_zip(src_dir: str, dest_zip: str) -> str:
-    """把目录打包成 zip（保持目录名作为顶层文件夹）。"""
+    """把目录打包成 zip（保持目录名作为顶层文件夹）。
+
+    压缩等级 9：交付包能榨一丝是一丝；包内大头（图片/音频/封包）
+    本身已是压缩格式，收益很小但零风险，多核机器上耗时也可接受。
+    """
     src = Path(src_dir)
     out = Path(dest_zip)
     out.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for p in src.rglob("*"):
             if p.is_file():
                 zf.write(p, Path(src.name) / p.relative_to(src))

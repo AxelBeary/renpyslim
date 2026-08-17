@@ -13,10 +13,11 @@
 RenPySlim ayuda a desarrolladores de juegos Ren'Py a hacer sus juegos **más pequeños, más ordenados y listos para publicar** — en un solo flujo:
 
 - **Analizar** — busca recursos inflados y genera un informe de tamaño/problemas/recomendaciones
-- **Comprimir** — adelgaza imágenes, audio, vídeo y fuentes; las referencias en los guiones se reescriben automáticamente
+- **Comprimir** — adelgaza imágenes, audio, vídeo y fuentes; las referencias en los guiones se reescriben automáticamente; el perfil predeterminado prioriza la calidad (q95, casi sin pérdidas) y el procesamiento paralelo aprovecha todos los núcleos
 - **Empaquetar** — genera paquetes de PC / Mac / Android mediante el SDK oficial
 - **Adelgazar distribución** — adelgaza con seguridad un juego ya empaquetado (carpeta o zip/7z/rar), entra y sale listo
 - **Adelgazar APK** — también para Android: imágenes → WebP, audio → OGG (reasignación en tiempo de ejecución, sin tocar referencias), re-firmado automático
+- **Descompilación para conversión** (experimental) — para distribuciones sin código fuente, el unrpyc integrado recupera los guiones y permite convertir incluso los recursos archivados, que luego se reempaquetan en sus RPA
 
 Además, chequeo de salud del proyecto: detección de recursos sin uso, limpieza de
 basura antes de empaquetar, detección de duplicados, informe de glifos faltantes —
@@ -64,7 +65,7 @@ recuerda). Cuatro entradas: **Optimizar y empaquetar / Adelgazar distribución /
 ### Las cuatro entradas
 
 - **Optimizar y empaquetar**: apunta a la carpeta del proyecto; tras optimizar, el SDK oficial genera los paquetes (PC/Mac/Android); opcionalmente «empaquetar recursos en un archivo RPA» (canal oficial)
-- **Adelgazar distribución**: apunta a la carpeta de la distribución o suelta un zip / 7z / rar (extracción automática, adelgazado y re-empaquetado automático; compatible con archivos protegidos con contraseña); los archivos RPA se desmontan, optimizan y reconstruyen automáticamente; si el archivo contiene un APK pasa automáticamente al adelgazado seguro de APK
+- **Adelgazar distribución**: apunta a la carpeta de la distribución o suelta un zip / 7z / rar (extracción automática, adelgazado y re-empaquetado automático; compatible con archivos protegidos con contraseña); los archivos RPA se desmontan, optimizan y reconstruyen automáticamente; si el archivo contiene un APK pasa automáticamente al adelgazado seguro de APK; la opción experimental «descompilar guiones» permite la conversión de formatos también en distribuciones sin código fuente
 - **Adelgazar APK**: elige un archivo .apk, tres pasos (nivel / modo de máximo adelgazado / firma — por defecto se crea una clave nueva), y obtienes un paquete adelgazado listo para instalar
 - **Adelgazar fuentes** (autónomo): no se necesita el proyecto del juego — elige una fuente + fuentes de texto; las colecciones ttc/otc se separan por peso; los originales nunca se sobrescriben; se incluye la lista de caracteres usados
 

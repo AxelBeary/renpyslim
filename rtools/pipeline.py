@@ -16,7 +16,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import analyzer, apk, archives, backup, cache, charset, cleanup, font_tool, scanner, verifier
+from . import analyzer, apk, archives, backup, cache, charset, cleanup, font_tool, procutil, scanner, verifier
 from . import remap as remap_mod
 from .audio_optimizer import convert_audio, reencode_audio, find_ffmpeg
 from .font_optimizer import subset_font
@@ -34,7 +34,15 @@ class PipelineError(Exception):
 
 
 class PipelineCancelled(PipelineError):
-    """用户主动取消（区别于真错误：不写崩溃转储）。"""
+    """用户主动取消（区别于真错误：不写崩溃转储）。
+
+    审核修复（中-1）：携带被取消时本批已完成的结果，
+    否则这些已落盘的改动不会进 changelog。
+    """
+
+    def __init__(self, partial_results: list | None = None):
+        super().__init__("cancelled")
+        self.partial_results = partial_results or []
 
 
 def _find_game_dir(project_dir: str) -> Path:
@@ -61,10 +69,23 @@ def _flush_partial_changelog(output_dir: str, records, saved) -> None:
 
 def _run_jobs_or_flush(p: Progress, stage: str, jobs: list, cancel,
                        output_dir: str, records, saved) -> list:
-    """_run_jobs 外加取消兜底：被取消时先把已落盘的改动记入清单。"""
+    """_run_jobs 外加中断兜底：任何异常都先把已落盘的改动记入清单。
+
+    审核修复：
+    - 中-1：取消时本批已完成的改动先聚合再落清单；
+    - 高-5：非取消的真异常（文件占用/磁盘满等）同样落清单，
+      磁盘已被部分修改时用户才有对账依据。
+    """
     try:
         return _run_jobs(p, stage, jobs, cancel)
-    except PipelineCancelled:
+    except PipelineCancelled as e:
+        extra = 0
+        for r in e.partial_results:
+            records.extend(r.get("records", []))
+            extra += r.get("saved", 0)
+        _flush_partial_changelog(output_dir, records, saved + extra)
+        raise
+    except BaseException:
         _flush_partial_changelog(output_dir, records, saved)
         raise
 
@@ -72,6 +93,18 @@ def _run_jobs_or_flush(p: Progress, stage: str, jobs: list, cancel,
 def _write_json(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _worker_count(n_jobs: int) -> int:
+    """并行度决策（用户拍板放开多核）。
+
+    小批量串行即可；否则用满可用核心（留 2 个给系统），
+    上限 16 防超多核机器 IO 踩踏。旧版写死最高 6 路，
+    28 核机器上大部分核心在睡觉。
+    """
+    if n_jobs < 4:
+        return 1
+    return max(2, min(16, (os.cpu_count() or 4) - 2))
 
 
 def _run_jobs(p: Progress, stage: str, jobs: list,
@@ -84,7 +117,7 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
     """
     if not jobs:
         return []
-    workers = 1 if len(jobs) < 4 else max(2, min(6, (os.cpu_count() or 4) - 1))
+    workers = _worker_count(len(jobs))
     results: list = []
     state = {"done": 0, "saved": 0}
     lock = threading.Lock()
@@ -96,7 +129,16 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
                 if cancel and cancel():
                     for rest in futures:
                         rest.cancel()
-                    raise PipelineCancelled()
+                    # 审核修复（中-3）：杀掉正在跑的外部程序（ffmpeg 等），
+                    # 否则线程池退出要等它们自然跑完，取消形同虚设
+                    procutil.kill_children()
+                    try:
+                        r = fut.result()
+                        if r:
+                            results.append(r)
+                    except Exception:
+                        pass
+                    raise PipelineCancelled(results)
                 with lock:
                     state["done"] += 1
                     if state["done"] % 5 == 0 or state["done"] == len(futures):
@@ -104,25 +146,21 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
                                           f" · 累计已省 {_fmt(state['saved'])}")
                 try:
                     r = fut.result()
-                except Exception:
+                except Exception as e:
+                    # 审核修复（中-2）：吞异常可以，但至少要留条日志，
+                    # 不能一点痕迹都没有
+                    p.emit(stage, f"任务执行异常，已跳过：{e}")
                     r = None
                 if r:
                     with lock:
                         state["saved"] += r.get("saved", 0)
                     results.append(r)
-        except PipelineCancelled:
+        except PipelineCancelled as e:
             for rest in futures:
                 rest.cancel()
-            # 已完成的成果尽量留下，不强删
-            for fut in futures:
-                if fut.done() and not fut.cancelled():
-                    try:
-                        r = fut.result()
-                        if r:
-                            results.append(r)
-                    except Exception:
-                        pass
-            raise
+            procutil.kill_children()   # 审核修复（中-3）：同取消分支
+            # 已完成的成果尽量留下，不强删；并随异常上抛供上层落清单
+            raise PipelineCancelled(e.partial_results or results) from None
     return results
 
 
@@ -249,30 +287,36 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 if ref_index.find(a.rel):
                     new_rel = str(Path(a.rel).with_suffix(".webp")).replace("\\", "/")
                     new_path = str(Path(game_dir) / new_rel)
-                    h = cache.hash_file(a.path) if options.use_cache else None
-                    key = f"img|q{preset.image_quality}|webp"
-                    hit = cache.lookup_hash(h, key) if h else None
-                    if hit and cache.apply_cached(hit, new_path):
-                        Path(a.path).unlink()
-                        new_sz = Path(new_path).stat().st_size
-                        out["rename"] = (a.rel, new_rel)
-                        out["saved"] = a.size - new_sz
-                        out["records"].append(ChangeRecord(
-                            action="convert", src=a.rel, dst=new_rel,
-                            detail=f"{_fmt(a.size)} -> {_fmt(new_sz)}（缓存命中）"))
-                        return out
-                    res = optimize_image(a.path, new_path, preset.image_quality,
-                                         convert_webp=True)
-                    if res:
-                        Path(a.path).unlink()
-                        if h:
-                            cache.store_hash(h, key, new_path)
-                        out["rename"] = (a.rel, new_rel)
-                        out["saved"] = res["old_size"] - res["new_size"]
-                        out["records"].append(ChangeRecord(
-                            action="convert", src=a.rel, dst=new_rel,
-                            detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
-                        return out
+                    if Path(new_path).exists():
+                        # 审核修复（高-3）：转换目标已被现存资源占用（撞名
+                        # 预检有盲区），绝不覆写，降级原地压缩
+                        out["warn"] = (f"{a.rel}：换格式目标 {new_rel} 已存在，"
+                                       "为避免覆盖已降级为原地压缩。")
+                    else:
+                        h = cache.hash_file(a.path) if options.use_cache else None
+                        key = f"img|q{preset.image_quality}|webp"
+                        hit = cache.lookup_hash(h, key) if h else None
+                        if hit and cache.apply_cached(hit, new_path):
+                            Path(a.path).unlink()
+                            new_sz = Path(new_path).stat().st_size
+                            out["rename"] = (a.rel, new_rel)
+                            out["saved"] = a.size - new_sz
+                            out["records"].append(ChangeRecord(
+                                action="convert", src=a.rel, dst=new_rel,
+                                detail=f"{_fmt(a.size)} -> {_fmt(new_sz)}（缓存命中）"))
+                            return out
+                        res = optimize_image(a.path, new_path, preset.image_quality,
+                                             convert_webp=True)
+                        if res:
+                            Path(a.path).unlink()
+                            if h:
+                                cache.store_hash(h, key, new_path)
+                            out["rename"] = (a.rel, new_rel)
+                            out["saved"] = res["old_size"] - res["new_size"]
+                            out["records"].append(ChangeRecord(
+                                action="convert", src=a.rel, dst=new_rel,
+                                detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+                            return out
                 else:
                     out["warn"] = (f"{a.rel}：脚本里找不到字面引用（可能是目录自动加载"
                                    "或变量拼接），为安全起见只原地压缩、不转 WebP。")
@@ -292,6 +336,10 @@ def run_project(project_dir: str, options: OptimizeOptions,
             if res:
                 if h:
                     cache.store_hash(h, key, a.path)
+                # 审核修复（中-10）：登记产物自映射，防 in_place 反复
+                # 运行时有损重编码代际累积
+                if options.use_cache:
+                    cache.store_self(a.path, key)
                 out["saved"] = res["old_size"] - res["new_size"]
                 out["records"].append(ChangeRecord(action="compress", src=a.rel,
                                                    detail="原地无损/低损压缩"))
@@ -312,6 +360,12 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 elif ref_index.find(a.rel):
                     new_rel = str(Path(a.rel).with_suffix(".ogg")).replace("\\", "/")
                     new_path = str(Path(game_dir) / new_rel)
+                    if Path(new_path).exists():
+                        # 审核修复（高-3）：目标已存在（如 wav 源与 ogg 发布版
+                        # 并存），绝不覆写，保留原样
+                        out["warn"] = (f"{a.rel}：换格式目标 {new_rel} 已存在，"
+                                       "为避免覆盖已跳过格式转换。")
+                        return out
                     h = cache.hash_file(a.path) if options.use_cache else None
                     key = f"aud|{preset.audio_bitrate_k}|to-ogg"
                     hit = cache.lookup_hash(h, key) if h else None
@@ -355,6 +409,9 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 if res:
                     if h:
                         cache.store_hash(h, key, a.path)
+                    # 审核修复（中-10）：同上，防重编码代际累积
+                    if options.use_cache:
+                        cache.store_self(a.path, key)
                     out["saved"] = res["old_size"] - res["new_size"]
                     out["records"].append(ChangeRecord(action="compress", src=a.rel,
                                                        detail="OGG 降码率重编码"))
@@ -379,13 +436,17 @@ def run_project(project_dir: str, options: OptimizeOptions,
                         detail=f"视频重编码（缓存命中）{_fmt(a.size)} -> {_fmt(new_sz)}"))
                 return out
             try:
-                res = compress_video(a.path, a.path, options.preset)
+                res = compress_video(a.path, a.path, options.preset,
+                                     use_av1=options.experimental_av1)
             except RuntimeError as e:
                 out["warn"] = str(e)
                 return out
             if res:
                 if h:
                     cache.store_hash(h, key, a.path)
+                # 审核修复（中-10）：同上，防视频反复重编码代际退化
+                if options.use_cache:
+                    cache.store_self(a.path, key)
                 out["saved"] = res["old_size"] - res["new_size"]
                 out["records"].append(ChangeRecord(
                     action="compress", src=a.rel,
@@ -439,6 +500,10 @@ def run_project(project_dir: str, options: OptimizeOptions,
             report.warnings.append(
                 "视频压缩为实验性功能：同名重编码，若个别播放器出现兼容问题，"
                 "请在高级选项关闭后重跑。")
+            if options.experimental_av1:
+                report.warnings.append(
+                    "已启用 AV1 视频编码（实验性）：官方支持且体积更小，"
+                    "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。")
             jobs = [_vid_job(a) for a in todo_videos
                     if a.ext in (".mp4", ".webm", ".ogv")]
             _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
@@ -463,7 +528,9 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 except Exception as e:
                     failed["font"] += 1
                     report.warnings.append(f"{a.rel}：字体瘦身失败，保留原文件（{e}）")
-        except PipelineCancelled:
+        except BaseException:
+            # 审核修复（高-5）：取消与意外异常都落部分清单，
+            # 字体子集化不可逆，已剃的必须有对账依据
             _flush_partial_changelog(output_dir, records, saved)
             raise
 
@@ -475,59 +542,65 @@ def run_project(project_dir: str, options: OptimizeOptions,
             "已原样保留，未计入节省体积。")
 
     # --- 第 5 步：改写脚本引用 ---
-    if rename_map:
-        p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……")
-        records.extend(ref_index.rewrite(rename_map))
+    # 审核修复（高-5）：从这里开始每一步都可能改盘（引用改写/垃圾清理/
+    # 隔离/写报告），任何异常都要先把已发生的改动落清单
+    try:
+        if rename_map:
+            p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……")
+            records.extend(ref_index.rewrite(rename_map))
 
-    # --- 第 5.5 步：垃圾清理与废资源隔离 ---
-    junk = {"freed_bytes": 0, "removed": []}
-    if options.in_place:
-        report.warnings.append(
-            "直接修改原件模式下跳过了垃圾清理（为保护你的存档和缓存）。")
-    else:
-        p.emit("clean", "正在清理缓存、日志等可再生垃圾……")
-        junk = cleanup.clean_junk(working)
-        if junk["removed"]:
-            saved += junk["freed_bytes"]
-            records.append(ChangeRecord(
-                action="junk_clean", src=working,
-                detail=f"清理 {len(junk['removed'])} 项可再生垃圾，"
-                       f"释放 {_fmt(junk['freed_bytes'])}"))
-
-    quarantined: list[str] = []
-    if options.quarantine_unused and unused:
-        p.emit("clean", f"正在把 {len(unused)} 个无引用资源移入隔离区……")
-        # 审核修复：unused 的相对路径以 game/ 为基准，隔离路径也得按
-        # game/ 拼——以前按工程根拼，路径对不上，隔离静默失效
-        quarantined = cleanup.quarantine_files(game_dir, unused)
-        for rel in quarantined:
-            records.append(ChangeRecord(action="quarantine", src=rel,
-                                        dst=str(Path(game_dir) / "_rtools_quarantine" / rel),
-                                        detail="确认无引用，已隔离而非删除"))
-
-    # --- 第 5.8 步：官方 lint 自动验证 ---
-    from . import packager
-    validation = {"ran": False, "ok": False, "summary": "未执行", "suspects": []}
-    sdk = packager.find_sdk()
-    if sdk:
-        p.emit("verify", "正在用官方 lint 验证优化后的工程……")
-        validation = verifier.lint_project(sdk, working)
-        Path(output_dir).mkdir(parents=True, exist_ok=True)
-        (Path(output_dir) / "validation.txt").write_text(
-            validation.get("output", ""), encoding="utf-8")
-        p.emit("verify", f"lint 结果：{validation['summary']}")
-        if not validation["ok"]:
+        # --- 第 5.5 步：垃圾清理与废资源隔离 ---
+        junk = {"freed_bytes": 0, "removed": []}
+        if options.in_place:
             report.warnings.append(
-                f"官方 lint 验证未完全通过：{validation['summary']}。"
-                f"完整输出见 {Path(output_dir) / 'validation.txt'}")
-    else:
-        report.warnings.append("未找到 Ren'Py SDK，跳过了自动 lint 验证。")
+                "直接修改原件模式下跳过了垃圾清理（为保护你的存档和缓存）。")
+        else:
+            p.emit("clean", "正在清理缓存、日志等可再生垃圾……")
+            junk = cleanup.clean_junk(working)
+            if junk["removed"]:
+                saved += junk["freed_bytes"]
+                records.append(ChangeRecord(
+                    action="junk_clean", src=working,
+                    detail=f"清理 {len(junk['removed'])} 项可再生垃圾，"
+                           f"释放 {_fmt(junk['freed_bytes'])}"))
 
-    # --- 第 6 步：产出报告与修改清单 ---
-    out = Path(output_dir)
-    _write_json(out / "analysis.json", report.to_dict())
-    _write_json(out / "changelog.json",
-                {"records": [r.to_dict() for r in records], "saved_bytes": saved})
+        quarantined: list[str] = []
+        if options.quarantine_unused and unused:
+            p.emit("clean", f"正在把 {len(unused)} 个无引用资源移入隔离区……")
+            # 审核修复：unused 的相对路径以 game/ 为基准，隔离路径也得按
+            # game/ 拼——以前按工程根拼，路径对不上，隔离静默失效
+            quarantined = cleanup.quarantine_files(game_dir, unused)
+            for rel in quarantined:
+                records.append(ChangeRecord(action="quarantine", src=rel,
+                                            dst=str(Path(game_dir) / "_rtools_quarantine" / rel),
+                                            detail="确认无引用，已隔离而非删除"))
+
+        # --- 第 5.8 步：官方 lint 自动验证 ---
+        from . import packager
+        validation = {"ran": False, "ok": False, "summary": "未执行", "suspects": []}
+        sdk = packager.find_sdk()
+        if sdk:
+            p.emit("verify", "正在用官方 lint 验证优化后的工程……")
+            validation = verifier.lint_project(sdk, working)
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            (Path(output_dir) / "validation.txt").write_text(
+                validation.get("output", ""), encoding="utf-8")
+            p.emit("verify", f"lint 结果：{validation['summary']}")
+            if not validation["ok"]:
+                report.warnings.append(
+                    f"官方 lint 验证未完全通过：{validation['summary']}。"
+                    f"完整输出见 {Path(output_dir) / 'validation.txt'}")
+        else:
+            report.warnings.append("未找到 Ren'Py SDK，跳过了自动 lint 验证。")
+
+        # --- 第 6 步：产出报告与修改清单 ---
+        out = Path(output_dir)
+        _write_json(out / "analysis.json", report.to_dict())
+        _write_json(out / "changelog.json",
+                    {"records": [r.to_dict() for r in records], "saved_bytes": saved})
+    except BaseException:
+        _flush_partial_changelog(output_dir, records, saved)
+        raise
     p.emit("done", f"工程优化完成，共节省约 {_fmt(saved)}")
 
     return {
@@ -545,7 +618,9 @@ def run_project(project_dir: str, options: OptimizeOptions,
         "junk": junk,
         "failed": failed,
         "charlist": charlist_path,
-        "validation": {k: validation[k] for k in ("ran", "ok", "summary", "suspects")},
+        # 审核修复（高-1）：verifier 各返回分支键集不完全一致
+        # （超时/异常分支无 suspects 等），一律用 get 防 KeyError
+        "validation": {k: validation.get(k) for k in ("ran", "ok", "summary", "suspects")},
         "report_dict": report.to_dict(),
     }
 
@@ -603,9 +678,36 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     p.emit("analyze", f"扫描到 {len(loose)} 个散落资源、{len(packed)} 个封包内资源，"
                       f"实际使用字符 {len(chars)} 个")
 
-    # --- 第 3.5 步：rpy 源码检测（罕见情况：成品带着源码发布） ---
-    # 有源码 = 可以安全地改引用、换格式；引擎下次启动会自动重编译
+    # --- 第 3.4 步：反编译解锁（实验性，用户拍板 2026-08-17） ---
+    # 无源码成品的引用被焊死在 rpyc 里；用 vendored unrpyc（MIT）
+    # 反编译出 rpy 后，既有的引用改写/格式转换机制全部解锁；
+    # 引擎启动时发现 rpy 比 rpyc 新会自动重编译，玩家无感
     game_dir_p = working_p / "game"
+    dec_stats = None
+    if options.experimental_decompile and game_dir_p.is_dir():
+        from . import decompile as _decompile
+        import shutil as _sh_dec
+        p.emit("decompile", "正在反编译编译脚本（解锁格式转换能力）……")
+        dec_stats = _decompile.decompile_scripts(str(game_dir_p))
+        # 封包内脚本：解出的 rpyc 也反编译，产物拷回 game/ 对应位置，
+        # 让引用索引扫得到，且引擎加载时优先于封包内同名 rpyc
+        if extract_dir.exists():
+            _decompile.decompile_scripts(str(extract_dir))
+            for f in (list(extract_dir.rglob("*.rpy"))
+                      + list(extract_dir.rglob("*.rpym"))):
+                parts = f.relative_to(extract_dir).parts[1:]  # 去掉封包名层
+                if not parts:
+                    continue
+                dst = game_dir_p.joinpath(*parts)
+                if not dst.exists():      # 已有真实源码的永不覆盖
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    _sh_dec.move(str(f), str(dst))
+        p.emit("decompile", f"反编译完成：{dec_stats['decompiled']} 个成功，"
+                            f"{len(dec_stats['failed'])} 个失败，"
+                            f"{dec_stats['skipped']} 个已有源码跳过")
+
+    # --- 第 3.5 步：rpy 源码检测（带源码发布，或刚反编译出来） ---
+    # 有源码 = 可以安全地改引用、换格式；引擎下次启动会自动重编译
     rpy_files = list(game_dir_p.rglob("*.rpy")) if game_dir_p.is_dir() else []
     has_rpy = bool(rpy_files)
     ref_index = None
@@ -614,6 +716,15 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         p.emit("analyze", f"检测到成品里带有 {len(rpy_files)} 个 .rpy 源码，"
                           "已解锁格式转换能力")
         ref_index = RefIndex(str(game_dir_p))
+    if dec_stats is not None:
+        report.warnings.append(
+            "已启用实验性功能：反编译了编译脚本以解锁格式转换，转换后的资源"
+            "已按原样包回封包。反编译产物不保证与原代码 100% 等价，"
+            "请务必在处理完后启动游戏确认正常；若有异常，关掉该选项重跑即可。")
+        if dec_stats["failed"]:
+            report.warnings.append(
+                f"{len(dec_stats['failed'])} 个脚本反编译失败（可能混淆或未知语法），"
+                "它们引用的资源已按保守策略同名处理。")
 
     saved = 0
     rpa_replacements: dict[str, dict[str, str]] = {}   # rpa文件名 -> {内部路径: 优化后文件}
@@ -621,6 +732,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     remap_map: dict[str, str] = {}   # 实验性运行时重映射（BACKLOG B9）
     if options.do_videos and not find_ffmpeg():
         report.warnings.append("未找到 FFmpeg，视频压缩已跳过。")
+    if options.do_videos and options.experimental_av1 and find_ffmpeg():
+        report.warnings.append(
+            "已启用 AV1 视频编码（实验性）：官方支持且体积更小，"
+            "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。")
 
     # --- 第 4 步：优化（默认同名同格式；带源码的成品可换格式；B4 并行） ---
     def _dist_job(a):
@@ -654,37 +769,56 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                         not in clash_webp):
                     new_rel = str(Path(game_rel).with_suffix(".webp")).replace("\\", "/")
                     new_path = str(game_dir_p / new_rel)
-                    res = optimize_image(a.path, new_path, preset.image_quality,
-                                         convert_webp=True)
-                    if res:
-                        Path(a.path).unlink()
-                        out["remap"] = (game_rel, new_rel)
-                        out["saved"] = res["old_size"] - res["new_size"]
-                        out["records"].append(ChangeRecord(
-                            action="convert", src=game_rel, dst=new_rel,
-                            detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}（运行时重映射）"))
-                        return out
-                    # 转换失败落到同名压缩
-                # 带源码 + 查得到引用 + 不在封包里：可以转 WebP
-                if (ref_index is not None and not a.in_rpa
+                    if Path(new_path).exists():
+                        # 审核修复（高-3）：目标已存在绝不覆写，落同名压缩
+                        out["warn"] = (f"{a.rel}：换格式目标 {new_rel} 已存在，"
+                                       "为避免覆盖已降级为同名压缩。")
+                    else:
+                        res = optimize_image(a.path, new_path, preset.image_quality,
+                                             convert_webp=True)
+                        if res:
+                            Path(a.path).unlink()
+                            out["remap"] = (game_rel, new_rel)
+                            out["saved"] = res["old_size"] - res["new_size"]
+                            out["records"].append(ChangeRecord(
+                                action="convert", src=game_rel, dst=new_rel,
+                                detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}（运行时重映射）"))
+                            return out
+                        # 转换失败落到同名压缩
+                # 带源码 + 查得到引用：可以转 WebP（反编译解锁后也
+                # 含封包内资源，转换产物按原样包回 rpa，用户拍板 2026-08-17）
+                clash_key = (("game/" + game_rel) if a.in_rpa else a.rel
+                             ).replace("\\", "/")
+                if (ref_index is not None
                         and preset.png_to_webp
                         and a.ext in (".png", ".jpg", ".jpeg")
-                        and str(Path(a.rel).with_suffix(".webp")).replace("\\", "/")
+                        and str(Path(clash_key).with_suffix(".webp"))
                         not in clash_webp
                         and ref_index.find(game_rel)):
                     new_rel = str(Path(game_rel).with_suffix(".webp")).replace("\\", "/")
                     new_path = str(game_dir_p / new_rel)
-                    res = optimize_image(a.path, new_path, preset.image_quality,
-                                         convert_webp=True)
-                    if res:
-                        Path(a.path).unlink()
-                        out["rename"] = (game_rel, new_rel)
-                        out["saved"] = res["old_size"] - res["new_size"]
-                        out["records"].append(ChangeRecord(
-                            action="convert", src=game_rel, dst=new_rel,
-                            detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+                    if Path(new_path).exists():
+                        # 审核修复（高-3）：目标已存在绝不覆写，落同名压缩
+                        out["warn"] = (f"{a.rel}：换格式目标 {new_rel} 已存在，"
+                                       "为避免覆盖已降级为同名压缩。")
                     else:
-                        out["failed"] = "image"
+                        res = optimize_image(a.path, new_path, preset.image_quality,
+                                             convert_webp=True)
+                        if res:
+                            if not a.in_rpa:
+                                Path(a.path).unlink()
+                            out["rename"] = (game_rel, new_rel)
+                            out["saved"] = res["old_size"] - res["new_size"]
+                            out["records"].append(ChangeRecord(
+                                action="convert", src=game_rel, dst=new_rel,
+                                detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"
+                                       + ("（包回 rpa）" if a.in_rpa else "")))
+                            if a.in_rpa:
+                                # 改名替换重建：旧条目剔除、新名入包
+                                out["rpa"] = (a.rpa_name, a.rel,
+                                              (new_rel, new_path))
+                        else:
+                            out["failed"] = "image"
                 else:
                     # 同名压缩（带增量缓存）
                     h = cache.hash_file(a.path) if options.use_cache else None
@@ -705,6 +839,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     if res:
                         if h:
                             cache.store_hash(h, key, a.path)
+                        # 审核修复（中-10）：登记产物自映射，防 in_place
+                        # 反复运行时有损重编码代际累积
+                        if options.use_cache:
+                            cache.store_self(a.path, key)
                         out["saved"] = res["old_size"] - res["new_size"]
                         out["records"].append(ChangeRecord(
                             action="compress", src=a.rel,
@@ -714,22 +852,36 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     else:
                         out["failed"] = "image"
             elif a.kind == AssetKind.AUDIO:
-                # 带源码 + 查得到引用 + 不在封包里：WAV/MP3 可以转 OGG
-                if (ref_index is not None and not a.in_rpa
+                # 带源码 + 查得到引用：WAV/MP3 可以转 OGG（反编译解锁后
+                # 也含封包内资源，转换产物按原样包回 rpa）
+                clash_key = (("game/" + game_rel) if a.in_rpa else a.rel
+                             ).replace("\\", "/")
+                if (ref_index is not None
                         and a.ext in (".wav", ".mp3")
-                        and str(Path(a.rel).with_suffix(".ogg")).replace("\\", "/")
+                        and str(Path(clash_key).with_suffix(".ogg"))
                         not in clash_ogg
                         and ref_index.find(game_rel)):
                     new_rel = str(Path(game_rel).with_suffix(".ogg")).replace("\\", "/")
                     new_path = str(game_dir_p / new_rel)
-                    res = convert_audio(a.path, new_path, preset.audio_bitrate_k)
-                    if res:
-                        Path(a.path).unlink()
-                        out["rename"] = (game_rel, new_rel)
-                        out["saved"] = res["old_size"] - res["new_size"]
-                        out["records"].append(ChangeRecord(
-                            action="convert", src=game_rel, dst=new_rel,
-                            detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+                    if Path(new_path).exists():
+                        # 审核修复（高-3）：目标已存在（如 wav 源与 ogg 发布版
+                        # 并存），绝不覆写，跳过格式转换
+                        out["warn"] = (f"{a.rel}：换格式目标 {new_rel} 已存在，"
+                                       "为避免覆盖已跳过格式转换。")
+                    else:
+                        res = convert_audio(a.path, new_path, preset.audio_bitrate_k)
+                        if res:
+                            if not a.in_rpa:
+                                Path(a.path).unlink()
+                            out["rename"] = (game_rel, new_rel)
+                            out["saved"] = res["old_size"] - res["new_size"]
+                            out["records"].append(ChangeRecord(
+                                action="convert", src=game_rel, dst=new_rel,
+                                detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"
+                                       + ("（包回 rpa）" if a.in_rpa else "")))
+                            if a.in_rpa:
+                                out["rpa"] = (a.rpa_name, a.rel,
+                                              (new_rel, new_path))
                 elif a.ext in (".ogg", ".mp3") and a.bitrate and \
                         a.bitrate > preset.audio_bitrate_k + 32:
                     # 同名同格式重编码，成品模式下安全（带增量缓存）
@@ -750,6 +902,9 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     if res:
                         if h:
                             cache.store_hash(h, key, a.path)
+                        # 审核修复（中-10）：同上，防重编码代际累积
+                        if options.use_cache:
+                            cache.store_self(a.path, key)
                         out["saved"] = res["old_size"] - res["new_size"]
                         out["records"].append(ChangeRecord(
                             action="compress", src=a.rel,
@@ -769,7 +924,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                 # 视频压缩（BACKLOG B7，实验性，默认关）：同名同格式重编码
                 if options.do_videos and a.ext in (".mp4", ".webm", ".ogv") and find_ffmpeg():
                     try:
-                        res = compress_video(a.path, a.path, options.preset)
+                        res = compress_video(a.path, a.path, options.preset,
+                                             use_av1=options.experimental_av1)
                     except RuntimeError as e:
                         res = None
                         out["warn"] = str(e)
@@ -800,12 +956,29 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         return a.rel, job
 
     # 审核修复：换后缀转换的同名撞车预检（同工程模式）
+    # 审核修复（中-33）：参照集合并入封包内全部资源名——散文件加载
+    # 优先级高于封包，转换产物若与封包内资源同名会静默遮蔽它
+    def _working_rel(a):
+        # 统一到"相对工作目录"坐标系：封包内资源的 rel 是相对
+        # game/ 的，物理位置在 game/ 下，需补前缀
+        rel = a.rel.replace("\\", "/")
+        return f"game/{rel}" if a.in_rpa else rel
+
+    all_rels = [_working_rel(a) for a in all_assets]
+    # 反编译解锁后封包内资源也能转换，撞名预检源集不再排除 in_rpa
     clash_webp = find_suffix_clashes(
-        [a.rel for a in all_assets if a.kind == AssetKind.IMAGE
-         and not a.in_rpa and a.ext in (".png", ".jpg", ".jpeg")], ".webp")
+        [_working_rel(a) for a in all_assets if a.kind == AssetKind.IMAGE
+         and a.ext in (".png", ".jpg", ".jpeg")], ".webp",
+        existing=all_rels)
     clash_ogg = find_suffix_clashes(
-        [a.rel for a in all_assets if a.kind == AssetKind.AUDIO
-         and not a.in_rpa and a.ext in (".wav", ".mp3")], ".ogg")
+        [_working_rel(a) for a in all_assets if a.kind == AssetKind.AUDIO
+         and a.ext in (".wav", ".mp3")], ".ogg",
+        existing=all_rels)
+
+    # 审核修复（中-2）：音频补 FFmpeg 预检（以前只有视频查），
+    # 否则缺 FFmpeg 时音频优化被静默吞掉，用户完全不知情
+    if options.do_audio and not find_ffmpeg():
+        report.warnings.append("未找到 FFmpeg，音频优化已跳过。")
 
     dist_jobs = []
     for a in all_assets:
@@ -813,6 +986,22 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         # 内置界面/报错文本用的字符和文件扫描不到，瘦身会出事
         top_dir = a.rel.replace("\\", "/").split("/")[0].lower()
         if top_dir in ("renpy", "lib"):
+            continue
+        # 审核修复（中-7）：_rtools_extract 是解包工作区（上次运行
+        # 残留时会被扫进来），绝不参与优化
+        if top_dir == "_rtools_extract":
+            continue
+        # 审核修复（严重-1）：用户开关在成品模式也必须被尊重——
+        # 此前 do_images/do_audio/do_fonts 在成品模式全部失效，
+        # 用户关掉字体瘦身字体照样被不可逆剃掉
+        if a.kind == AssetKind.IMAGE and not options.do_images:
+            continue
+        if a.kind == AssetKind.AUDIO and not options.do_audio:
+            continue
+        if a.kind == AssetKind.FONT and not (options.do_fonts
+                                             and preset.font_subset):
+            continue
+        if a.kind == AssetKind.VIDEO and not options.do_videos:
             continue
         dist_jobs.append(_dist_job(a))
 
@@ -832,104 +1021,125 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
             report.warnings.append(r["warn"])
 
     # --- 第 4.3 步：实验性运行时重映射脚本注入（BACKLOG B9） ---
-    if remap_map:
-        script_path = game_dir_p / remap_mod.REMAP_SCRIPT_NAME
-        # 审核修复：若上次运行已注入过脚本，先读回旧映射再合并——
-        # 直接覆写会丢旧条目，而旧条目对应的原文件已被删除，
-        # 丢了映射 = 那些图再也加载不到（坏图）
-        merged = dict(remap_map)
-        if script_path.exists():
+    # 审核修复（高-5）：从这里开始每一步都可能改盘（remap 注入/引用改写/
+    # 封包重建/隔离/写报告），任何异常都要先把已发生的改动落清单
+    try:
+        if remap_map:
+            script_path = game_dir_p / remap_mod.REMAP_SCRIPT_NAME
+            # 审核修复：若上次运行已注入过脚本，先读回旧映射再合并——
+            # 直接覆写会丢旧条目，而旧条目对应的原文件已被删除，
+            # 丢了映射 = 那些图再也加载不到（坏图）
+            merged = dict(remap_map)
+            if script_path.exists():
+                try:
+                    old_map = remap_mod.parse_remap_mapping(
+                        script_path.read_text(encoding="utf-8", errors="ignore"))
+                except OSError:
+                    old_map = {}
+                merged = {**old_map, **remap_map}
+            script_path.write_text(remap_mod.build_remap_script(merged),
+                                   encoding="utf-8")
+            records.append(ChangeRecord(
+                action="remap_inject", src=remap_mod.REMAP_SCRIPT_NAME,
+                detail=f"{len(remap_map)} 个图片请求将在运行时被透明重定向（实验性功能）"))
+            report.warnings.append(
+                "已启用实验性功能：注入了运行时重映射脚本 game/"
+                f"{remap_mod.REMAP_SCRIPT_NAME}。若游戏出现异常，删掉该文件即可完全还原。")
+
+        # 失败口径诚实化（BACKLOG B3）
+        total_failed = sum(failed.values())
+        if total_failed:
+            report.warnings.append(
+                f"{total_failed} 个文件处理后未能进一步压缩（可能已是最优或格式不适合），"
+                "已原样保留，未计入节省体积。")
+
+        # --- 第 4.5 步：带源码的成品，改写脚本引用 ---
+        if rename_map and ref_index is not None:
+            p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……")
+            records.extend(ref_index.rewrite(rename_map))
+
+        # --- 第 5 步：重建含优化内容的 RPA 封包 ---
+        for rpa_name, repl in rpa_replacements.items():
+            rpa_files = list(working_p.rglob(rpa_name))
+            if not rpa_files:
+                continue
+            src_rpa = rpa_files[0]
+            p.emit("rpa", f"正在重建封包 {rpa_name}（替换 {len(repl)} 个文件）……")
+            tmp_rpa = src_rpa.with_name(src_rpa.name + ".rtools.tmp")
             try:
-                old_map = remap_mod.parse_remap_mapping(
-                    script_path.read_text(encoding="utf-8", errors="ignore"))
-            except OSError:
-                old_map = {}
-            merged = {**old_map, **remap_map}
-        script_path.write_text(remap_mod.build_remap_script(merged),
-                               encoding="utf-8")
-        records.append(ChangeRecord(
-            action="remap_inject", src=remap_mod.REMAP_SCRIPT_NAME,
-            detail=f"{len(remap_map)} 个图片请求将在运行时被透明重定向（实验性功能）"))
-        report.warnings.append(
-            "已启用实验性功能：注入了运行时重映射脚本 game/"
-            f"{remap_mod.REMAP_SCRIPT_NAME}。若游戏出现异常，删掉该文件即可完全还原。")
+                replaced, total = rpa.rebuild_archive(str(src_rpa), str(tmp_rpa), repl)
+                old_size, new_size = src_rpa.stat().st_size, tmp_rpa.stat().st_size
+                tmp_rpa.replace(src_rpa)
+                # 改名替换（转换后包回 rpa）的散落副本已入包，删掉避免
+                # 双份存在；若重建失败则散落副本保留——引用已改写，
+                # 散文件照样能加载，是天然兜底
+                for v in repl.values():
+                    if isinstance(v, tuple):
+                        Path(v[1]).unlink(missing_ok=True)
+                records.append(ChangeRecord(
+                    action="rpa_rebuild", src=rpa_name,
+                    detail=f"封包内 {total} 个文件，替换 {replaced} 个，"
+                           f"{_fmt(old_size)} -> {_fmt(new_size)}"))
+            except Exception as e:
+                tmp_rpa.unlink(missing_ok=True)
+                report.warnings.append(f"{rpa_name}：封包重建失败，保留原封包（{e}）")
 
-    # 失败口径诚实化（BACKLOG B3）
-    total_failed = sum(failed.values())
-    if total_failed:
-        report.warnings.append(
-            f"{total_failed} 个文件处理后未能进一步压缩（可能已是最优或格式不适合），"
-            "已原样保留，未计入节省体积。")
+        # --- 第 6 步：无引用冗余文件（默认只标记，不删除） ---
+        unreferenced = _find_unreferenced(working_p, loose)
+        if unreferenced:
+            report.warnings.append(
+                f"发现 {len(unreferenced)} 个疑似无任何引用的文件（见 analysis.json "
+                f"unreferenced 字段）。默认不删除；如需清理请在选项里开启。")
+        if options.delete_unreferenced and unreferenced:
+            quarantine = working_p / "_rtools_quarantine"
+            for rel in unreferenced:
+                src = working_p / rel
+                # 审核修复（高-5）：文件可能已被前序步骤动过，逐项防御
+                if not src.exists():
+                    continue
+                dst = quarantine / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    src.rename(dst)
+                except OSError:
+                    continue
+                records.append(ChangeRecord(action="quarantine", src=rel,
+                                            dst=str(dst), detail="疑似无引用，已隔离而非删除"))
 
-    # --- 第 4.5 步：带源码的成品，改写脚本引用 ---
-    if rename_map and ref_index is not None:
-        p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……")
-        records.extend(ref_index.rewrite(rename_map))
+        # --- 第 6.5 步：清掉成品里带的可再生垃圾（真实样本发现：发布包竞带着 cache） ---
+        # 审核修复：in_place 时绝不能清——JUNK_DIRS 含 saves，而玩家存档不可再生；
+        # 与工程模式（第 5.5 步）保持一致的保护策略。
+        junk = {"freed_bytes": 0, "removed": []}
+        if options.in_place:
+            report.warnings.append(
+                "直接修改原件模式下跳过了垃圾清理（为保护你的存档和缓存）。")
+        else:
+            junk = cleanup.clean_junk(working)
+            if junk["removed"]:
+                saved += junk["freed_bytes"]
+                records.append(ChangeRecord(
+                    action="junk_clean", src=working,
+                    detail=f"清理 {len(junk['removed'])} 项可再生垃圾，"
+                           f"释放 {_fmt(junk['freed_bytes'])}"))
 
-    # --- 第 5 步：重建含优化内容的 RPA 封包 ---
-    for rpa_name, repl in rpa_replacements.items():
-        rpa_files = list(working_p.rglob(rpa_name))
-        if not rpa_files:
-            continue
-        src_rpa = rpa_files[0]
-        p.emit("rpa", f"正在重建封包 {rpa_name}（替换 {len(repl)} 个文件）……")
-        tmp_rpa = src_rpa.with_name(src_rpa.name + ".rtools.tmp")
-        try:
-            replaced, total = rpa.rebuild_archive(str(src_rpa), str(tmp_rpa), repl)
-            old_size, new_size = src_rpa.stat().st_size, tmp_rpa.stat().st_size
-            tmp_rpa.replace(src_rpa)
-            records.append(ChangeRecord(
-                action="rpa_rebuild", src=rpa_name,
-                detail=f"封包内 {total} 个文件，替换 {replaced} 个，"
-                       f"{_fmt(old_size)} -> {_fmt(new_size)}"))
-        except Exception as e:
-            tmp_rpa.unlink(missing_ok=True)
-            report.warnings.append(f"{rpa_name}：封包重建失败，保留原封包（{e}）")
-
-    # --- 第 6 步：无引用冗余文件（默认只标记，不删除） ---
-    unreferenced = _find_unreferenced(working_p, loose)
-    if unreferenced:
-        report.warnings.append(
-            f"发现 {len(unreferenced)} 个疑似无任何引用的文件（见 analysis.json "
-            f"unreferenced 字段）。默认不删除；如需清理请在选项里开启。")
-    if options.delete_unreferenced and unreferenced:
-        quarantine = working_p / "_rtools_quarantine"
-        for rel in unreferenced:
-            src = working_p / rel
-            dst = quarantine / rel
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            src.rename(dst)
-            records.append(ChangeRecord(action="quarantine", src=rel,
-                                        dst=str(dst), detail="疑似无引用，已隔离而非删除"))
-
-    # --- 第 6.5 步：清掉成品里带的可再生垃圾（真实样本发现：发布包竞带着 cache） ---
-    # 审核修复：in_place 时绝不能清——JUNK_DIRS 含 saves，而玩家存档不可再生；
-    # 与工程模式（第 5.5 步）保持一致的保护策略。
-    junk = {"freed_bytes": 0, "removed": []}
-    if options.in_place:
-        report.warnings.append(
-            "直接修改原件模式下跳过了垃圾清理（为保护你的存档和缓存）。")
-    else:
-        junk = cleanup.clean_junk(working)
-        if junk["removed"]:
-            saved += junk["freed_bytes"]
-            records.append(ChangeRecord(
-                action="junk_clean", src=working,
-                detail=f"清理 {len(junk['removed'])} 项可再生垃圾，"
-                       f"释放 {_fmt(junk['freed_bytes'])}"))
-
-    # --- 第 7 步：报告 ---
-    out = Path(output_dir)
-    d = report.to_dict()
-    d["unreferenced"] = unreferenced
-    _write_json(out / "analysis.json", d)
-    _write_json(out / "changelog.json",
-                {"records": [r.to_dict() for r in records], "saved_bytes": saved})
-
-    # 清理解包临时目录
-    import shutil as _sh
-    if extract_dir.exists():
-        _sh.rmtree(extract_dir, ignore_errors=True)
+        # --- 第 7 步：报告 ---
+        out = Path(output_dir)
+        d = report.to_dict()
+        d["unreferenced"] = unreferenced
+        _write_json(out / "analysis.json", d)
+        _write_json(out / "changelog.json",
+                    {"records": [r.to_dict() for r in records], "saved_bytes": saved})
+    except BaseException:
+        # 审核修复（高-5）：任何异常（含取消）都落部分清单，
+        # 磁盘已被部分修改时用户有对账依据
+        _flush_partial_changelog(output_dir, records, saved)
+        raise
+    finally:
+        # 审核修复（中-7）：解包临时目录任何路径上都不能残留，
+        # in_place 时它就在用户原成品目录里，残留会被下次运行当资源处理
+        import shutil as _sh
+        if extract_dir.exists():
+            _sh.rmtree(extract_dir, ignore_errors=True)
 
     p.emit("done", f"成品瘦身完成，共节省约 {_fmt(saved)}")
     return {
@@ -973,7 +1183,9 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     p.emit("unpack", f"正在解压压缩包 {Path(path).name}……")
     archives.extract_archive(path, extract_dir, password)
     try:
-        dist_root = archives.find_dist_root(extract_dir)
+        # 审核修复（高-4）：取全部候选成品根——旧版只拿第一个，
+        # 多平台发布包（PC+Mac 三合一等）里其余平台被静默丢弃
+        dist_roots = archives.find_dist_roots(extract_dir)
     except archives.ArchiveError:
         # F8：压缩包里装的是 APK 而不是成品目录 → 自动转入 APK 安全瘦身。
         # 走保守的同名压缩档（不换格式不签名，不引入运行时钩子）；
@@ -984,8 +1196,18 @@ def run_dist_smart(path: str, options: OptimizeOptions,
             raise
         src_apk = sorted(apk_files, key=lambda f: len(f.parts))[0]
         p.emit("apk", f"压缩包里装的是 APK，自动转入 APK 瘦身：{src_apk.name}")
-        r = apk.slim_apk(str(src_apk), "balanced", progress=p)
+        # F8 设计：走保守的同名压缩档（不换格式不签名）——与注释名实相符
+        r = apk.slim_apk(str(src_apk), "conservative", progress=p)
         r = dict(r)
+        # 审核修复（中-5）：产物不能埋在临时解压目录深处，挪到输出目录
+        try:
+            import shutil as _sh_apk
+            Path(output_dir).mkdir(parents=True, exist_ok=True)
+            moved = Path(output_dir) / Path(r["output"]).name
+            _sh_apk.move(str(r["output"]), str(moved))
+            r["output"] = str(moved)
+        except OSError:
+            pass
         r["mode"] = "apk"
         r["archive_input"] = path
         r.setdefault("warnings", []).append(
@@ -993,6 +1215,13 @@ def run_dist_smart(path: str, options: OptimizeOptions,
             "如需最大瘦身（图转 WebP/音转 OGG）或签名安装，"
             "请改用“APK 瘦身”页面直接选择这个 APK。")
         return r
+    if len(dist_roots) > 1:
+        names = "；".join(Path(x).name for x in dist_roots)
+        raise PipelineError(
+            f"压缩包里找到 {len(dist_roots)} 个成品目录（{names}）。"
+            "本工具一次只处理一个成品，请把各平台拆开分别瘦身——"
+            "否则只会输出其中一个平台，其余内容会丢失。")
+    dist_root = dist_roots[0]
     p.emit("unpack", f"已定位成品目录：{Path(dist_root).name}")
 
     result = run_dist(dist_root, options, work_root, output_dir, p,
@@ -1015,6 +1244,9 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     archives.create_zip(result["working_dir"], out_zip)
     result["archive_output"] = out_zip
     result["archive_input"] = path
+    # 审核修复（中-6）：回包成功后解压目录不再需要——不清理的话
+    # _rtools_work 每次运行都会累积一份全量解压拷贝
+    _shutil.rmtree(extract_dir, ignore_errors=True)
     p.emit("done", f"交付包已生成：{out_zip}")
     return result
 

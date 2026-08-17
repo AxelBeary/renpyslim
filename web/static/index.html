@@ -346,8 +346,8 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
         </div>
         <div class="group-title" data-i18n="grp_preset">压缩档位</div>
         <select id="preset">
-          <option value="conservative" data-i18n="preset_con">保守档：几乎无损，体积收益中等</option>
-          <option value="balanced" selected data-i18n="preset_bal">均衡档（推荐）：肉眼几乎无差，体积减 40~60%</option>
+          <option value="conservative" selected data-i18n="preset_con">保守档（推荐）：画质优先，接近原画效果</option>
+          <option value="balanced" data-i18n="preset_bal">均衡档：肉眼几乎无差，体积减 40~60%</option>
           <option value="aggressive" data-i18n="preset_agg">激进档：体积优先，画质音质有可感损失</option>
         </select>
         <div class="group-title" data-i18n="grp_charset">字体保底字符集（防误删安全垫）</div>
@@ -373,8 +373,12 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
               <span data-i18n="opt_quant">PNG 深度压缩（实验性）<br><span class="hint">真彩大图有损量化，再省 60~80%；渐变可能有轻微色带</span></span></label>
             <label class="opt"><input type="checkbox" id="opt_videos">
               <span data-i18n="opt_video">压缩视频（实验性）<br><span class="hint">同名重编码，兼容性最脆弱的一类，默认关闭</span></span></label>
+            <label class="opt"><input type="checkbox" id="opt_av1">
+              <span data-i18n="opt_av1">视频用 AV1 编码（实验性）<br><span class="hint">官方支持且更省体积；仅 Ren'Py 8.0+ 构建的游戏能放；需先勾选“压缩视频”</span></span></label>
             <label class="opt"><input type="checkbox" id="opt_remap">
               <span data-i18n="opt_remap">成品强行转 WebP（实验性）<br><span class="hint">注入映射脚本运行时重定向；出问题删掉脚本即还原</span></span></label>
+            <label class="opt"><input type="checkbox" id="opt_decompile">
+              <span data-i18n="opt_decompile">反编译脚本解锁格式转换（实验性）<br><span class="hint">用 unrpyc 从 rpyc 找回源码，封包内图片/音频也能转格式并包回封包；处理后请试跑游戏确认正常</span></span></label>
             <label class="opt"><input type="checkbox" id="opt_nocache">
               <span data-i18n="opt_nocache">禁用增量缓存<br><span class="hint">默认开启：重复处理同一批文件时秒级跳过</span></span></label>
           </div>
@@ -427,8 +431,8 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
         <div class="desc" data-i18n="apk_s2_desc">默认配置就够用：完成后直接得到能安装的新包。注意：签名变了，手机上要先卸载旧版再装新版。</div>
         <div class="group-title" data-i18n="grp_preset">压缩档位</div>
         <select id="apk_preset">
-          <option value="conservative" data-i18n="preset_con">保守档：几乎无损，体积收益中等</option>
-          <option value="balanced" selected data-i18n="preset_bal">均衡档（推荐）：肉眼几乎无差，体积减 40~60%</option>
+          <option value="conservative" selected data-i18n="preset_con">保守档（推荐）：画质优先，接近原画效果</option>
+          <option value="balanced" data-i18n="preset_bal">均衡档：肉眼几乎无差，体积减 40~60%</option>
           <option value="aggressive" data-i18n="preset_agg">激进档：体积优先，画质音质有可感损失</option>
         </select>
         <div class="group-title" data-i18n="apk_depth">瘦身深度</div>
@@ -550,8 +554,8 @@ zh: {
   opt_aud: "优化音频<br><span class='hint'>WAV/MP3 转 OGG；只处理脚本里有明确引用的文件</span>",
   opt_font: "字体瘦身<br><span class='hint'>只保留项目实际用到的字，通常能减 80% 以上</span>",
   opt_webp: "PNG 转 WebP（仅工程模式）<br><span class='hint'>收益最大的一项；成品模式下自动忽略</span>",
-  preset_con: "保守档：几乎无损，体积收益中等",
-  preset_bal: "均衡档（推荐）：肉眼几乎无差，体积减 40~60%",
+  preset_con: "保守档（推荐）：画质优先，接近原画效果",
+  preset_bal: "均衡档：肉眼几乎无差，体积减 40~60%",
   preset_agg: "激进档：体积优先，画质音质有可感损失",
   cs_latin: "基础拉丁字母+数字+标点（强烈推荐）", cs_cjk: "常用中文标点（推荐）",
   cs_full: "全角符号", cs_kana: "日文假名",
@@ -561,7 +565,9 @@ zh: {
   opt_quar: "隔离无用资源<br><span class='hint'>工程模式：确认找不到引用的音频/视频/字体移入隔离区（图片不检测）</span>",
   opt_quant: "PNG 深度压缩（实验性）<br><span class='hint'>真彩大图有损量化，再省 60~80%；渐变可能有轻微色带</span>",
   opt_video: "压缩视频（实验性）<br><span class='hint'>同名重编码，兼容性最脆弱的一类，默认关闭</span>",
+  opt_av1: "视频用 AV1 编码（实验性）<br><span class='hint'>官方支持且更省体积；仅 Ren'Py 8.0+ 构建的游戏能放；需先勾选“压缩视频”</span>",
   opt_remap: "成品强行转 WebP（实验性）<br><span class='hint'>注入映射脚本运行时重定向；出问题删掉脚本即还原</span>",
+  opt_decompile: "反编译脚本解锁格式转换（实验性）<br><span class='hint'>用 unrpyc 从 rpyc 找回源码，封包内图片/音频也能转格式并包回封包；处理后请试跑游戏确认正常</span>",
   opt_nocache: "禁用增量缓存<br><span class='hint'>默认开启：重复处理同一批文件时秒级跳过</span>",
   opt_rpa: "资源封入 RPA 封包<br><span class='hint'>走官方通道，防顺手牵羊但不能防破解</span>",
   plat_android: "Android（首次需先在 Ren'Py 启动器完成安卓配置）",
@@ -659,8 +665,8 @@ en: {
   opt_aud: "Optimize audio<br><span class='hint'>WAV/MP3 to OGG; only files with explicit script references</span>",
   opt_font: "Slim fonts<br><span class='hint'>Keep only glyphs actually used — usually 80%+ smaller</span>",
   opt_webp: "PNG to WebP (project mode only)<br><span class='hint'>The biggest win; ignored automatically in dist mode</span>",
-  preset_con: "Conservative: near-lossless, moderate saving",
-  preset_bal: "Balanced (recommended): near-invisible loss, 40~60% smaller",
+  preset_con: "Conservative (recommended): quality first, near-lossless",
+  preset_bal: "Balanced: near-invisible loss, 40~60% smaller",
   preset_agg: "Aggressive: size first, noticeable quality loss",
   cs_latin: "Basic Latin + digits + punctuation (strongly recommended)", cs_cjk: "Common CJK punctuation (recommended)",
   cs_full: "Fullwidth symbols", cs_kana: "Japanese kana",
@@ -670,7 +676,9 @@ en: {
   opt_quar: "Quarantine unused assets<br><span class='hint'>Project mode: unreferenced audio/video/fonts get moved aside (images are never flagged)</span>",
   opt_quant: "Deep PNG compression (experimental)<br><span class='hint'>Lossy quantization for truecolor art, saves another 60~80%; gradients may show slight banding</span>",
   opt_video: "Compress videos (experimental)<br><span class='hint'>Same-name re-encode, the most fragile category; off by default</span>",
+  opt_av1: "Encode videos with AV1 (experimental)<br><span class='hint'>Officially supported and smaller; only plays in games built with Ren'Py 8.0+; requires 'Compress videos'</span>",
   opt_remap: "Force WebP in dist (experimental)<br><span class='hint'>Injects a runtime remap script; delete the script to revert</span>",
+  opt_decompile: "Decompile scripts to unlock format conversion (experimental)<br><span class='hint'>Recovers sources from rpyc via unrpyc so archived images/audio can be converted too (repacked into archives); test the game afterwards</span>",
   opt_nocache: "Disable incremental cache<br><span class='hint'>On by default: re-processing the same files skips in seconds</span>",
   opt_rpa: "Archive assets into RPA<br><span class='hint'>Official channel — deters casual theft, not crackers</span>",
   plat_android: "Android (first run requires setup in the Ren'Py launcher)",
@@ -770,8 +778,8 @@ pwd_ph: "Пароль архива (только если zip/7z/rar защищ�
   opt_aud: "Оптимизация аудио<br><span class='hint'>WAV/MP3 → OGG; только файлы с явными ссылками в скриптах</span>",
   opt_font: "Сжатие шрифтов<br><span class='hint'>Остаются только используемые глифы — обычно минус 80% и больше</span>",
   opt_webp: "PNG → WebP (только режим проекта)<br><span class='hint'>Самый большой выигрыш; в режиме сборки игнорируется автоматически</span>",
-  preset_con: "Консервативный: почти без потерь, умеренная экономия",
-  preset_bal: "Сбалансированный (рекомендуется): разница на глаз незаметна, минус 40~60%",
+  preset_con: "Консервативный (рекомендуется): качество прежде всего, почти без потерь",
+  preset_bal: "Сбалансированный: разница на глаз незаметна, минус 40~60%",
   preset_agg: "Агрессивный: приоритет размеру, заметные потери качества",
   cs_latin: "Базовая латиница + цифры + пунктуация (настоятельно рекомендуется)", cs_cjk: "Частая пунктуация CJK (рекомендуется)",
   cs_full: "Полноширинные символы", cs_kana: "Японская кана", cs_extra_ph: "Дополнительные символы (необязательно, просто вставьте)",
@@ -780,7 +788,9 @@ pwd_ph: "Пароль архива (только если zip/7z/rar защищ�
   opt_quar: "Изолировать неиспользуемые ресурсы<br><span class='hint'>Режим проекта: аудио/видео/шрифты без ссылок перемещаются в карантин (изображения не проверяются)</span>",
   opt_quant: "Глубокое сжатие PNG (экспериментально)<br><span class='hint'>Квантование полноцветных изображений с потерями: ещё минус 60~80%; возможны лёгкие полосы на градиентах</span>",
   opt_video: "Сжатие видео (экспериментально)<br><span class='hint'>Перекодирование с тем же именем; самая хрупкая категория, по умолчанию выключено</span>",
+  opt_av1: "Кодировать видео в AV1 (экспериментально)<br><span class='hint'>Поддерживается официально и компактнее; воспроизводится только в играх на Ren'Py 8.0+; требует включённого сжатия видео</span>",
   opt_remap: "Принудительный WebP для сборки (экспериментально)<br><span class='hint'>Внедряется скрипт переназначения для подмены во время выполнения; для отката просто удалите скрипт</span>",
+  opt_decompile: "Декомпилировать скрипты для конвертации форматов (экспериментально)<br><span class='hint'>Восстанавливает исходники из rpyc через unrpyc — ресурсы в архивах тоже можно конвертировать (упаковываются обратно); проверьте игру после обработки</span>",
   opt_nocache: "Отключить инкрементальный кэш<br><span class='hint'>По умолчанию включён: повторная обработка тех же файлов пропускается мгновенно</span>",
   opt_rpa: "Упаковать ресурсы в архив RPA<br><span class='hint'>Официальный механизм: защищает от случайного копирования, но не от взлома</span>",
   plat_android: "Android (впервые нужна настройка Android в лаунчере Ren'Py)",
@@ -880,8 +890,8 @@ pwd_ph: "Contraseña del archivo (solo si el zip/7z/rar está protegido)",
   opt_aud: "Optimizar audio<br><span class='hint'>WAV/MP3 → OGG; solo archivos con referencia explícita en los scripts</span>",
   opt_font: "Adelgazar fuentes<br><span class='hint'>Solo se conservan los glifos usados: normalmente −80 % o más</span>",
   opt_webp: "PNG → WebP (solo modo proyecto)<br><span class='hint'>El mayor ahorro; en modo distribución se ignora automáticamente</span>",
-  preset_con: "Conservador: casi sin pérdidas, ahorro moderado",
-  preset_bal: "Equilibrado (recomendado): diferencia imperceptible, −40~60 %",
+  preset_con: "Conservador (recomendado): calidad ante todo, casi sin pérdidas",
+  preset_bal: "Equilibrado: diferencia imperceptible, −40~60 %",
   preset_agg: "Agresivo: prioridad al tamaño, pérdida de calidad perceptible",
   cs_latin: "Latino básico + dígitos + puntuación (muy recomendado)", cs_cjk: "Puntuación CJK frecuente (recomendado)",
   cs_full: "Símbolos de ancho completo", cs_kana: "Kana japonés", cs_extra_ph: "Caracteres adicionales (opcional, pégalos directamente)",
@@ -890,7 +900,9 @@ pwd_ph: "Contraseña del archivo (solo si el zip/7z/rar está protegido)",
   opt_quar: "Aislar recursos sin uso<br><span class='hint'>Modo proyecto: audio/vídeo/fuentes sin referencia se mueven a cuarentena (las imágenes no se comprueban)</span>",
   opt_quant: "Compresión profunda de PNG (experimental)<br><span class='hint'>Cuantificación con pérdidas para imágenes a color: −60~80 % extra; posible banding leve en degradados</span>",
   opt_video: "Comprimir vídeo (experimental)<br><span class='hint'>Recodificación con el mismo nombre; la categoría más frágil, desactivada por defecto</span>",
+  opt_av1: "Codificar vídeo con AV1 (experimental)<br><span class='hint'>Soportado oficialmente y más pequeño; solo se reproduce en juegos creados con Ren'Py 8.0+; requiere «Comprimir vídeo»</span>",
   opt_remap: "Forzar WebP en la distribución (experimental)<br><span class='hint'>Se inyecta un script de remapeo en tiempo de ejecución; para revertir, borra el script</span>",
+  opt_decompile: "Descompilar scripts para desbloquear la conversión (experimental)<br><span class='hint'>Recupera el código fuente de los rpyc con unrpyc para convertir también recursos archivados (se reempaquetan); prueba el juego después</span>",
   opt_nocache: "Desactivar la caché incremental<br><span class='hint'>Activada por defecto: repetir con los mismos archivos se salta al instante</span>",
   opt_rpa: "Empaquetar recursos en archivo RPA<br><span class='hint'>Canal oficial: evita la copia casual, pero no el crackeo</span>",
   plat_android: "Android (la primera vez hay que configurarlo en el lanzador de Ren'Py)",
@@ -987,9 +999,10 @@ let LANG = detectInitialLang();
 let REPORT = null;             // 最近一次分析报告
 let LAST_RESULT = null;        // 最近一次执行结果（切语言时重渲染）
 let LAST_CHARLIST = null;
-let JOB = null, LOGIDX = 0;
-let ANALYZE_JOB = null, ANALYZE_IDX = 0, ANALYZE_START = 0;
-let FS_JOB = null, FS_IDX = 0, FS_RESULT = null;
+let JOB = null, LOGIDX = 0, JOB_GEN = 0, JOB_RUNNING = false;
+let ANALYZE_JOB = null, ANALYZE_IDX = 0, ANALYZE_START = 0,
+    ANALYZE_GEN = 0, ANALYZE_BUSY = false;
+let FS_JOB = null, FS_IDX = 0, FS_RESULT = null, FS_GEN = 0;
 
 function t(key) { return (I18N[LANG] && I18N[LANG][key]) ?? key; }
 function tf(key, vars) {
@@ -998,7 +1011,10 @@ function tf(key, vars) {
   return s;
 }
 function esc(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  /* 审核修复（中-30）：引号也得转义——esc 用在 HTML 属性上下文
+     （title="${esc(p)}" 等），不转引号会属性逃逸 */
+  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 }
 function fmtSize(b) {
   if (b == null) return "";
@@ -1134,10 +1150,16 @@ function warnNote() {
     : `<div class="note" style="margin-bottom:6px">${t("warn_note")}</div>`;
 }
 async function api(url, body) {
-  const r = await fetch(url, body === undefined ? undefined :
-    { method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body) });
-  return await r.json();
+  /* 审核修复（中-29）：网络异常（服务退出/点了退出工具）捕下来
+     返回统一失败结构，不再变成未捕获 rejection 断掉轮询链 */
+  try {
+    const r = await fetch(url, body === undefined ? undefined :
+      { method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body) });
+    return await r.json();
+  } catch (e) {
+    return { ok: false, error: "与后台服务的连接已断开", _conn_lost: true };
+  }
 }
 
 /* ===================== 主题与语言 ===================== */
@@ -1211,8 +1233,12 @@ function go(v) {
   if (wf && v !== prev) {           // project ↔ dist 切换：重置工作流
     MODE = v;
     REPORT = null; LAST_RESULT = null;
-    for (const id of ["reportcard", "optcard", "runcard"]) 
+    /* 审核修复（中-26）：任务还在跑时保留执行卡片（轮询链继续），
+       否则进度消失但后台任务还在跑，用户以为死了再起一个 */
+    for (const id of ["reportcard", "optcard"])
       document.getElementById(id).classList.add("hidden");
+    if (!JOB_RUNNING)
+      document.getElementById("runcard").classList.add("hidden");
     document.getElementById("analyzewarn").innerHTML = "";
     applyModeUI();
   }
@@ -1308,6 +1334,8 @@ function useRecent(el) {
 
 /* ===================== 分析流程 ===================== */
 async function analyze() {
+  /* 审核修复（中-26）：防连击——上一次分析还在跑时不起第二个 */
+  if (ANALYZE_BUSY) return;
   const path = document.getElementById("path").value.trim();
   if (!path) { alert(t("fill_path")); return; }
   document.getElementById("analyzewarn").innerHTML =
@@ -1320,13 +1348,25 @@ async function analyze() {
       `<div class="box err">${esc(d.error)}</div>`;
     return;
   }
+  ANALYZE_BUSY = true;
+  ANALYZE_GEN++;                      // 审核修复（中-26）：作废旧轮询链
+  const gen = ANALYZE_GEN;
   ANALYZE_JOB = d.job; ANALYZE_IDX = 0; ANALYZE_START = Date.now();
-  pollAnalyze(path);
+  pollAnalyze(path, gen);
 }
 
-async function pollAnalyze(path) {
+async function pollAnalyze(path, gen) {
+  if (gen !== ANALYZE_GEN) return;    // 旧轮询链已被作废
   const d = await api(`/api/job/${ANALYZE_JOB}?since=${ANALYZE_IDX}`);
-  if (!d.ok) return;
+  if (gen !== ANALYZE_GEN) return;
+  if (!d.ok) {
+    /* 审核修复（中-29）：任务被清理/断连时给出明确状态，
+       不再静默卡死在"分析中" */
+    ANALYZE_BUSY = false;
+    document.getElementById("analyzewarn").innerHTML =
+      `<div class="box err">${esc(d.error || "")}</div>`;
+    return;
+  }
   const logEl = document.getElementById("anlog");
   const stateEl = document.getElementById("analystate");
   const lines = [];
@@ -1340,7 +1380,8 @@ async function pollAnalyze(path) {
     logEl.textContent = all.slice(-6).join("\n");
     logEl.scrollTop = logEl.scrollHeight;
   }
-  if (d.status === "running") { setTimeout(() => pollAnalyze(path), 300); return; }
+  if (d.status === "running") { setTimeout(() => pollAnalyze(path, gen), 300); return; }
+  ANALYZE_BUSY = false;
   if (d.status === "error") {
     document.getElementById("analyzewarn").innerHTML =
       `<div class="box err">${esc(d.error)}<br>${t("analyze_err_next")}</div>`;
@@ -1351,6 +1392,7 @@ async function pollAnalyze(path) {
   if (stateEl2) stateEl2.textContent = t("analyze_done");
   const wait = Math.max(0, 1000 - (Date.now() - ANALYZE_START));
   setTimeout(() => {
+    if (gen !== ANALYZE_GEN) return;   // 期间起了新分析，旧链不接管界面
     api("/api/recent", { path }).then(r => { if (r.ok) { RECENT = r.recent; renderRecent(); } });
     REPORT = { report: d.result.report, mode: d.result.mode };
     LAST_CHARLIST = d.result.charlist || null;
@@ -1419,7 +1461,9 @@ function collectOptions() {
     quarantine_unused: document.getElementById("q_unused").checked,
     png_quant: document.getElementById("opt_quant").checked,
     do_videos: document.getElementById("opt_videos").checked,
+    experimental_av1: document.getElementById("opt_av1").checked,
     experimental_remap: document.getElementById("opt_remap").checked,
+    experimental_decompile: document.getElementById("opt_decompile").checked,
     use_cache: !document.getElementById("opt_nocache").checked,
     charset: {
       base_latin: document.getElementById("cs_latin").checked,
@@ -1435,6 +1479,10 @@ document.getElementById("in_place").addEventListener("change", e =>
 
 /* ===================== 执行流程 ===================== */
 async function runJob() {
+  /* 审核修复（中-26）：起新任务先作废旧轮询链，防新旧链共写
+     全局游标导致日志重复/丢条、"停止"打到新任务上 */
+  JOB_GEN++;
+  const gen = JOB_GEN;
   const path = document.getElementById("path").value.trim();
   const opts = collectOptions();
   document.getElementById("runcard").classList.remove("hidden");
@@ -1459,6 +1507,7 @@ async function runJob() {
   } else {
     d = await api("/api/optimize", { path, mode: "dist", options: opts, password: pwd });
   }
+  if (gen !== JOB_GEN) return;        // 等待期间又起了新任务
   if (!d.ok) {
     document.getElementById("resultarea").innerHTML =
       `<div class="box err">${esc(d.error)}</div>`;
@@ -1467,9 +1516,10 @@ async function runJob() {
     return;
   }
   JOB = d.job;
+  JOB_RUNNING = true;
   const cb = document.getElementById("cancelbtn");
   cb.style.display = ""; cb.disabled = false;
-  pollJob();
+  pollJob(gen);
 }
 
 /* 进度条：日志里出现 i/total 就按真实百分比走，否则滑动动画 */
@@ -1492,9 +1542,24 @@ function tickProgress(msg) {
   }
 }
 
-async function pollJob() {
+async function pollJob(gen) {
+  if (gen !== JOB_GEN) return;        // 审核修复（中-26）：旧链作废
   const d = await api(`/api/job/${JOB}?since=${LOGIDX}`);
-  if (!d.ok) return;
+  if (gen !== JOB_GEN) return;
+  if (!d.ok) {
+    /* 审核修复（中-29）：任务被清理/断连时恢复按钮并给出状态，
+       不再永久卡在"执行中"（高-2 的前端放大器） */
+    JOB_RUNNING = false;
+    document.getElementById("cancelbtn").style.display = "none";
+    document.getElementById("progressbar").classList.remove("ind");
+    document.getElementById("runstatus").textContent =
+      d._conn_lost ? d.error : t("st_failed");
+    document.getElementById("resultarea").innerHTML =
+      `<div class="box err">${esc(d.error || "")}</div>`;
+    document.getElementById("runbtn").disabled = false;
+    document.getElementById("apkrunbtn").disabled = false;
+    return;
+  }
   const log = document.getElementById("log");
   for (const l of d.logs) {
     log.textContent += `[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}\n`;
@@ -1505,9 +1570,10 @@ async function pollJob() {
   if (d.status === "running") {
     document.getElementById("runstatus").textContent =
       d.cancel_requested ? t("st_stopping") : t("st_running");
-    setTimeout(pollJob, 800);
+    setTimeout(() => pollJob(gen), 800);
     return;
   }
+  JOB_RUNNING = false;
   document.getElementById("cancelbtn").style.display = "none";
   document.getElementById("progressbar").classList.remove("ind");
   if (d.status === "canceled") {
@@ -1629,12 +1695,16 @@ async function runFontSlim() {
     `<div class="box ok">${t("font_running")}<div class="logbox" id="fslog" ` +
     `style="margin-top:8px;max-height:140px"></div></div>`;
   document.getElementById("fsrun").disabled = true;
+  /* 审核修复（中-26）：起新任务作废旧轮询链 */
+  FS_GEN++;
+  const gen = FS_GEN;
   const d = await api("/api/slimfont", { font, sources, charset: {
     base_latin: document.getElementById("fs_latin").checked,
     cjk_punct: document.getElementById("fs_cjk").checked,
     fullwidth: document.getElementById("fs_full").checked,
     kana: document.getElementById("fs_kana").checked,
     extra_chars: document.getElementById("fs_extra").value } });
+  if (gen !== FS_GEN) return;
   if (!d.ok) {
     document.getElementById("fsresult").innerHTML =
       `<div class="box err">${esc(d.error)}</div>`;
@@ -1642,19 +1712,27 @@ async function runFontSlim() {
     return;
   }
   FS_JOB = d.job; FS_IDX = 0;
-  pollFontSlim();
+  pollFontSlim(gen);
 }
 
-async function pollFontSlim() {
+async function pollFontSlim(gen) {
+  if (gen !== FS_GEN) return;
   const d = await api(`/api/job/${FS_JOB}?since=${FS_IDX}`);
-  if (!d.ok) return;
+  if (gen !== FS_GEN) return;
+  if (!d.ok) {
+    /* 审核修复（中-29）：任务丢失/断连时恢复按钮并给状态 */
+    document.getElementById("fsrun").disabled = false;
+    document.getElementById("fsresult").innerHTML =
+      `<div class="box err">${esc(d.error || "")}</div>`;
+    return;
+  }
   const logEl = document.getElementById("fslog");
   for (const l of d.logs) {
     FS_IDX++;
     if (logEl) logEl.textContent +=
       `[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}\n`;
   }
-  if (d.status === "running") { setTimeout(pollFontSlim, 500); return; }
+  if (d.status === "running") { setTimeout(() => pollFontSlim(gen), 500); return; }
   document.getElementById("fsrun").disabled = false;
   if (d.status === "error") {
     document.getElementById("fsresult").innerHTML =
@@ -1721,8 +1799,12 @@ async function runApkSlim() {
     alert(t("sig_own_need")); return;
   }
   prepareRunCard();
+  /* 审核修复（中-26）：起新任务作废旧轮询链 */
+  JOB_GEN++;
+  const gen = JOB_GEN;
   document.getElementById("apkrunbtn").disabled = true;
   const d = await api("/api/slimapk", body);
+  if (gen !== JOB_GEN) return;
   if (!d.ok) {
     document.getElementById("resultarea").innerHTML =
       `<div class="box err">${esc(d.error)}</div>`;
@@ -1730,9 +1812,11 @@ async function runApkSlim() {
     return;
   }
   JOB = d.job;
-  const cb = document.getElementById("cancelbtn");
-  cb.style.display = ""; cb.disabled = false;
-  pollJob();
+  JOB_RUNNING = true;
+  /* 审核修复（中-27）：APK 瘦身引擎层无取消通道，不显示无效的
+     "停止任务"按钮（不再让用户看到"正在停止…"却停不下来） */
+  document.getElementById("cancelbtn").style.display = "none";
+  pollJob(gen);
 }
 
 /* ===================== SDK 设置 ===================== */

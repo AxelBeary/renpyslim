@@ -16,6 +16,10 @@ from .models import ChangeRecord, SCRIPT_EXTS, SKIP_DIRS
 
 # 匹配点前面不允许是"文件名一部分"的字符，防止 logo.png 误匹配 gui_logo.png
 _LEFT_GUARD = r"(?<![\w.\-/])"
+# 审核修复（中-22）：右边界同样要守卫——旧版只有左守卫，
+# bg.png 会把 bg.png.png 改成 bg.webp.png、把 bg.png@2x 改成
+# bg.webp@2x（静默断链）；find 与 rewrite 共用同一模式
+_RIGHT_GUARD = r"(?![\w.\-/@])"
 
 
 class RefIndex:
@@ -65,7 +69,7 @@ class RefIndex:
         """返回引用位置列表 [(脚本相对路径, 行号)]，行号从 1 开始。"""
         hits: list[tuple[str, int]] = []
         for variant in self._variants(rel_name):
-            pat = re.compile(_LEFT_GUARD + re.escape(variant))
+            pat = re.compile(_LEFT_GUARD + re.escape(variant) + _RIGHT_GUARD)
             for frel, lines in self.files.items():
                 for i, line in enumerate(lines, start=1):
                     if pat.search(line):
@@ -84,7 +88,8 @@ class RefIndex:
         for old, new in pairs:
             for variant_old, variant_new in zip(self._variants(old),
                                                 self._variants(new)):
-                pat = re.compile(_LEFT_GUARD + re.escape(variant_old))
+                pat = re.compile(_LEFT_GUARD + re.escape(variant_old)
+                                 + _RIGHT_GUARD)
                 patterns.append((variant_old, variant_new, pat))
 
         for frel, lines in self.files.items():

@@ -25,8 +25,9 @@ jobs:
 
       # 只查真错误（未定义变量/未用导入/语法错等 F 类与 E9）；
       # 风格类意见不拦：项目刻意使用宽容异常捕获等安全风格
+      # vendor 目录是 MIT 内嵌的上游代码（unrpyc），保持原样不检查
       - name: Static check (real errors only)
-        run: ruff check --select F,E9 rtools web cli.py main.py tests
+        run: ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests
 
       - name: Run regression tests
         run: python -m pytest tests -q

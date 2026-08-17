@@ -17,9 +17,17 @@ from .models import AssetInfo, AssetKind
 # 任意位置都安全删除的文件（可再生或与发布无关）
 JUNK_FILES = {"errors.txt", "log.txt", "traceback.txt", "thumbs.db",
               "desktop.ini", ".ds_store"}
-JUNK_EXTS = {".rpyb", ".rtools.tmp"}
-# 任意位置都安全删除的目录（Ren'Py 缓存、存档目录——发布包里本就不该有）
-JUNK_DIRS = {"saves", "cache"}
+JUNK_EXTS = {".rpyb"}
+# 审核修复（中-8）：saves/cache 只删"已知安全位置"——成品根平级与
+# game/ 下；任意层级的同名目录可能是第三方游戏自建的必需数据
+# （如 game/cache 存必需资源），曾无差别整删导致交付产物损坏
+_SAFE_JUNK_DIR_RELS = ("saves", "cache", "game/saves", "game/cache")
+
+
+def _is_rtools_tmp(name: str) -> bool:
+    """本工具残留临时文件：名字含 .rtools. 且带 .tmp（审核修复
+    高-3 后 tmp 名带随机后缀，不再能按固定后缀匹配）。"""
+    return ".rtools." in name and ".tmp" in name
 
 
 def clean_junk(root: str) -> dict:
@@ -31,14 +39,24 @@ def clean_junk(root: str) -> dict:
     def dir_size(p: Path) -> int:
         return sum(f.stat().st_size for f in p.rglob("*") if f.is_file())
 
+    # 目录垃圾：限已知安全位置（审核修复 中-8）
+    for rel in _SAFE_JUNK_DIR_RELS:
+        p = root_p / rel
+        if not p.is_dir():
+            continue
+        try:
+            freed += dir_size(p)
+            shutil.rmtree(p, ignore_errors=True)
+            removed.append(rel + "/")
+        except OSError:
+            continue
+
+    # 文件垃圾：任意位置可删（errors.txt 等属 by-design）
     for p in sorted(root_p.rglob("*"), reverse=True):
         try:
-            if p.is_dir() and p.name.lower() in JUNK_DIRS and p.exists():
-                freed += dir_size(p)
-                shutil.rmtree(p, ignore_errors=True)
-                removed.append(p.relative_to(root_p).as_posix() + "/")
-            elif p.is_file() and (p.name.lower() in JUNK_FILES
-                                  or p.suffix.lower() in JUNK_EXTS):
+            if p.is_file() and (p.name.lower() in JUNK_FILES
+                                  or p.suffix.lower() in JUNK_EXTS
+                                  or _is_rtools_tmp(p.name)):
                 freed += p.stat().st_size
                 p.unlink()
                 removed.append(p.relative_to(root_p).as_posix())

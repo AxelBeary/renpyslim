@@ -9,6 +9,7 @@ if not exist "%TMP%" mkdir "%TMP%"
   --icon assets\icon.ico ^
   --add-data "web\static;web/static" ^
   --add-data "assets;assets" ^
+  --add-data "rtools\vendor\unrpyc;rtools/vendor/unrpyc" ^
   --hidden-import rtools.pipeline ^
   --hidden-import rtools.packager ^
   --hidden-import pystray._win32 ^

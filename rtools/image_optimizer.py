@@ -1,6 +1,7 @@
 """图片优化：PNG/JPG/WebP 压缩与格式转换（Pillow）。"""
 from __future__ import annotations
 
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -20,7 +21,9 @@ def optimize_image(src: str, dst: str, quality: int,
     src_p, dst_p = Path(src), Path(dst)
     old_size = src_p.stat().st_size
     ext = src_p.suffix.lower()
-    tmp = dst_p.with_name(dst_p.name + ".rtools.tmp")
+    # 审核修复（高-3）：tmp 名带随机后缀——并行任务（如 a.wav 转换
+    # 与 a.ogg 原地重编码）共用固定 tmp 名会互相踩踏
+    tmp = dst_p.with_name(f"{dst_p.name}.rtools.{uuid.uuid4().hex[:8]}.tmp")
 
     try:
         with Image.open(src) as im:
@@ -52,6 +55,8 @@ def optimize_image(src: str, dst: str, quality: int,
         tmp.unlink(missing_ok=True)
         return None
 
+    # 审核补修（低）：与 quantize_png 对齐，目标父目录不存在时先建
+    dst_p.parent.mkdir(parents=True, exist_ok=True)
     tmp.replace(dst_p)
     return {"old_size": old_size, "new_size": new_size,
             "converted": dst_p.suffix.lower() != ext}
@@ -68,7 +73,8 @@ def quantize_png(src: str, dst: str, max_colors: int = 256) -> Optional[dict]:
     if src_p.suffix.lower() != ".png":
         return None
     old_size = src_p.stat().st_size
-    tmp = dst_p.with_name(dst_p.name + ".rtools.tmp.png")
+    # 审核修复（高-3）：同 optimize_image，tmp 名带随机后缀防并行踩踏
+    tmp = dst_p.with_name(f"{dst_p.name}.rtools.{uuid.uuid4().hex[:8]}.tmp.png")
     try:
         with Image.open(src) as im:
             im.load()

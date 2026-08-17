@@ -2,13 +2,158 @@
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.11.0（APK 瘦身进图形界面 + F8 自动路由；v0.10.0 起 AGPL-3.0）
+## 当前版本：v0.12.0（审核修复 40 项 + 多核 + 画质优先 + AV1/反编译解锁；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
 Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.11.0（自更新检查靶子，
 附 v0.11.0 exe；release.yml 首次挂过一次：sanity 测试缺 pytest/httpx，已修）
-回归测试：77 项全绿（`pytest tests -q`，含审核修复回归 12 条 + lint 路径回归 + F8 路由回归 + 后端本地防护 4 条 + i18n 字典完整性 3 条）
+回归测试：109 项全绿（`pytest tests -q`，含 2026-08-17 审核修复回归 22 条 + 视频/反编译回归 + 早期审核回归 12 条）
+
+## 2026-08-17 v0.12.0 发版（用户拍板：尽可能压缩，精益求精）
+
+本版本三大主题（细节见下方各批次小节）：
+1. **AUDIT-2026-08-17 审查报告 40 项缺陷全量修复**（严重 2/高 5/中 33，
+   逐条核实属实后修复，新增 22 条回归测试）
+2. **性能与默认策略**：多核放开（并发上限 16 路 + 视频多线程编码）；
+   默认档位改为画质优先（q95 近无损）；小文件体积门槛降到 1KB
+3. **压缩能力增强**：视频同编码安全重编 + AV1 实验选项（官方支持
+   且更省）；unrpyc 反编译解锁无源码成品的格式转换，转换后按原样
+   包回 RPA 封包（--decompile，实验性）
+- 第三方署名：unrpyc（MIT）内嵌于 rtools/vendor/unrpyc/，
+  THIRD_PARTY_NOTICES 已增节；exe 打包配方（build_exe.bat/两个 spec/
+  release.yml）均已把 vendor 数据纳入
+- Cadaver/CSE 双样本实测：电脑成品省 303.8MB（中文名 zip 全链路正确）；
+  CSE 开 --decompile --videos 省 635.7MB（封包内 29 张图包回 webp）
+- 待办：无（审核报告"待确认 8 项"需真实样本实测，留待有样本时处理）
+
+## 2026-08-17 全面审查报告修复批次（AUDIT-2026-08-17.md，用户拍板执行）
+
+- 报告结论：严重 2 + 高 5 + 中 33 项，逐条对照源码核实全部属实后按报告
+  优先级修复；最小必要改动，报告标注的有意设计（如 convert_png_webp
+  在模式 B 跟随档位）未动。回归测试新增 tests/test_audit_20260817.py 22 条
+- 严重-1：成品模式 do_images/do_audio/do_fonts 开关失效（字体照剃）→
+  dist_jobs 构建循环按 kind 过滤；严重-2：zip 中文文件名 GBK 乱码 →
+  未置 UTF-8 标志条目 cp437 还原原始字节再 utf-8/gb18030 回解（端到端冒烟验证）
+- 高-1：verifier 全分支补齐 suspects 键 + pipeline 改 get；高-2：Web 任务
+  超时清理跳过运行中任务 + wrapper 改判空；高-3：撞名预检并入现存资源集 +
+  转换前目标存在性检查 + 优化器 tmp 名随机化；高-4：find_dist_roots 返回
+  全部候选，多成品包明确报错要求拆包；高-5：run_project/run_dist 改动段落
+  套 BaseException 兜底落部分清单 + dist 隔离循环补存在性防御
+- 中级修复（按报告编号）：中-1 取消时聚合本批已完成改动（PipelineCancelled
+  携带 partial_results）；中-2 吞异常留日志 + dist 音频 FFmpeg 预检；中-3
+  取消时 kill 子进程树（procutil 登记句柄/taskkill /T）+ CLI SIGINT 映射取消；
+  中-4 缓存复制原子化；中-5 APK 转发产物挪到输出目录；中-6 回包后删解压目录；
+  中-7 _rtools_extract 改 finally 清理 + dist_jobs 排除；中-8 垃圾目录只删
+  已知安全位置；中-9 备份 zip 原子写；中-10 产物自映射防 in_place 重编码
+  代际累积；中-11 被拒 APK 条目移出 targets；中-12/13 RPA 脏索引转 RpaError +
+  长度校验；中-14 apksigner 改 java -jar 直调（.bat 回退时拒危险密码）；
+  中-15 zipalign/apksigner 超时捕获降级；中-16 APK 重打包复用已解出文件；
+  中-17 run_quiet 统一 stdin=DEVNULL；中-18 中文密码 GBK 重试 + AES 明报
+  不支持；中-19 封包内音频也探码率；中-20 .ogv 改 libtheora；中-21 lint
+  解码回退 cp936 + 错误行改认位置前缀；中-22 引用改写补右守卫；中-23 缓存
+  2GB 上限按 mtime 淘汰；中-24 字体句柄 try/finally；中-25 CLI/Web 分析补
+  extract_scripts；中-26 前端轮询代际 token + 分析防连击 + 切页保留运行卡片；
+  中-27 APK 任务不显示无效停止按钮；中-28 选择框模块锁串行化；中-29 api()
+  捕网络异常 + 轮询失败恢复按钮；中-30 esc() 补引号转义；中-31 压缩包分析
+  强制 dist；中-32 CLI 各命令顶层兜底 + full 打包段补 try + analyze 解压失败
+  清理临时目录；中-33 撞名预检并入封包内资源名
+- 待确认 8 项（报告第五节）未动：需真实样本/环境实测，留待下批
+
+## 2026-08-17 多核放开（用户拍板，28 核机器实测）
+
+- 并行度不再写死 6 路：_worker_count 改为核心数减 2、上限 16（小批量
+  仍串行）；视频编码线程放开为核心数一半（上限 16）；音频保持单
+  线程编码（libvorbis/libmp3lame 天生不支持多线程，提速靠多 worker）
+- 显卡加速不做（用户知悉）：视频是默认关的实验功能，且 GPU 编码
+  同画质体积更大，与瘦身目标冲突
+- Cadaver 实测：514MB 成品全流程（解压+扫描+优化+回包）48 秒，
+  结果与旧并行度完全一致（省 303.8MB）；回归测试 101 项全绿
+
+## 2026-08-17 默认档画质优先 + 小文件也榨（用户拍板）
+
+- 默认档位 balanced → conservative（config/cli/web/前端四处硬编码
+  同步改为引用 DEFAULT_PRESET，前端两个下拉框 selected 同步迁移，
+  四语文案更新：推荐标识移到保守档）
+- 保守档强化：q95 近视觉无损 + 开启 WebP 转换（q95 WebP 同样近无损
+  但显著更小）；三档体积门槛统一降到 1KB——几十 KB 小图转 WebP
+  后只剩几 KB 且数量多，不再跳过；F8 APK 自动转发档改回 conservative
+  与原注释名实相符
+- Cadaver 实测对比（514MB 成品，同一入口）：画质优先档省 257.2MB/处理
+  图片 450 项；均衡档省 304.0MB/429 项（旧默认 303.8MB/368 项）——
+  小文件覆盖显著增加，画质优先的体积代价约 46MB（q95 vs q85 的必然结果）
+- 回归测试 103 项全绿（新增默认档画质优先 + 小文件门槛 2 条）
+
+## 2026-08-17 继续压榨批次 + CSE 视频样本实测（用户拍板）
+
+- 补漏：APK 侧 MP3 降码率重编码（成品侧早已支持，APK 侧漏了）；
+  交付 zip 压缩等级 6→9（包内大头已是压缩格式，收益微小但零风险）
+- CSE-2.1.0-pc 实测（981MB 资源，视频封 movies.rpa + unpacked 双存在）：
+  开 --videos 后 **省 634.8MB**；ED.webm 226.5MB→79.9MB（-65%）；
+  封包内与散文件两处同名视频都被正确压缩，3 个 rpa 重建成功；
+  视频功能默认关（实验性）维持不变，遇带视频的游戏手动勾选
+- 观察：LXGWWenKai-Bold.ttf 字体瘦身 fontTools 报 array index out of
+  range，兜底逻辑正确（保留原文件+警告），属待确认类小问题暂不动
+
+## 2026-08-17 视频编码优化与格式决策（用户关切"有没有更省的格式"）
+
+- **AV1 不采用（决策记录）**：AV1 同画质比 VP9 再省 30%+，但 Ren'Py
+  引擎自带 ffmpeg 不保证能放 AV1，开场动画放不出是灾难——坚持
+  "同名同格式、只换编码参数"，x264/VP9/theora 是引擎确定能放的上限；
+  体积/画质的选择交给全局档位（CRF 三档已覆盖），不另加视频档位
+- VP9 编码加 `-row-mt 1`（行级多线程）：编码快数倍，画质/体积不变，
+  零风险；CSE 小视频实测验证参数有效
+- **更正（同日官方文档研究后推翻上条）**：见下节
+- **GitHub 根目录文件整理结论**：根目录的 LICENSE/README×4/CONTRIBUTING/
+  CODE_OF_CONDUCT/SECURITY 是 GitHub 社区规范文件，靠根目录位置被
+  自动识别（About 栏/Community profile），**移进文件夹反而失效**；
+  项目文档早已在 docs/；待办：AGENTS.md 与 docs/AUDIT-2026-08-17.md
+  尚未纳入 git，随下次提交一起入库
+
+## 2026-08-17 Ren'Py 视频编码官方研究（推翻上节 AV1 结论）
+
+- 研究依据：官方文档 renpy.org/doc/html/movie.html + 本地引擎二进制
+  字符串扫描（游戏/SDK 的 librenpython.dll 均含 AV1/HEVC 解码器串）
+- **官方支持清单**：视频 AV1 / VP9 / VP8 / Theora / MPEG-4 part 2
+  (Xvid/DivX) / MPEG-2 / MPEG-1；容器 WebM / Matroska / Ogg / AVI /
+  MPEG 流；音频 Opus / Vorbis / MP3 / MP2 / FLAC / PCM
+- **官方明确不支持 H.264 解码（和 AAC）**：H.264+MP4 组合仅 Web
+  平台靠浏览器解码幸存——之前"AV1 不保证能放"的推断错误，真正
+  的风险反在 H.264 上
+- 落地改造（video_optimizer 重写）：
+  ① 新增 probe_video_codec（ffprobe 探原编码），"同编码重编"原则：
+     mp4 仅当原本就是 H.264 才按 H.264 重编（不新增风险），HEVC/
+     Xvid 等 mp4 与清单外 webm/ogv 一律不动并告警；
+  ② 新增实验选项 experimental_av1（CLI --av1 / 界面高级选项，四语
+     文案）：把非 AV1 的 webm 转成 AV1（SVT-AV1 编码），带"仅
+     Ren'Py 8.0+ 能放"警告；默认关；
+  ③ 原编码本就是 AV1 的视频自动维持 AV1 重编（零兼容风险，不需
+     用户勾选）——CSE 样本实测发现其视频全是 AV1，旧逻辑把它们
+     转成 VP9 属于白费劲
+- CSE 实测对比（hrt_1.webm 3.6MB，保守档）：AV1 同编码重编
+  -9%（3692→3361KB）耗时 2.3s；VP9 转码仅 -2% 耗时 6.5s
+- 回归测试 107 项全绿（新增同编码拦截/放行决策 4 条）；ruff 通过
+
+## 2026-08-17 反编译解锁 + 包回 rpa（用户拍板"精益求精"）
+
+- **vendor 引入 unrpyc v2.x**（MIT）到 rtools/vendor/unrpyc/，
+  THIRD_PARTY_NOTICES 新增内嵌源码节署名；CI ruff 排除 vendor
+  （上游代码保持原样）；新增 rtools/decompile.py 封装：跳过已有
+  源码、单文件失败容错（对应资源自动退回同名保守策略）
+- rpa.rebuild_archive 支持改名替换：替换值可为 (新名, 本地路径)
+  元组——旧条目剔除、新名入包（"按原样包回 rpa"，用户拍板默认行为）
+- run_dist 新增实验开关 experimental_decompile（CLI --decompile /
+  界面高级选项，四语文案，默认关）：反编译散落与封包内全部脚本，
+  封包内脚本产物拷回 game/ 对应位置（引擎加载优先于封包内同名
+  rpyc，自动重编译）；IMAGE/AUDIO 转换分支解锁 in_rpa，转换产物
+  改名入包 + 引用同步改写；重建失败时散落副本保留作兜底
+- CSE 实测（--decompile --videos，479 秒）：**省 635.7MB**；
+  images.rpa 替换 134 个文件（含 29 张包回 webp）、audio.rpa 158 个、
+  movies.rpa 14 个；反编译 59 个 rpy；引用改写验证通过
+  （如 liluo_common/common/fastwork_01.webp）
+- 回归测试 109 项全绿（新增 rebuild 改名替换 + 反编译往返 2 条）
+- 待办提醒：exe 打包需把 rtools/vendor/ 纳入 PyInstaller 数据
+  （RenPySlim.spec / build_exe.bat，下次发版前处理）
 
 ## 2026-08-17 多语言四语上线（用户四步计划）
 

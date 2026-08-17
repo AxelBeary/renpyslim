@@ -191,25 +191,32 @@ def find_missing_glyphs(font_path: str, chars: set[str], limit: int = 50
     除非游戏配置了回退字体。读取失败返回空列表（不阻断流程）。
     """
     from fontTools.ttLib import TTFont
+    font = None
     try:
         font = TTFont(font_path, fontNumber=0, lazy=True)
         cmap = font.getBestCmap() or {}
         missing = sorted(c for c in chars if c.isprintable() and ord(c) not in cmap)
-        font.close()
         return missing[:limit]
     except Exception:
         return []
+    finally:
+        # 审核修复（中-24）：getBestCmap 抛异常时已打开的句柄也要关
+        if font is not None:
+            try:
+                font.close()
+            except Exception:
+                pass
 
 
 def preview_subset(chars: set[str], font_path: str) -> dict:
     """瘦身前预览（第 4 层）：统计字体原有字形数与保留后字形数。"""
     from fontTools.ttLib import TTFont
+    font = None
     try:
         font = TTFont(font_path, fontNumber=0, lazy=True)
         cmap = font.getBestCmap() or {}
         total_glyphs = len(cmap)
         keep = sum(1 for c in chars if ord(c) in cmap)
-        font.close()
         return {
             "total_glyphs": total_glyphs,
             "keep_glyphs": keep,
@@ -218,3 +225,10 @@ def preview_subset(chars: set[str], font_path: str) -> dict:
         }
     except Exception as e:
         return {"error": str(e)}
+    finally:
+        # 审核修复（中-24）：同上，异常路径也要关句柄
+        if font is not None:
+            try:
+                font.close()
+            except Exception:
+                pass

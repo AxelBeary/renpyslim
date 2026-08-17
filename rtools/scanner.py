@@ -187,8 +187,14 @@ def scan_rpa_assets(root: str, extract_dir: str, probe: bool = True,
                 size=out.stat().st_size,
                 in_rpa=True, rpa_name=p.name,
             )
-            if probe and kind == AssetKind.IMAGE:
-                info.width, info.height = _image_size(str(out))
+            if probe:
+                if kind == AssetKind.IMAGE:
+                    info.width, info.height = _image_size(str(out))
+                elif kind in (AssetKind.AUDIO, AssetKind.VIDEO):
+                    # 审核修复（中-19）：封包内音频也得探码率，否则成品
+                    # 模式降码率判断（依赖 a.bitrate）对音频绝大多数
+                    # 封在 rpa 里的主体场景永远失效（文件已解出，成本可控）
+                    info.duration, info.bitrate = _probe_media(str(out))
             results.append(info)
         return results
     finally:

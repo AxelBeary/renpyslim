@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import shutil
 import sys
+import uuid
 from pathlib import Path
 from typing import Optional
 
@@ -43,11 +44,15 @@ def _transcode(src: str, dst: str, bitrate_k: int, ext: str) -> Optional[dict]:
 
     src_p, dst_p = Path(src), Path(dst)
     old_size = src_p.stat().st_size
-    tmp = dst_p.with_name(dst_p.name + ".rtools.tmp" + ext)
+    # 审核修复（高-3）：tmp 名带随机后缀——a.wav→a.ogg 的转换 job 与
+    # a.ogg 原地重编码 job 曾共用同一 tmp 名，并行下互踩
+    tmp = dst_p.with_name(f"{dst_p.name}.rtools.{uuid.uuid4().hex[:8]}.tmp{ext}")
 
     codec_args = ["-c:a", "libvorbis", "-b:a", f"{bitrate_k}k"] if ext == ".ogg" \
         else ["-b:a", f"{bitrate_k}k"]
 
+    # 单线程是有意为之：libvorbis/libmp3lame 编码器天生不支持多线程，
+    # 音频提速靠 _run_jobs 的多 worker 并行（最多 16 路），不靠单任务多线程
     cmd = [ffmpeg, "-y", "-v", "error", "-threads", "1",
            "-i", str(src_p), *codec_args, str(tmp)]
     try:
