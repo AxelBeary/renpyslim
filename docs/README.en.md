@@ -2,9 +2,9 @@
 
 > All-in-one Ren'Py asset slimming & packaging toolkit
 
-**🌐 Language:** [简体中文](README.md) | **English** | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
+**🌐 Language:** [简体中文](../README.md) | **English** | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
-**License: [AGPL-3.0](LICENSE)** · Third-party notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+**License: [AGPL-3.0](../LICENSE)** · Third-party notices in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ---
 
@@ -86,7 +86,7 @@ python cli.py slimfont <font> <text sources...>    # standalone font slimming
 python cli.py slimapk <apk> --remap --gen-key      # APK slimming (WebP/OGG + re-sign)
 ```
 
-> AI assistants / automation scripts: read [AGENTS.md](AGENTS.md) first (safety rules and troubleshooting included).
+> AI assistants / automation scripts: read [AGENTS.md](../AGENTS.md) first (safety rules and troubleshooting included).
 
 ## Requirements
 
@@ -151,9 +151,9 @@ build_exe.bat             # rebuild the exe
 
 **Maintainers/agents, read first:**
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): architecture blueprint, safety red lines, extension guide
-- [docs/BACKLOG.md](docs/BACKLOG.md): requirement archive and todos (new ideas go here first)
-- [docs/STATUS.md](docs/STATUS.md): handover status and field-test record
+- [docs/ARCHITECTURE.md](ARCHITECTURE.md): architecture blueprint, safety red lines, extension guide
+- [docs/BACKLOG.md](BACKLOG.md): requirement archive and todos (new ideas go here first)
+- [docs/STATUS.md](STATUS.md): handover status and field-test record
 
 ## Localization
 

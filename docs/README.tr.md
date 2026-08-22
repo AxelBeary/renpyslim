@@ -2,9 +2,9 @@
 
 > Ren'Py kaynak dosyalarınızı tek elden inceltip paketleyen hepsi bir arada araç kutusu
 
-**Dil / Language:** [简体中文（默认）](README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | **Türkçe** | [Deutsch](README.de.md) | [Français](README.fr.md)
+**Dil / Language:** [简体中文（默认）](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | **Türkçe** | [Deutsch](README.de.md) | [Français](README.fr.md)
 
-**Lisans: [AGPL-3.0](LICENSE)** · Üçüncü taraf bildirimleri için [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+**Lisans: [AGPL-3.0](../LICENSE)** · Üçüncü taraf bildirimleri için [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 > Bu araç yapay zekâyla yoğun biçimde geliştirilmiştir; kullanmadan önce kodu gözden geçirmenizi öneririz. Geliştirici, yanlış kullanımdan doğan hiçbir sonuçtan sorumlu değildir. **Verileriniz değerlidir!**
 
@@ -102,7 +102,7 @@ python cli.py slimfont <字体> <文本来源...>        # 独立字体瘦身
 python cli.py slimapk <apk> --remap --gen-key      # APK 瘦身（图转WebP/音转OGG+重签名）
 ```
 
-> Yapay zekâ asistanları / otomasyon betikleri: çağırmadan önce mutlaka [AGENTS.md](AGENTS.md) dosyasını okuyun (güvenlik kuralları ve hata giderme dahildir).
+> Yapay zekâ asistanları / otomasyon betikleri: çağırmadan önce mutlaka [AGENTS.md](../AGENTS.md) dosyasını okuyun (güvenlik kuralları ve hata giderme dahildir).
 
 ## Sistem gereksinimleri
 
@@ -169,9 +169,9 @@ build_exe.bat             # 重新打包 exe
 
 **Bakımcılar/Agent'lar önce şunları okuyun:**
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): mimari taslak, güvenlik kırmızı çizgileri, genişletme rehberi
-- [docs/BACKLOG.md](docs/BACKLOG.md): talep arşivi ve yapılacaklar (yeni talepler önce buraya yazılır)
-- [docs/STATUS.md](docs/STATUS.md): devralma durumu ve saha testi geçmişi
+- [docs/ARCHITECTURE.md](ARCHITECTURE.md): mimari taslak, güvenlik kırmızı çizgileri, genişletme rehberi
+- [docs/BACKLOG.md](BACKLOG.md): talep arşivi ve yapılacaklar (yeni talepler önce buraya yazılır)
+- [docs/STATUS.md](STATUS.md): devralma durumu ve saha testi geçmişi
 
 ## Çoklu dil desteği / Localization
 

@@ -2,9 +2,9 @@
 
 > Herramienta todo en uno para adelgazar recursos y empaquetar juegos de Ren'Py
 
-**🌐 Idioma:** [简体中文](README.md) | [English](README.en.md) | [Русский](README.ru.md) | **Español** | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
+**🌐 Idioma:** [简体中文](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | **Español** | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
-**Licencia: [AGPL-3.0](LICENSE)** · Avisos de terceros en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+**Licencia: [AGPL-3.0](../LICENSE)** · Avisos de terceros en [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ---
 
@@ -154,9 +154,9 @@ build_exe.bat             # recompilar el exe
 
 **Mantenedores/agentes, leer primero:**
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): plano de arquitectura, líneas rojas de seguridad, guía de extensión
-- [docs/BACKLOG.md](docs/BACKLOG.md): archivo de requisitos y pendientes (las ideas nuevas van aquí primero)
-- [docs/STATUS.md](docs/STATUS.md): estado de traspaso y resultados de pruebas reales
+- [docs/ARCHITECTURE.md](ARCHITECTURE.md): plano de arquitectura, líneas rojas de seguridad, guía de extensión
+- [docs/BACKLOG.md](BACKLOG.md): archivo de requisitos y pendientes (las ideas nuevas van aquí primero)
+- [docs/STATUS.md](STATUS.md): estado de traspaso y resultados de pruebas reales
 
 ## Localización
 

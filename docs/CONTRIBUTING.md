@@ -16,11 +16,11 @@ python main.py            # 启动图形界面（开发模式）
 
 ## 动手之前 / Before you code
 
-1. 先读 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)——里面有 9 条
+1. 先读 [docs/ARCHITECTURE.md](ARCHITECTURE.md)——里面有 9 条
    **安全红线**（工作副本、没变小不替换、引用门控、引擎目录保护等），
    任何改动不得违反。
-2. 新需求先落进 [docs/BACKLOG.md](docs/BACKLOG.md) 再动代码。
-3. 界面改动遵守 [web/static/index.html](web/static/index.html) 的
+2. 新需求先落进 [docs/BACKLOG.md](BACKLOG.md) 再动代码。
+3. 界面改动遵守 [web/static/index.html](../web/static/index.html) 的
    单文件零依赖架构：不引外部 CSS/JS、不加载网络资源；新增文案必须
    四语齐全（I18N 的 zh/en/ru/es 字典，缺一会被测试拦下）。
 
@@ -36,14 +36,14 @@ python main.py            # 启动图形界面（开发模式）
 
 想添加新语言（比如 ja/ko），四步：
 
-1. **界面字典**：在 [web/static/index.html](web/static/index.html) 的 `I18N`
+1. **界面字典**：在 [web/static/index.html](../web/static/index.html) 的 `I18N`
    里新增一本字典（照 zh 的键集逐键翻译；`tests/test_i18n.py` 会强制
    八本字典键集一致，缺键立刻红）。
 2. **登记语言**：同文件的 `LANGS` 注册表加一行（语言选择器选项由它生成），
    并把新语言码加进 `tests/test_i18n.py` 的 `LANGS` 常量。
 3. **日志模板**：`LOG_PATTERNS` 里每条模式补该语言的模板
    （缺省会回退英文，不影响运行）。
-4. **文档**：新增 `README.<语言码>.md`（参照 README.en.md 结构），并把
+4. **文档**：新增 `docs/README.<语言码>.md`（参照 docs/README.en.md 结构），并把
    各 README 顶部的语言行与 README.md 的「多语言支持」表格补上新条目。
 
 ## 版本与发布 / Versioning

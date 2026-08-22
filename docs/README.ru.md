@@ -2,9 +2,9 @@
 
 > Инструмент «всё в одном» для сжатия ресурсов и упаковки игр Ren'Py
 
-**🌐 Язык:** [简体中文](README.md) | [English](README.en.md) | **Русский** | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
+**🌐 Язык:** [简体中文](../README.md) | [English](README.en.md) | **Русский** | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
-**Лицензия: [AGPL-3.0](LICENSE)** · Сторонние компоненты: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+**Лицензия: [AGPL-3.0](../LICENSE)** · Сторонние компоненты: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 ---
 
@@ -152,9 +152,9 @@ build_exe.bat             # пересборка exe
 
 **Сопровождающим/агентам — читать сначала:**
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): архитектурный план, красные линии безопасности, руководство по расширению
-- [docs/BACKLOG.md](docs/BACKLOG.md): архив требований и задачи (новые идеи — сюда)
-- [docs/STATUS.md](docs/STATUS.md): статус передачи и результаты полевых испытаний
+- [docs/ARCHITECTURE.md](ARCHITECTURE.md): архитектурный план, красные линии безопасности, руководство по расширению
+- [docs/BACKLOG.md](BACKLOG.md): архив требований и задачи (новые идеи — сюда)
+- [docs/STATUS.md](STATUS.md): статус передачи и результаты полевых испытаний
 
 ## Локализация
 

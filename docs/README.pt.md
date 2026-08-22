@@ -2,9 +2,9 @@
 
 > Ferramenta completa para reduzir o tamanho e empacotar recursos de jogos Ren'Py · Ren'Py asset slimming & packaging toolkit
 
-**Idioma / Language:** [简体中文（默认）](README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | **Português (BR)** | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
+**Idioma / Language:** [简体中文（默认）](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | **Português (BR)** | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
-**Licença: [AGPL-3.0](LICENSE)** · Avisos de terceiros em [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+**Licença: [AGPL-3.0](../LICENSE)** · Avisos de terceiros em [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 > Este projeto usa IA de forma intensiva; recomendamos que você verifique o código antes de usar. O desenvolvedor não se responsabiliza por quaisquer consequências causadas pelo uso incorreto. **Seus dados valem ouro!**
 
@@ -95,7 +95,7 @@ python cli.py slimfont <字体> <文本来源...>        # 独立字体瘦身
 python cli.py slimapk <apk> --remap --gen-key      # APK 瘦身（图转WebP/音转OGG+重签名）
 ```
 
-> Assistentes de IA / scripts de automação: leia primeiro o [AGENTS.md](AGENTS.md) (inclui regras de segurança e solução de erros).
+> Assistentes de IA / scripts de automação: leia primeiro o [AGENTS.md](../AGENTS.md) (inclui regras de segurança e solução de erros).
 
 ## Requisitos do ambiente
 
@@ -158,9 +158,9 @@ build_exe.bat             # 重新打包 exe
 
 **Mantenedores/Agentes, leiam primeiro:**
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): planta da arquitetura, linhas vermelhas de segurança, guia de extensão
-- [docs/BACKLOG.md](docs/BACKLOG.md): arquivo de requisitos e pendências (novas ideias entram aqui primeiro)
-- [docs/STATUS.md](docs/STATUS.md): estado da passagem de bastão e resultados de testes reais
+- [docs/ARCHITECTURE.md](ARCHITECTURE.md): planta da arquitetura, linhas vermelhas de segurança, guia de extensão
+- [docs/BACKLOG.md](BACKLOG.md): arquivo de requisitos e pendências (novas ideias entram aqui primeiro)
+- [docs/STATUS.md](STATUS.md): estado da passagem de bastão e resultados de testes reais
 
 ## Suporte a vários idiomas / Localization
 

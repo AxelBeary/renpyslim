@@ -2,9 +2,9 @@
 
 > 一站式 Ren'Py 资源瘦身与打包工具 · Ren'Py asset slimming & packaging toolkit
 
-**🌐 语言 / Language：** **简体中文** | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
+**🌐 语言 / Language：** **简体中文** | [English](docs/README.en.md) | [Русский](docs/README.ru.md) | [Español](docs/README.es.md) | [Português (BR)](docs/README.pt.md) | [Türkçe](docs/README.tr.md) | [Deutsch](docs/README.de.md) | [Français](docs/README.fr.md)
 
-**协议：[AGPL-3.0](LICENSE)** · 第三方声明见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+**协议：[AGPL-3.0](LICENSE)** · 第三方声明见 [THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md)
 
 > 本项目使用 AI 深度参与开发，建议您在使用前检查代码，开发者对错误使用造成的任何后果概不负责。**数据无价！**
 
@@ -164,16 +164,16 @@ build_exe.bat             # 重新打包 exe
 | 语言 | 界面 | 文档 | 状态 |
 |---|---|---|---|
 | 简体中文 | ✅ 默认 | ✅ 本文档 | 已上线 |
-| English | ✅ | [README.en.md](README.en.md) | 已上线 |
-| Русский | ✅ | [README.ru.md](README.ru.md) | 已上线 |
-| Español | ✅ | [README.es.md](README.es.md) | 已上线 |
-| Português (BR) | ✅ | [README.pt.md](README.pt.md) | 已上线 |
-| Türkçe | ✅ | [README.tr.md](README.tr.md) | 已上线 |
-| Deutsch | ✅ | [README.de.md](README.de.md) | 已上线 |
-| Français | ✅ | [README.fr.md](README.fr.md) | 已上线 |
+| English | ✅ | [README.en.md](docs/README.en.md) | 已上线 |
+| Русский | ✅ | [README.ru.md](docs/README.ru.md) | 已上线 |
+| Español | ✅ | [README.es.md](docs/README.es.md) | 已上线 |
+| Português (BR) | ✅ | [README.pt.md](docs/README.pt.md) | 已上线 |
+| Türkçe | ✅ | [README.tr.md](docs/README.tr.md) | 已上线 |
+| Deutsch | ✅ | [README.de.md](docs/README.de.md) | 已上线 |
+| Français | ✅ | [README.fr.md](docs/README.fr.md) | 已上线 |
 
-想添加新语言？见 [CONTRIBUTING.md](CONTRIBUTING.md) 的"翻译指南"——
-界面加一份字典、文档加一个 README.<语言码>.md 即可。
+想添加新语言？见 [CONTRIBUTING.md](docs/CONTRIBUTING.md) 的"翻译指南"——
+界面加一份字典、文档加一个 docs/README.<语言码>.md 即可。
 
 ## 协议与合规
 
@@ -181,9 +181,9 @@ build_exe.bat             # 重新打包 exe
   但修改后的版本（包括通过网络提供服务时）必须以同样的协议开源。
   个人给自己的游戏瘦身不受任何限制；分发修改版时才触发开源义务。
 - 第三方依赖与格式参考实现的完整声明：
-  [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+  [THIRD_PARTY_NOTICES.md](docs/THIRD_PARTY_NOTICES.md)
   （含 pystray 的 LGPL 合规说明、Ren'Py 格式致谢、外部程序边界）
-- 参与贡献请先读 [CONTRIBUTING.md](CONTRIBUTING.md)；
-  漏洞请走 [SECURITY.md](SECURITY.md) 的私密报告渠道。
+- 参与贡献请先读 [CONTRIBUTING.md](docs/CONTRIBUTING.md)；
+  漏洞请走 [SECURITY.md](docs/SECURITY.md) 的私密报告渠道。
 - Ren'Py 是 Tom Rothamel 等人的注册商标/项目；本项目与其无隶属关系，
   仅为 Ren'Py 社区提供的独立第三方工具。

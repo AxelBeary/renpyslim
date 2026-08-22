@@ -2,9 +2,9 @@
 
 > Die All-in-One-Werkzeugkiste zum Abspecken und Verpacken von Ren'Py-Ressourcen · Ren'Py asset slimming & packaging toolkit
 
-**Sprache / Language:** [简体中文（默认）](README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | **Deutsch** | [Français](README.fr.md)
+**Sprache / Language:** [简体中文（默认）](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | **Deutsch** | [Français](README.fr.md)
 
-**Lizenz: [AGPL-3.0](LICENSE)** · Hinweise zu Drittanbietern findest du in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+**Lizenz: [AGPL-3.0](../LICENSE)** · Hinweise zu Drittanbietern findest du in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 > Dieses Projekt wurde mit Hilfe von KI zusammengehackt ("tief geschissen"). Wir empfehlen dir, den Code vor der Nutzung zu prüfen. Die Entwickler übernehmen keinerlei Verantwortung für Folgen einer falschen Verwendung. **Deine Daten sind unbezahlbar!**
 
@@ -100,7 +100,7 @@ python cli.py slimfont <字体> <文本来源...>        # 独立字体瘦身
 python cli.py slimapk <apk> --remap --gen-key      # APK 瘦身（图转WebP/音转OGG+重签名）
 ```
 
-> KI-Assistenten / Automatisierungsskripte: Bitte lies vor dem Aufruf zuerst [AGENTS.md](AGENTS.md) (enthält Sicherheitsregeln und Fehlerbehebung).
+> KI-Assistenten / Automatisierungsskripte: Bitte lies vor dem Aufruf zuerst [AGENTS.md](../AGENTS.md) (enthält Sicherheitsregeln und Fehlerbehebung).
 
 ## Systemvoraussetzungen
 
@@ -164,9 +164,9 @@ build_exe.bat             # 重新打包 exe
 
 **Bitte zuerst lesen, für Maintainer/Agenten:**
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): Architektur-Blaupause, Sicherheits-Grundlinien, Erweiterungsleitfaden
-- [docs/BACKLOG.md](docs/BACKLOG.md): Archiv der Anforderungen und offene Aufgaben (neue Wünsche zuerst hier eintragen)
-- [docs/STATUS.md](docs/STATUS.md): Übergabestatus und Praxistest-Ergebnisse
+- [docs/ARCHITECTURE.md](ARCHITECTURE.md): Architektur-Blaupause, Sicherheits-Grundlinien, Erweiterungsleitfaden
+- [docs/BACKLOG.md](BACKLOG.md): Archiv der Anforderungen und offene Aufgaben (neue Wünsche zuerst hier eintragen)
+- [docs/STATUS.md](STATUS.md): Übergabestatus und Praxistest-Ergebnisse
 
 ## Mehrsprachigkeit / Localization
 

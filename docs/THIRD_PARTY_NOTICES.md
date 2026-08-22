@@ -1,6 +1,6 @@
 # Third-Party Notices / 第三方声明
 
-RenPySlim is licensed under **AGPL-3.0** (see [LICENSE](LICENSE)).
+RenPySlim is licensed under **AGPL-3.0** (see [LICENSE](../LICENSE)).
 This file lists the third-party components the project uses, their licenses,
 and how they are distributed. 中文摘要见每节末尾。
 

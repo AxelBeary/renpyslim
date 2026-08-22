@@ -2,9 +2,9 @@
 
 > La boîte à outils tout-en-un pour alléger et empaqueter les ressources de tes jeux Ren'Py
 
-**Langue / Language:** [简体中文（默认）](README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | **Français**
+**Langue / Language:** [简体中文（默认）](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | **Français**
 
-**Licence : [AGPL-3.0](LICENSE)** · Les mentions des tiers sont dans [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
+**Licence : [AGPL-3.0](../LICENSE)** · Les mentions des tiers sont dans [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
 > Ce projet est façonné en profondeur par l'IA : nous te conseillons de vérifier le code avant de l'utiliser. Le développeur décline toute responsabilité pour les conséquences d'une mauvaise utilisation. **Tes données n'ont pas de prix !**
 
@@ -97,7 +97,7 @@ python cli.py slimfont <字体> <文本来源...>        # allègement de police
 python cli.py slimapk <apk> --remap --gen-key      # allègement d'APK (images→WebP/audio→OGG + re-signature)
 ```
 
-> Assistants IA / scripts d'automatisation : lisez d'abord [AGENTS.md](AGENTS.md) (règles de sécurité et dépannage inclus).
+> Assistants IA / scripts d'automatisation : lisez d'abord [AGENTS.md](../AGENTS.md) (règles de sécurité et dépannage inclus).
 
 ## Prérequis
 
@@ -160,9 +160,9 @@ build_exe.bat             # reconditionne l'exe
 
 **Mainteneurs/agents, lisez d'abord :**
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) : plan de l'architecture, lignes rouges de sécurité, guide d'extension
-- [docs/BACKLOG.md](docs/BACKLOG.md) : archive des demandes et tâches à faire (les nouvelles demandes atterrissent d'abord ici)
-- [docs/STATUS.md](docs/STATUS.md) : état du passage de relais et résultats de tests réels
+- [docs/ARCHITECTURE.md](ARCHITECTURE.md) : plan de l'architecture, lignes rouges de sécurité, guide d'extension
+- [docs/BACKLOG.md](BACKLOG.md) : archive des demandes et tâches à faire (les nouvelles demandes atterrissent d'abord ici)
+- [docs/STATUS.md](STATUS.md) : état du passage de relais et résultats de tests réels
 
 ## Prise en charge multilingue / Localization
 
