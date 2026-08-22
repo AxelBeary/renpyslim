@@ -81,12 +81,14 @@ def test_unsupported_ext_message(tmp_path):
 def test_inject_archive_config(tmp_path):
     proj = tmp_path / "proj"
     (proj / "game").mkdir(parents=True)
-    cfg = inject_archive_config(str(proj))
+    cfg, backed_up = inject_archive_config(str(proj))
+    assert backed_up is False
     text = Path(cfg).read_text(encoding="utf-8")
     assert Path(cfg).name == ARCHIVE_CONFIG_NAME
     assert 'build.archive("main", "all")' in text
     assert 'build.classify("game/**.png", "main")' in text
-    # 重复注入不叠加
-    inject_archive_config(str(proj))
+    # 重复注入不叠加（本工具自己的文件直接覆写，不产生备份）
+    cfg2, backed_up2 = inject_archive_config(str(proj))
+    assert cfg2 == cfg and backed_up2 is False
     text2 = Path(cfg).read_text(encoding="utf-8")
     assert text2.count("build.archive") == 1

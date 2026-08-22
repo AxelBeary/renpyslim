@@ -18,6 +18,25 @@ _ACTIVE: set = set()
 _ACTIVE_LOCK = threading.Lock()
 
 
+def _kill_tree(proc) -> None:
+    """杀掉指定进程（Windows 上杀整棵进程树）。
+
+    .bat→cmd→java 这类链式启动只杀直接进程会留下孤儿：
+    超时/取消后 java 继续占用文件。故 Windows 一律用
+    taskkill /T /F /PID 连树拔除；非 Windows 保持 kill()。
+    """
+    try:
+        if sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                creationflags=_NO_WINDOW, timeout=15)
+        else:
+            proc.kill()
+    except Exception:
+        pass
+
+
 def run_quiet(cmd, **kwargs) -> subprocess.CompletedProcess:
     """subprocess.run 的静默版：Windows 下不弹控制台窗口。
 
@@ -38,7 +57,9 @@ def run_quiet(cmd, **kwargs) -> subprocess.CompletedProcess:
         try:
             out, err = proc.communicate(timeout=timeout)
         except subprocess.TimeoutExpired:
-            proc.kill()
+            # 第二波修复：只杀直接进程会留下链式孤儿（apksigner.bat→cmd→java）
+            # 继续占文件跑满时长，改与 kill_children 相同的杀树逻辑
+            _kill_tree(proc)
             out, err = proc.communicate()
             raise
         finally:
@@ -56,13 +77,4 @@ def kill_children() -> None:
     with _ACTIVE_LOCK:
         procs = list(_ACTIVE)
     for proc in procs:
-        try:
-            if sys.platform == "win32":
-                subprocess.run(
-                    ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    creationflags=_NO_WINDOW, timeout=15)
-            else:
-                proc.kill()
-        except Exception:
-            pass
+        _kill_tree(proc)

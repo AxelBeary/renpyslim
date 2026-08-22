@@ -22,6 +22,7 @@ from typing import Optional
 
 from .audio_optimizer import find_ffmpeg
 from .config import DEFAULT_PRESET
+from .image_optimizer import OptimizeResult
 from .procutil import run_quiet
 
 # 档位 → CRF（越大越省、画质越低）
@@ -43,8 +44,8 @@ _WEBM_SAFE_CODECS = {"vp9", "vp8", "av1"}
 
 def probe_video_codec(path: str) -> Optional[str]:
     """用 ffprobe 探测视频流的编码名（如 h264/vp9/hevc），失败返回 None。"""
-    from .scanner import _FFPROBE
-    ffprobe = _FFPROBE
+    from .scanner import find_ffprobe
+    ffprobe = find_ffprobe()
     if not ffprobe:
         return None
     try:
@@ -81,12 +82,13 @@ def encoder_available(name: str) -> bool:
 
 
 def compress_video(src: str, dst: str, preset: str = DEFAULT_PRESET,
-                   use_av1: bool = False) -> Optional[dict]:
-    """重编码视频到 dst（可与 src 相同，原地）。没变小则不动目标，返回 None。
+                   use_av1: bool = False) -> OptimizeResult:
+    """重编码视频到 dst（可与 src 相同，原地）。三态返回（见 OptimizeResult）。
 
     安全原则（依据官方文档，见模块 docstring）：先探测原编码，
-    不在 Ren'Py 官方支持清单内的不动（抛 RuntimeError 说明原因，
-    由流水线转成用户可见的警告）；在清单内的按同族编码重编。
+    不在 Ren'Py 官方支持清单内的不动（归 skipped 并带原因，由流水线
+    转成用户可见的警告）；在清单内的按同族编码重编；压完没变小也归
+    skipped；FFmpeg 执行出错等真错误归 failed。
     use_av1=True（实验选项）时 .webm 用 SVT-AV1 替代 VP9——AV1 更省
     且官方推荐，但仅 Ren'Py 8.0+ 引擎能放，界面侧已带警告。
     """
@@ -98,21 +100,28 @@ def compress_video(src: str, dst: str, preset: str = DEFAULT_PRESET,
     ext = src_p.suffix.lower()
     codec = probe_video_codec(str(src_p))
 
+    def _refuse(why: str) -> OptimizeResult:
+        # 保守拒绝：不盲编、不动目标文件，只留原因（第二波修复：统一归 skipped，
+        # 不再抛 RuntimeError，流水线按“格式不适合”记账并转成用户可见警告）
+        return OptimizeResult(status="skipped",
+                              reason=f"{why}，转码有放不出来的风险，已保留原文件。")
+
     if ext == ".mp4":
         # 官方不支持 H.264 解码：仅当原文件本来就是 H.264（说明该
         # 游戏接受 H.264）才按 H.264 重编，不新增风险；其他编码
-        # （mpeg4/hevc 等）转 H.264 可能让原本能放的变成放不出
+        # （mpeg4/hevc 等）转 H.264 可能让原本能放的变成放不出；
+        # 探测返回 None（编码未知）同样保守拒绝，不猜（第二波修复）。
         if codec != "h264":
-            raise RuntimeError(
-                f"原编码为 {codec or '未知'}：Ren'Py 官方仅支持特定编码，"
-                "转码有放不出来的风险，已保留原文件。")
+            return _refuse(
+                f"原编码为 {codec or '未知'}：Ren'Py 官方仅支持特定编码")
         v_codec = ["-c:v", "libx264", "-crf", str(CRF_BY_PRESET.get(preset, 28)),
                    "-preset", "medium", "-pix_fmt", "yuv420p"]
     elif ext == ".webm":
-        if codec and codec not in _WEBM_SAFE_CODECS:
-            raise RuntimeError(
-                f"原编码为 {codec}：不在 Ren'Py 官方支持清单内，"
-                "转码有风险，已保留原文件。")
+        # 第二波修复：探测返回 None（编码未知）不再盲编，与 mp4 分支一致的
+        # 保守拒绝——保持“先探测、不在清单内不动”的模块原则。
+        if not codec or codec not in _WEBM_SAFE_CODECS:
+            return _refuse(
+                f"原编码为 {codec or '未知'}：不在 Ren'Py 官方支持清单内")
         # 原编码就是 AV1：维持 AV1 重编（游戏本来就放 AV1，零兼容风险，
         # 且 SVT-AV1 实测更快更省）——不需要用户勾选；只有把非 AV1
         # 转成 AV1 才算实验行为（需 use_av1，界面带 8.0+ 警告）
@@ -128,34 +137,41 @@ def compress_video(src: str, dst: str, preset: str = DEFAULT_PRESET,
                        "-crf", str(VP9_CRF_BY_PRESET.get(preset, 34)),
                        "-b:v", "0", "-row-mt", "1"]
     elif ext == ".ogv":
-        if codec and codec != "theora":
-            raise RuntimeError(
-                f"原编码为 {codec}：ogv 容器按官方支持清单应为 Theora，"
-                "转码有风险，已保留原文件。")
+        # 第二波修复：同上，探测返回 None（编码未知）也保守拒绝，不盲编。
+        if codec != "theora":
+            return _refuse(
+                f"原编码为 {codec or '未知'}：ogv 容器按官方支持清单应为 Theora")
         v_codec = ["-c:v", "libtheora", "-q:v",
                    str(THEORA_Q_BY_PRESET.get(preset, 6))]
     else:
-        return None
+        return OptimizeResult(status="skipped",
+                              reason=f"不支持的视频容器格式 {ext}")
 
-    old_size = src_p.stat().st_size
-    # 审核修复（高-3）：tmp 名带随机后缀防并行踩踏
+    # 审核修复（高-3）：tmp 名带随机后缀防并行踩踏；old_size 挪进 try：
+    # 源文件不存在/被占用等真错误归 failed，不再裸抛（第二波修复）
     tmp = dst_p.with_name(f"{dst_p.name}.rtools.{uuid.uuid4().hex[:8]}.tmp{ext}")
-    cmd = [ffmpeg, "-y", "-v", "error", "-threads", str(_V_THREADS),
-           "-i", str(src_p), *v_codec, "-c:a", "copy", str(tmp)]
     try:
+        old_size = src_p.stat().st_size
+        cmd = [ffmpeg, "-y", "-v", "error", "-threads", str(_V_THREADS),
+               "-i", str(src_p), *v_codec, "-c:a", "copy", str(tmp)]
         proc = run_quiet(cmd, capture_output=True, timeout=7200)
         if proc.returncode != 0 or not tmp.exists():
             tmp.unlink(missing_ok=True)
-            return None
-    except Exception:
+            err = proc.stderr.decode("utf-8", "replace").strip() if proc.stderr else ""
+            return OptimizeResult(
+                status="failed",
+                reason=f"FFmpeg 重编码失败（退出码 {proc.returncode}）{err[:200]}")
+    except Exception as e:
         tmp.unlink(missing_ok=True)
-        return None
+        return OptimizeResult(status="failed", reason=str(e))
 
     new_size = tmp.stat().st_size
     if new_size >= old_size:
         tmp.unlink(missing_ok=True)
-        return None
+        return OptimizeResult(status="skipped",
+                              reason="已是最优，压不出更小")
 
     dst_p.parent.mkdir(parents=True, exist_ok=True)
     tmp.replace(dst_p)
-    return {"old_size": old_size, "new_size": new_size}
+    return OptimizeResult(status="ok", path=str(dst_p),
+                          old_size=old_size, new_size=new_size)

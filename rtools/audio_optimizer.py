@@ -7,6 +7,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from .image_optimizer import OptimizeResult
 from .procutil import run_quiet
 
 
@@ -26,49 +27,55 @@ def find_ffmpeg() -> Optional[str]:
     return None
 
 
-def convert_audio(src: str, dst: str, bitrate_k: int) -> Optional[dict]:
-    """转码音频（如 WAV/MP3 -> OGG）。结果没变小则不动原文件，返回 None。"""
+def convert_audio(src: str, dst: str, bitrate_k: int) -> OptimizeResult:
+    """转码音频（如 WAV/MP3 -> OGG）。三态返回（见 OptimizeResult）：
+    成功 ok；压完没变小归 skipped；FFmpeg 出错等真错误归 failed。"""
     return _transcode(src, dst, bitrate_k, ext=".ogg")
 
 
-def reencode_audio(src: str, dst: str, bitrate_k: int) -> Optional[dict]:
+def reencode_audio(src: str, dst: str, bitrate_k: int) -> OptimizeResult:
     """同格式重编码（模式 B 用：保持扩展名不变，只压体积）。"""
     ext = Path(src).suffix.lower()
     return _transcode(src, dst, bitrate_k, ext=ext)
 
 
-def _transcode(src: str, dst: str, bitrate_k: int, ext: str) -> Optional[dict]:
+def _transcode(src: str, dst: str, bitrate_k: int, ext: str) -> OptimizeResult:
     ffmpeg = find_ffmpeg()
     if not ffmpeg:
         raise RuntimeError("找不到 FFmpeg，无法处理音频。请安装 FFmpeg 或放入 bin 目录。")
 
     src_p, dst_p = Path(src), Path(dst)
-    old_size = src_p.stat().st_size
     # 审核修复（高-3）：tmp 名带随机后缀——a.wav→a.ogg 的转换 job 与
     # a.ogg 原地重编码 job 曾共用同一 tmp 名，并行下互踩
     tmp = dst_p.with_name(f"{dst_p.name}.rtools.{uuid.uuid4().hex[:8]}.tmp{ext}")
 
-    codec_args = ["-c:a", "libvorbis", "-b:a", f"{bitrate_k}k"] if ext == ".ogg" \
-        else ["-b:a", f"{bitrate_k}k"]
-
-    # 单线程是有意为之：libvorbis/libmp3lame 编码器天生不支持多线程，
-    # 音频提速靠 _run_jobs 的多 worker 并行（最多 16 路），不靠单任务多线程
-    cmd = [ffmpeg, "-y", "-v", "error", "-threads", "1",
-           "-i", str(src_p), *codec_args, str(tmp)]
     try:
+        old_size = src_p.stat().st_size
+        codec_args = ["-c:a", "libvorbis", "-b:a", f"{bitrate_k}k"] if ext == ".ogg" \
+            else ["-b:a", f"{bitrate_k}k"]
+
+        # 单线程是有意为之：libvorbis/libmp3lame 编码器天生不支持多线程，
+        # 音频提速靠 _run_jobs 的多 worker 并行（最多 16 路），不靠单任务多线程
+        cmd = [ffmpeg, "-y", "-v", "error", "-threads", "1",
+               "-i", str(src_p), *codec_args, str(tmp)]
         proc = run_quiet(cmd, capture_output=True, timeout=600)
         if proc.returncode != 0 or not tmp.exists():
             tmp.unlink(missing_ok=True)
-            return None
-    except Exception:
-        tmp.unlink(missing_ok=True)
-        return None
+            err = proc.stderr.decode("utf-8", "replace").strip() if proc.stderr else ""
+            return OptimizeResult(
+                status="failed",
+                reason=f"FFmpeg 转码失败（退出码 {proc.returncode}）{err[:200]}")
 
-    new_size = tmp.stat().st_size
-    if new_size >= old_size:
-        tmp.unlink(missing_ok=True)
-        return None
+        new_size = tmp.stat().st_size
+        if new_size >= old_size:
+            tmp.unlink(missing_ok=True)
+            return OptimizeResult(status="skipped",
+                                  reason="已是最优，压不出更小")
 
-    dst_p.parent.mkdir(parents=True, exist_ok=True)
-    tmp.replace(dst_p)
-    return {"old_size": old_size, "new_size": new_size}
+        dst_p.parent.mkdir(parents=True, exist_ok=True)
+        tmp.replace(dst_p)
+        return OptimizeResult(status="ok", path=str(dst_p),
+                              old_size=old_size, new_size=new_size)
+    except Exception as e:
+        tmp.unlink(missing_ok=True)
+        return OptimizeResult(status="failed", reason=str(e))

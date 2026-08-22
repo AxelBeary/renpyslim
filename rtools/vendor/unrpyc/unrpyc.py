@@ -213,9 +213,9 @@ def decompile_rpyc(input_filename, context, overwrite=False, try_harder=False, d
     # Output filename is input filename but with .rpy extension
     if dump:
         ext = '.txt'
-    elif input_filename.suffix == ('.rpyc'):
+    elif input_filename.suffix.lower() == '.rpyc':
         ext = '.rpy'
-    elif input_filename.suffix == ('.rpymc'):
+    elif input_filename.suffix.lower() == '.rpymc':
         ext = '.rpym'
     out_filename = input_filename.with_suffix(ext)
 

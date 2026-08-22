@@ -12,6 +12,7 @@ Ren'Py 安卓版结构：assets/x-game/** 是游戏资源，assets/x-renpy/** �
 """
 from __future__ import annotations
 
+import logging
 import os
 import random
 import shutil
@@ -30,6 +31,8 @@ from .image_optimizer import optimize_image
 from .models import AssetKind, Progress, kind_of
 from .procutil import run_quiet
 from .utils import find_suffix_clashes, safe_join
+
+logger = logging.getLogger(__name__)
 
 # 引擎与杂项目录（APK 内相对路径前缀），一律不碰
 UNTOUCHABLE_PREFIXES = ("assets/x-renpy/", "assets/dexopt/", "lib/", "res/",
@@ -85,18 +88,69 @@ def compile_remap_rpyc(script_text: str, sdk: str) -> Optional[bytes]:
         shutil.rmtree(proj, ignore_errors=True)
 
 
+def _bt_version(d: Path) -> Optional[tuple]:
+    """build-tools 目录名 → 数字版本元组（"35.0.0" → (35,0,0)），
+    解析失败返回 None（排序时垫底）。不能用字符串排序：
+    "9.0.0" 字典序大于 "35.0.0" 会选错版本。"""
+    try:
+        return tuple(int(x) for x in d.name.split("."))
+    except ValueError:
+        return None
+
+
 def find_build_tools(sdk: str) -> tuple[Optional[str], Optional[str]]:
     """在 SDK 的 rapt/Sdk/build-tools 里找 zipalign 和 apksigner。"""
     bt_root = Path(sdk) / "rapt" / "Sdk" / "build-tools"
     if not bt_root.is_dir():
         return None, None
-    versions = sorted((d for d in bt_root.iterdir() if d.is_dir()), reverse=True)
+
+    def _key(d: Path):
+        v = _bt_version(d)
+        # 可解析的 (1, 版本元组) 优先；解析失败的 (0, ()) 排最后
+        return (1, v) if v is not None else (0, ())
+
+    versions = sorted((d for d in bt_root.iterdir() if d.is_dir()),
+                      key=_key, reverse=True)
     for d in versions:
         za = d / "zipalign.exe"
         signer = d / "apksigner.bat"
         if za.exists() and signer.exists():
             return str(za), str(signer)
     return None, None
+
+
+def _has_non_ascii(s: str) -> bool:
+    return any(ord(c) > 127 for c in s)
+
+
+def _short_path_fallback(p: Path, what: str,
+                         warnings: Optional[list[str]] = None) -> Path:
+    """非 ASCII 路径兜底：Windows 上试取 8.3 短路径。
+
+    背景：apksigner(Java) 对含乱码/生僻字符的路径会报 Bad pathname。
+    短路径仍含非 ASCII 或调用失败时保留原路径，只打警告不阻断。
+    """
+    if not _has_non_ascii(str(p)):
+        return p
+    if os.name != "nt":
+        logger.warning("%s路径含非 ASCII 字符（非 Windows 无短路径兜底）：%s",
+                       what, p)
+        return p
+    try:
+        import ctypes
+        buf = ctypes.create_unicode_buffer(32768)
+        n = ctypes.windll.kernel32.GetShortPathNameW(str(p), buf, 32768)
+        if 0 < n < 32768 and not _has_non_ascii(buf.value):
+            logger.info("%s路径含非 ASCII 字符，已改用 8.3 短路径：%s -> %s",
+                        what, p, buf.value)
+            return Path(buf.value)
+        msg = f"{what}路径含非 ASCII 字符且无法取得纯英文短路径，按原路径继续。"
+    except Exception as e:
+        msg = f"{what}路径含非 ASCII 字符，短路径兜底失败（{e}），按原路径继续。"
+    logger.warning("%s", msg)
+    if warnings is not None:
+        warnings.append(msg)
+    return p
 
 
 def _find_java() -> Optional[str]:
@@ -244,8 +298,12 @@ def slim_apk(apk_path: str, preset_name: str,
     if not apk.exists():
         raise ApkError(f"APK 不存在：{apk_path}")
 
-    work = Path(tempfile.mkdtemp(prefix="renpyslim_apk_"))
     warnings: list[str] = []
+    # 非 ASCII 兜底：工作目录落在含乱码/生僻字符的用户名路径下时，
+    # 后续 zipalign/apksigner 可能报 Bad pathname，改用 8.3 短路径（同目录）
+    work = _short_path_fallback(
+        Path(tempfile.mkdtemp(prefix="renpyslim_apk_")), "临时工作目录",
+        warnings)
     changes = 0
     saved = 0
     zf = None
@@ -427,10 +485,23 @@ def slim_apk(apk_path: str, preset_name: str,
         # 4. 重打包：未改动条目逐字节保留，改动条目用新内容
         p.emit("apk", f"重新打包（替换 {changes} 个条目）……")
         out_apk = work / "slim-unsigned.apk"
+        seen_norm: dict[str, str] = {}   # 归一化名（casefold）→ 首次出现的条目名
         with zipfile.ZipFile(str(out_apk), "w") as out_zf:
             for info in zf.infolist():
                 if info.filename.endswith("/"):
                     continue
+                # 撞名检测：大小写不同或重复的条目名在部分文件系统上会互覆，
+                # 仅告警不阻断（行为保持现状）
+                norm = info.filename.casefold()
+                prev = seen_norm.get(norm)
+                if prev is not None:
+                    logger.warning("APK 内条目撞名（大小写不敏感）：%r 与 %r",
+                                   prev, info.filename)
+                    warnings.append(
+                        f"包内条目撞名（忽略大小写）：{prev} 与 {info.filename}，"
+                        "解压到不区分大小写的文件系统时可能互覆。")
+                else:
+                    seen_norm[norm] = info.filename
                 # 原签名一律作废（内容变了签名必然失效）
                 if info.filename.startswith("META-INF/") and \
                         info.filename.upper().endswith(SIGNATURE_SUFFIXES + (".MF",)):
@@ -478,7 +549,12 @@ def slim_apk(apk_path: str, preset_name: str,
                 warnings.append("zipalign 对齐失败，产出未对齐的包（可安装，性能略差）。")
 
         # 6. 签名（三种姿势）
+        # 输出目录含非 ASCII（如乱码用户名）时改走短路径；
+        # final 保留原路径作展示/返回值，实际写入走 final_real。
+        # 注：短路径只对已存在的目录有效，故兜底的是父目录而非文件本身。
         final = apk.parent / (apk.stem + "-瘦身" + apk.suffix)
+        final_real = _short_path_fallback(apk.parent, "输出目录", warnings) \
+            / final.name
         signed = False
         keystore_info = None
         use_ks, use_pass = keystore, ks_pass
@@ -491,6 +567,20 @@ def slim_apk(apk_path: str, preset_name: str,
             use_pass = keystore_info["password"]
             use_alias = use_alias or keystore_info["alias"]
         if apksigner and use_ks and use_pass:
+            # keystore 路径含非 ASCII 时，apksigner(Java) 可能报 Bad pathname，
+            # 先复制为 work 内的纯英文临时名再用，结束时随 work 一并清理
+            if _has_non_ascii(use_ks):
+                ks_tmp = work / "renpyslim_sign.keystore"
+                try:
+                    shutil.copyfile(use_ks, ks_tmp)
+                    logger.info("keystore 路径含非 ASCII 字符，已改用工作目录"
+                                "内的纯英文临时副本：%s", ks_tmp)
+                    use_ks = str(ks_tmp)
+                except OSError as e:
+                    logger.warning("keystore 路径含非 ASCII 字符，纯英文临时"
+                                   "副本创建失败（%s），按原路径尝试。", e)
+                    warnings.append(f"钥匙路径含非 ASCII 字符，临时副本创建失败"
+                                    f"（{e}），按原路径尝试签名。")
             # apksigner(Java) 对含乱码/生僻字符的输出路径会报 Bad pathname，
             # 先签到纯英文临时路径再落位，稳
             signer_cmd = _apksigner_cmd(apksigner)
@@ -519,7 +609,7 @@ def slim_apk(apk_path: str, preset_name: str,
                     proc = None
                     warnings.append(f"签名工具调用异常（{e}），产出未签名的包。")
                 if proc is not None and proc.returncode == 0 and tmp_signed.exists():
-                    shutil.copyfile(tmp_signed, final)
+                    shutil.copyfile(tmp_signed, final_real)
                     signed = True
                     if keystore_info:
                         warnings.append(
@@ -530,13 +620,13 @@ def slim_apk(apk_path: str, preset_name: str,
                            if proc is not None else "")
                     warnings.append(f"重签名失败（钥匙或密码不对？）：{err}")
         if not signed:
-            shutil.copyfile(aligned, final)
+            shutil.copyfile(aligned, final_real)
             warnings.append(
                 "产出为未签名 APK（未提供 keystore/密码，或签名失败）。"
                 "未签名的 APK 无法直接安装；可加 --gen-key 自动生成新钥匙重跑。")
 
         return {
-            "output": str(final),
+            "output": str(final_real),
             "saved_bytes": saved,
             "changes": changes,
             "signed": signed,

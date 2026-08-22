@@ -7,12 +7,18 @@
 """
 from __future__ import annotations
 
+import copy
+import logging
+import os
 import shutil
+import stat
 import zipfile
 from pathlib import Path
 from typing import Optional
 
 from .procutil import run_quiet
+
+logger = logging.getLogger(__name__)
 
 ARCHIVE_EXTS = {".zip", ".7z", ".rar"}
 
@@ -112,9 +118,38 @@ def extract_archive(src: str, dest_dir: str,
                                 "这个压缩包用了 WinZip AES 加密，本工具暂不支持。"
                                 "请改用其他工具重新压缩（选标准 ZipCrypto 加密），"
                                 "或自行解压后选择文件夹处理。")
+                        # 审核修复：撞名防护——多个条目归一化名收敛时（Windows
+                        # 大小写不敏感撞名、完全重复条目、GBK/UTF-8 回解后
+                        # 收敛为同名），先到条目照原样解压，后到条目改名带
+                        # .dup{N} 后缀保留内容并告警，避免静默覆盖丢数据。
+                        # 归一化名 -> 先到条目原名（告警时引用）
+                        seen: dict[str, str] = {}
                         for info in infos:
                             _repair_zip_name(info)
-                            zf.extract(info, dest_p, pwd=cand)
+                            norm = info.filename.replace("\\", "/").casefold()
+                            first = seen.get(norm)
+                            if first is None:
+                                seen[norm] = info.filename
+                                zf.extract(info, dest_p, pwd=cand)
+                                continue
+                            if info.is_dir():
+                                logger.warning(
+                                    "压缩包撞名：目录条目 '%s' 与已解压条目 '%s' "
+                                    "冲突，跳过。", info.filename, first)
+                                continue
+                            n = 1
+                            while True:
+                                cand_name = f"{info.filename}.dup{n}"
+                                if cand_name.replace("\\", "/").casefold() not in seen:
+                                    break
+                                n += 1
+                            dup_info = copy.copy(info)
+                            dup_info.filename = cand_name
+                            seen[cand_name.replace("\\", "/").casefold()] = cand_name
+                            logger.warning(
+                                "压缩包撞名：条目 '%s' 与已解压条目 '%s' 冲突，"
+                                "后到内容保留为 '%s'。", info.filename, first, cand_name)
+                            zf.extract(dup_info, dest_p, pwd=cand)
                     ok = True
                     break
                 except RuntimeError as e:
@@ -218,12 +253,52 @@ def create_zip(src_dir: str, dest_zip: str) -> str:
 
     压缩等级 9：交付包能榨一丝是一丝；包内大头（图片/音频/封包）
     本身已是压缩格式，收益很小但零风险，多核机器上耗时也可接受。
+
+    审核修复：改用 os.scandir 自行递归（rglob 会穿入 Windows junction，
+    可能成环或拉进范围外内容），跳过符号链接与 junction 并告警；
+    空目录写入目录条目（arcname 以 / 结尾）避免解压后丢失。
     """
     src = Path(src_dir)
     out = Path(dest_zip)
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        for p in src.rglob("*"):
-            if p.is_file():
-                zf.write(p, Path(src.name) / p.relative_to(src))
+        _zip_add_dir(zf, src, Path(src.name))
     return str(out)
+
+
+def _is_link_or_junction(entry: os.DirEntry) -> bool:
+    """判断目录项是否为符号链接 / junction（一律不跟随）。
+
+    审核修复：旧版用 os.path.islink，在 Windows junction 上返回 False，
+    且 entry.is_dir(follow_symlinks=False) 返回 True，防护形同虚设，
+    junction 被递归穿入（成环时直接栈溢出）。现改用 os.lstat：
+    S_ISLNK 覆盖普通符号链接；Windows 专属再查
+    FILE_ATTRIBUTE_REPARSE_POINT 覆盖 junction（需 hasattr 平台判断）。
+    """
+    st = os.lstat(entry.path)
+    if stat.S_ISLNK(st.st_mode):
+        return True
+    if hasattr(stat, "FILE_ATTRIBUTE_REPARSE_POINT"):
+        attrs = getattr(st, "st_file_attributes", 0) or 0
+        if attrs & stat.FILE_ATTRIBUTE_REPARSE_POINT:
+            return True
+    return False
+
+
+def _zip_add_dir(zf: zipfile.ZipFile, dirpath: Path, rel: Path) -> None:
+    """递归把一个目录加入 zip：跳过符号链接/junction，空目录保留条目。"""
+    has_content = False
+    with os.scandir(dirpath) as it:
+        for entry in sorted(it, key=lambda e: e.name):
+            if _is_link_or_junction(entry):
+                logger.warning("打包跳过 '%s'：符号链接或 junction，"
+                               "不跟随，避免成环或拷贝范围外内容。", entry.path)
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                _zip_add_dir(zf, Path(entry.path), rel / entry.name)
+                has_content = True
+            elif entry.is_file(follow_symlinks=False):
+                zf.write(entry.path, rel / entry.name)
+                has_content = True
+    if not has_content:
+        zf.writestr(zipfile.ZipInfo(rel.as_posix() + "/"), b"")

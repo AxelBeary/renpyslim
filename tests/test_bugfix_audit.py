@@ -140,11 +140,13 @@ def test_safe_join_rejects_traversal(tmp_path):
 def test_remap_mapping_roundtrip():
     mapping = {"images/a.png": "images/a.webp", "images/b.jpg": "images/b.webp"}
     script = remap_mod.build_remap_script(mapping)
-    parsed = remap_mod.parse_remap_mapping(script)
+    parsed, ok = remap_mod.parse_remap_mapping(script)
+    assert ok is True
     assert parsed == {k.lower(): v.replace("\\", "/")
                       for k, v in mapping.items()}
-    # 解析不了的内容保守返回空 dict
-    assert remap_mod.parse_remap_mapping("随便一段文本") == {}
+    # 解析不了的内容返回空 dict + False（不再静默当空表用）
+    parsed2, ok2 = remap_mod.parse_remap_mapping("随便一段文本")
+    assert parsed2 == {} and ok2 is False
 
 
 # ---------------------------------------------------------------------------

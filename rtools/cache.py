@@ -9,11 +9,14 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import os
 import shutil
 import uuid
 from pathlib import Path
 from typing import Optional
+
+logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path.home() / ".renpyslim" / "cache"
 # 超过该体积的文件不做哈希缓存（哈希+复制本身比处理还贵时没意义）
@@ -47,10 +50,30 @@ def _entry_path(file_hash: str, action_key: str) -> Path:
 
 def lookup_hash(file_hash: str, action_key: str) -> Optional[str]:
     entry = _entry_path(file_hash, action_key)
-    return str(entry) if entry.exists() else None
+    if not entry.exists():
+        return None
+    # 体积守卫下沉（审核修复）：超限条目按未命中处理，
+    # 兼顾绕过 lookup()/store() 直调裸函数的调用方
+    try:
+        if entry.stat().st_size > MAX_CACHEABLE_MB * 1048576:
+            logger.debug("缓存条目超限（> %dMB），按未命中处理：%s",
+                         MAX_CACHEABLE_MB, str(entry))
+            return None
+    except OSError:
+        return None
+    return str(entry)
 
 
 def store_hash(file_hash: str, action_key: str, optimized: str) -> None:
+    # 体积守卫下沉（审核修复）：超限产物跳过入库，不抛错只记 DEBUG，
+    # 不再依赖上层 lookup()/store() 的检查（直调裸函数也安全）
+    try:
+        if Path(optimized).stat().st_size > MAX_CACHEABLE_MB * 1048576:
+            logger.debug("产物超限（> %dMB），跳过缓存入库：%s",
+                         MAX_CACHEABLE_MB, optimized)
+            return
+    except OSError:
+        return
     try:
         entry = _entry_path(file_hash, action_key)
         entry.parent.mkdir(parents=True, exist_ok=True)
@@ -70,6 +93,13 @@ def store_self(optimized: str, action_key: str) -> None:
     in_place 反复运行时，上一轮的产物成为本轮的输入；没有这条
     自映射，JPG/WebP 等有损重编码会逐轮叠加（代际累积退化）。
     """
+    try:
+        if Path(optimized).stat().st_size > MAX_CACHEABLE_MB * 1048576:
+            logger.debug("产物超限（> %dMB），跳过自映射入库：%s",
+                         MAX_CACHEABLE_MB, optimized)
+            return
+    except OSError:
+        return
     h = _hash_file(optimized)
     if h:
         store_hash(h, action_key, optimized)

@@ -40,3 +40,21 @@ def test_foreign_origin_rejected(client):
     r = client.post("/api/shutdown",
                     headers={"origin": "https://evil.example.com"})
     assert r.status_code == 403
+
+
+def test_null_origin_rejected(client):
+    """沙盒化 iframe 等场景会发 Origin: null，解析不出主机，必须拒绝。"""
+    r = client.get("/api/env", headers={"origin": "null"})
+    assert r.status_code == 403
+
+
+def test_empty_origin_rejected(client):
+    """Origin 头存在但为空串：同样解析不出主机，必须拒绝。"""
+    r = client.get("/api/env", headers={"origin": ""})
+    assert r.status_code == 403
+
+
+def test_garbage_origin_rejected(client):
+    """非法值（解析不出主机名）：拒绝。"""
+    r = client.get("/api/env", headers={"origin": "not a url %%%"})
+    assert r.status_code == 403

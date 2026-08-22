@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import shutil
+import sys
 from pathlib import Path
 from typing import Callable, Iterator, Optional
 
@@ -23,7 +24,33 @@ ASSET_EXTS = IMAGE_EXTS | AUDIO_EXTS | VIDEO_EXTS | FONT_EXTS
 # 字符集提取关心的脚本/文本扩展名（封包里属 OTHER，不会被当资源登记）
 SCRIPT_EXTRACT_EXTS = {".rpyc", ".rpymc", ".rpy", ".txt"}
 
-_FFPROBE = shutil.which("ffprobe")
+_ffprobe_cache: Optional[str] = None
+_ffprobe_looked = False
+
+
+def find_ffprobe() -> Optional[str]:
+    """按顺序找 ffprobe：PATH -> 程序旁 bin 目录（与 find_ffmpeg 同目录）。
+
+    找不到返回 None；结果模块级缓存（惰性查找，避免逐文件重复 which）。
+    """
+    global _ffprobe_cache, _ffprobe_looked
+    if _ffprobe_looked:
+        return _ffprobe_cache
+    found = shutil.which("ffprobe")
+    if not found:
+        candidates = []
+        if getattr(sys, "frozen", False):   # PyInstaller 打包后
+            candidates.append(Path(sys.executable).parent / "bin" / "ffprobe.exe")
+        candidates.append(Path(__file__).resolve().parent.parent / "bin" / "ffprobe.exe")
+        candidates.append(Path(__file__).resolve().parent.parent / "bin" / "ffprobe")
+        for c in candidates:
+            if c.exists():
+                found = str(c)
+                break
+    _ffprobe_cache = found
+    _ffprobe_looked = True
+    return _ffprobe_cache
+
 
 # 进度回调签名：fn(已完成数, 总数, 当前文件相对路径)
 ScanProgress = Optional[Callable[[int, int, str], None]]
@@ -44,11 +71,12 @@ def _progress_step(total: int) -> int:
 
 def _probe_media(path: str) -> tuple[Optional[float], Optional[int]]:
     """用 ffprobe 读取时长和音频码率；不可用时返回 (None, None)。"""
-    if not _FFPROBE:
+    ffprobe = find_ffprobe()
+    if not ffprobe:
         return None, None
     try:
         out = run_quiet(
-            [_FFPROBE, "-v", "quiet", "-print_format", "json",
+            [ffprobe, "-v", "quiet", "-print_format", "json",
              "-show_format", "-show_streams", path],
             capture_output=True, timeout=30,
         )

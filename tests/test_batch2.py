@@ -142,5 +142,5 @@ def test_video_compress(tmp_path):
     assert src.exists() and src.stat().st_size > 0
     before = src.stat().st_size
     res = compress_video(str(src), str(src), "balanced")
-    assert res is not None
+    assert res["status"] == "ok", res.get("reason")
     assert res["new_size"] < before

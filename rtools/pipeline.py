@@ -10,9 +10,11 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+import uuid
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -92,7 +94,29 @@ def _run_jobs_or_flush(p: Progress, stage: str, jobs: list, cancel,
 
 def _write_json(path: Path, data) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    # 第二波修复：原子写——先写同目录临时文件再 os.replace，
+    # 写到一半崩溃/被杀不会留下半截环的报告文件；
+    # 异常时清掉临时文件。
+    # 收口修复：临时文件名含 .rtools. 标记，硬杀残留也能被
+    # cleanup._is_rtools_tmp 识别并在下次运行时清掉。
+    tmp = path.with_name(f"{path.name}.{uuid.uuid4().hex}.rtools.tmp")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, path)
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+
+def _check_cancel(cancel: Callable[[], bool] | None) -> None:
+    """后段各步骤之间的取消检查（第二波修复）。
+
+    在磁盘变更密集段（引用改写/封包重建/报告落盘）的每一步之前快速检查，
+    取消时抛 PipelineCancelled，由调用处既有的 except 层落部分清单。
+    """
+    if cancel and cancel():
+        raise PipelineCancelled()
 
 
 def _worker_count(n_jobs: int) -> int:
@@ -107,13 +131,30 @@ def _worker_count(n_jobs: int) -> int:
     return max(2, min(16, (os.cpu_count() or 4) - 2))
 
 
+def _safe_job(kind: str, item: tuple) -> tuple:
+    """job 级异常兜底（第二波修复）：优化器内部异常以前被 _run_jobs 吞掉
+    且不计账，失败数虚低；这里按所属类型归因计 failed。
+    记账以返回 dict 的 failed/skipped 字段为准。
+    """
+    label, fn = item
+
+    def wrapped():
+        try:
+            return fn()
+        except Exception as e:
+            return {"records": [], "saved": 0, "rename": None, "remap": None,
+                    "rpa": None, "warn": None, "failed": kind,
+                    "skipped": None, "exception": str(e)}
+    return label, wrapped
+
+
 def _run_jobs(p: Progress, stage: str, jobs: list,
               cancel: "Optional[Callable[[], bool]]" = None) -> list:
     """并行执行一批独立优化任务（BACKLOG B4）。
 
     jobs: [(标签, 无参callable)]，callable 自己负责 try/except 并返回 dict 或 None。
     小批量退化为串行；进度按完成数 + 累计节省字节汇报（F6）；
-    取消时不再等待未开始的任务（F4）。
+    取消时不再等待未开始的任务（F4），短超时轮询保证取消秒级生效（第二波修复）。
     """
     if not jobs:
         return []
@@ -122,39 +163,61 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
     state = {"done": 0, "saved": 0}
     lock = threading.Lock()
 
-    with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(fn) for _label, fn in jobs]
-        try:
-            for fut in as_completed(futures):
-                if cancel and cancel():
-                    for rest in futures:
-                        rest.cancel()
-                    # 审核修复（中-3）：杀掉正在跑的外部程序（ffmpeg 等），
-                    # 否则线程池退出要等它们自然跑完，取消形同虚设
-                    procutil.kill_children()
-                    try:
-                        r = fut.result()
-                        if r:
-                            results.append(r)
-                    except Exception:
-                        pass
-                    raise PipelineCancelled(results)
-                with lock:
-                    state["done"] += 1
-                    if state["done"] % 5 == 0 or state["done"] == len(futures):
-                        p.emit(stage, f"处理中 {state['done']}/{len(futures)}"
-                                          f" · 累计已省 {_fmt(state['saved'])}")
+    def _cancel_now(pending):
+        """取消收尾：取消未开始的、杀掉正在跑的外部程序、
+        收集已完成的成果（只拿还没被处理过的，防重复记账）。"""
+        for rest in futures:
+            rest.cancel()
+        # 审核修复（中-3）：杀掉正在跑的外部程序（ffmpeg 等），
+        # 否则线程池退出要等它们自然跑完，取消形同虚设
+        procutil.kill_children()
+        for rest in pending:
+            if rest.done() and not rest.cancelled():
                 try:
-                    r = fut.result()
-                except Exception as e:
-                    # 审核修复（中-2）：吞异常可以，但至少要留条日志，
-                    # 不能一点痕迹都没有
-                    p.emit(stage, f"任务执行异常，已跳过：{e}")
+                    r = rest.result(timeout=0)
+                except Exception:
                     r = None
                 if r:
                     with lock:
                         state["saved"] += r.get("saved", 0)
                     results.append(r)
+        raise PipelineCancelled(results)
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futures = [ex.submit(fn) for _label, fn in jobs]
+        try:
+            # 第二波修复：旧版阻塞在 as_completed 上，单个长任务（视频可达 7200s）
+            # 没完成前根本轮不到取消检查；改为短超时轮询，
+            # 每段等待间隙都检查取消，取消生效延迟控制在秒级。
+            pending = set(futures)
+            while pending:
+                if cancel and cancel():
+                    _cancel_now(pending)
+                done, pending = wait(pending, timeout=0.5,
+                                     return_when=FIRST_COMPLETED)
+                for fut in done:
+                    with lock:
+                        state["done"] += 1
+                        if state["done"] % 5 == 0 or state["done"] == len(futures):
+                            p.emit(stage, f"处理中 {state['done']}/{len(futures)}"
+                                          f" · 累计已省 {_fmt(state['saved'])}")
+                    try:
+                        r = fut.result()
+                    except Exception as e:
+                        # 审核修复（中-2）：吞异常可以，但至少要留条日志；
+                        # 第二波修复：异常也计入失败（此前丢弃导致失败数虚低），
+                        # 归因由 _safe_job 包装层完成，这里是最后兜底。
+                        p.emit(stage, f"任务执行异常，已跳过：{e}")
+                        # 收口修复：兜底归因用字符串 "internal"——旧版写布尔
+                        # True，在成品模式 isinstance(fk, str) 过滤下不计数，
+                        # 失败数虚低。
+                        r = {"records": [], "saved": 0, "rename": None,
+                             "remap": None, "rpa": None, "warn": None,
+                             "skipped": None, "failed": "internal"}
+                    if r:
+                        with lock:
+                            state["saved"] += r.get("saved", 0)
+                        results.append(r)
         except PipelineCancelled as e:
             for rest in futures:
                 rest.cancel()
@@ -249,13 +312,15 @@ def run_project(project_dir: str, options: OptimizeOptions,
     todo_videos = [a for a in assets if a.kind == AssetKind.VIDEO]
     todo_fonts = [a for a in assets if a.kind == AssetKind.FONT
                   and a.ext in (".ttf", ".otf")]
-    # 失败计数（BACKLOG B3：报告口径诚实化）
+    # 失败计数（BACKLOG B3：报告口径诚实化）；第二波：skipped 单独分桶，
+    # “压完没变小/格式不支持”不再混入失败（旧版一律记 failed 导致失败数虚高）
     failed = {"image": 0, "audio": 0, "video": 0, "font": 0}
+    skipped = {"image": 0, "audio": 0, "video": 0, "font": 0}
 
     def _img_job(a):
         def job():
             out = {"records": [], "saved": 0, "rename": None, "warn": None,
-                   "failed": False}
+                   "failed": False, "skipped": False}
             # 实验性深度压缩（有损量化）：成功即收工，失败落到常规路径
             if options.png_quant and a.ext == ".png" and a.size >= 64 * 1024:
                 h = cache.hash_file(a.path) if options.use_cache else None
@@ -307,7 +372,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
                             return out
                         res = optimize_image(a.path, new_path, preset.image_quality,
                                              convert_webp=True)
-                        if res:
+                        # 记账以 status 为准；非 ok（skipped/failed）落到下方原地压缩
+                        if res["status"] == "ok":
                             Path(a.path).unlink()
                             if h:
                                 cache.store_hash(h, key, new_path)
@@ -333,7 +399,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
                         detail=f"原地压缩（缓存命中）{_fmt(a.size)} -> {_fmt(new_sz)}"))
                 return out
             res = optimize_image(a.path, a.path, preset.image_quality)
-            if res:
+            if res["status"] == "ok":
                 if h:
                     cache.store_hash(h, key, a.path)
                 # 审核修复（中-10）：登记产物自映射，防 in_place 反复
@@ -343,6 +409,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 out["saved"] = res["old_size"] - res["new_size"]
                 out["records"].append(ChangeRecord(action="compress", src=a.rel,
                                                    detail="原地无损/低损压缩"))
+            elif res["status"] == "skipped":
+                out["skipped"] = True
             else:
                 out["failed"] = True
             return out
@@ -351,7 +419,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
     def _aud_job(a):
         def job():
             out = {"records": [], "saved": 0, "rename": None, "warn": None,
-                   "failed": False}
+                   "failed": False, "skipped": False}
             if a.ext in (".wav", ".mp3"):
                 # 审核修复：转换目标撞名时不换格式（防互覆）
                 if str(Path(a.rel).with_suffix(".ogg")).replace("\\", "/") in clash_ogg:
@@ -379,7 +447,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
                             detail=f"{_fmt(a.size)} -> {_fmt(new_sz)}（缓存命中）"))
                         return out
                     res = convert_audio(a.path, new_path, preset.audio_bitrate_k)
-                    if res:
+                    if res["status"] == "ok":
                         Path(a.path).unlink()
                         if h:
                             cache.store_hash(h, key, new_path)
@@ -388,6 +456,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
                         out["records"].append(ChangeRecord(
                             action="convert", src=a.rel, dst=new_rel,
                             detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+                    elif res["status"] == "skipped":
+                        out["skipped"] = True
                     else:
                         out["failed"] = True
                 else:
@@ -406,7 +476,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
                             detail="OGG 降码率（缓存命中）"))
                     return out
                 res = reencode_audio(a.path, a.path, preset.audio_bitrate_k)
-                if res:
+                if res["status"] == "ok":
                     if h:
                         cache.store_hash(h, key, a.path)
                     # 审核修复（中-10）：同上，防重编码代际累积
@@ -415,6 +485,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
                     out["saved"] = res["old_size"] - res["new_size"]
                     out["records"].append(ChangeRecord(action="compress", src=a.rel,
                                                        detail="OGG 降码率重编码"))
+                elif res["status"] == "skipped":
+                    out["skipped"] = True
                 else:
                     out["failed"] = True
             return out
@@ -423,7 +495,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
     def _vid_job(a):
         def job():
             out = {"records": [], "saved": 0, "rename": None, "warn": None,
-                   "failed": False}
+                   "failed": False, "skipped": False}
             h = cache.hash_file(a.path) if options.use_cache else None
             key = f"vid|{options.preset}|{a.ext}"
             hit = cache.lookup_hash(h, key) if h else None
@@ -441,7 +513,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
             except RuntimeError as e:
                 out["warn"] = str(e)
                 return out
-            if res:
+            if res["status"] == "ok":
                 if h:
                     cache.store_hash(h, key, a.path)
                 # 审核修复（中-10）：同上，防视频反复重编码代际退化
@@ -451,8 +523,14 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 out["records"].append(ChangeRecord(
                     action="compress", src=a.rel,
                     detail=f"视频重编码 {_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+            elif res["status"] == "skipped":
+                out["skipped"] = True
+                if res.get("reason"):
+                    out["warn"] = f"{a.rel}：{res['reason']}"
             else:
                 out["failed"] = True
+                if res.get("reason"):
+                    out["warn"] = f"{a.rel}：视频压缩失败（{res['reason']}）"
             return out
         return a.rel, job
 
@@ -465,8 +543,11 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 rename_map[r["rename"][0]] = r["rename"][1]
             if r["warn"]:
                 report.warnings.append(r["warn"])
+            # 第二波记账口径：以字段为准，skipped 不计失败、单独累计
             if r["failed"]:
                 failed[kind] += 1
+            if r.get("skipped"):
+                skipped[kind] += 1
 
     # 审核修复：换后缀转换的同名撞车预检（foo.png 与 foo.jpg 都会
     # 变 foo.webp，并行转换会互覆）；撞车项降级为原地压缩
@@ -477,7 +558,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
         [a.rel for a in todo_audio if a.ext in (".wav", ".mp3")], ".ogg")
 
     if options.do_images:
-        jobs = [_img_job(a) for a in todo_images
+        jobs = [_safe_job("image", _img_job(a)) for a in todo_images
                 if a.size >= min_bytes and a.ext not in (".gif", ".bmp", ".avif")]
         _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
                                       output_dir, records, saved), "image")
@@ -489,7 +570,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 "① 打开 PowerShell 运行 winget install Gyan.FFmpeg（推荐，装完重启工具）；"
                 "② 到 https://www.ffmpeg.org/download.html 下载，把 ffmpeg.exe 放到本工具旁边的 bin 文件夹。")
         else:
-            jobs = [_aud_job(a) for a in todo_audio if a.size >= min_bytes]
+            jobs = [_safe_job("audio", _aud_job(a)) for a in todo_audio
+                    if a.size >= min_bytes]
             _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
                                           output_dir, records, saved), "audio")
 
@@ -504,7 +586,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 report.warnings.append(
                     "已启用 AV1 视频编码（实验性）：官方支持且体积更小，"
                     "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。")
-            jobs = [_vid_job(a) for a in todo_videos
+            jobs = [_safe_job("video", _vid_job(a)) for a in todo_videos
                     if a.ext in (".mp4", ".webm", ".ogv")]
             _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
                                           output_dir, records, saved), "video")
@@ -534,21 +616,30 @@ def run_project(project_dir: str, options: OptimizeOptions,
             _flush_partial_changelog(output_dir, records, saved)
             raise
 
-    # 失败口径诚实化（BACKLOG B3）：压不动的文件原样保留且不计入节省
+    # 第二波记账口径：failed（真错误）与 skipped（已是最优/不支持）分开；
+    # “压完没变小”不再计失败，但两者都原样保留、不计节省。
     total_failed = sum(failed.values())
     if total_failed:
         report.warnings.append(
-            f"{total_failed} 个文件处理后未能进一步压缩（可能已是最优或格式不适合），"
+            f"{total_failed} 个文件处理失败（详见日志），已原样保留，未计入节省体积。")
+    total_skipped = sum(skipped.values())
+    if total_skipped:
+        report.warnings.append(
+            f"{total_skipped} 个文件处理后未能进一步压缩（可能已是最优或格式不适合），"
             "已原样保留，未计入节省体积。")
 
     # --- 第 5 步：改写脚本引用 ---
     # 审核修复（高-5）：从这里开始每一步都可能改盘（引用改写/垃圾清理/
     # 隔离/写报告），任何异常都要先把已发生的改动落清单
     try:
+        # 第二波：后段每个磁盘变更步骤前都检查取消，取消时抛异常走下方
+        # except 落部分清单，不再拖到下一步才发现。
+        _check_cancel(cancel)
         if rename_map:
             p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……")
             records.extend(ref_index.rewrite(rename_map))
 
+        _check_cancel(cancel)
         # --- 第 5.5 步：垃圾清理与废资源隔离 ---
         junk = {"freed_bytes": 0, "removed": []}
         if options.in_place:
@@ -575,6 +666,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
                                             dst=str(Path(game_dir) / "_rtools_quarantine" / rel),
                                             detail="确认无引用，已隔离而非删除"))
 
+        _check_cancel(cancel)
         # --- 第 5.8 步：官方 lint 自动验证 ---
         from . import packager
         validation = {"ran": False, "ok": False, "summary": "未执行", "suspects": []}
@@ -593,6 +685,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
         else:
             report.warnings.append("未找到 Ren'Py SDK，跳过了自动 lint 验证。")
 
+        _check_cancel(cancel)
         # --- 第 6 步：产出报告与修改清单 ---
         out = Path(output_dir)
         _write_json(out / "analysis.json", report.to_dict())
@@ -617,6 +710,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
         "missing_glyphs": missing_glyphs,
         "junk": junk,
         "failed": failed,
+        "skipped": skipped,
         "charlist": charlist_path,
         # 审核修复（高-1）：verifier 各返回分支键集不完全一致
         # （超时/异常分支无 suspects 等），一律用 get 防 KeyError
@@ -728,7 +822,9 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
 
     saved = 0
     rpa_replacements: dict[str, dict[str, str]] = {}   # rpa文件名 -> {内部路径: 优化后文件}
+    # 第二波：skipped 与 failed 分桶，口径同工程模式
     failed = {"image": 0, "audio": 0, "video": 0, "font": 0}
+    skipped = {"image": 0, "audio": 0, "video": 0, "font": 0}
     remap_map: dict[str, str] = {}   # 实验性运行时重映射（BACKLOG B9）
     if options.do_videos and not find_ffmpeg():
         report.warnings.append("未找到 FFmpeg，视频压缩已跳过。")
@@ -741,7 +837,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     def _dist_job(a):
         def job():
             out = {"records": [], "saved": 0, "rename": None, "remap": None,
-                   "rpa": None, "failed": None, "warn": None}
+                   "rpa": None, "failed": None, "skipped": None, "warn": None}
             # 脚本引用用的是相对 game/ 的路径，换算一下再查
             try:
                 game_rel = Path(a.rel).relative_to("game").as_posix()
@@ -760,8 +856,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                             action="quantize", src=a.rel,
                             detail=f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}（有损量化）"))
                         return out
-                # 实验性运行时重映射：无源码也能转 WebP（注入映射脚本）
-                if (options.experimental_remap and not a.in_rpa
+                # 实验性运行时重映射：无源码也能转 WebP（注入映射脚本）；
+                # remap_usable 是预检后的总开关（第二波接线：不支持/旧脚本坏时
+                # 降级走下方同名压缩，复用既有降级路径）
+                if (remap_usable and not a.in_rpa
                         and preset.png_to_webp
                         and a.ext in (".png", ".jpg", ".jpeg")
                         # 审核修复：目标撞名时不转（防互覆/映射冲突）
@@ -776,7 +874,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     else:
                         res = optimize_image(a.path, new_path, preset.image_quality,
                                              convert_webp=True)
-                        if res:
+                        if res["status"] == "ok":
                             Path(a.path).unlink()
                             out["remap"] = (game_rel, new_rel)
                             out["saved"] = res["old_size"] - res["new_size"]
@@ -804,7 +902,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     else:
                         res = optimize_image(a.path, new_path, preset.image_quality,
                                              convert_webp=True)
-                        if res:
+                        if res["status"] == "ok":
                             if not a.in_rpa:
                                 Path(a.path).unlink()
                             out["rename"] = (game_rel, new_rel)
@@ -817,6 +915,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                                 # 改名替换重建：旧条目剔除、新名入包
                                 out["rpa"] = (a.rpa_name, a.rel,
                                               (new_rel, new_path))
+                        elif res["status"] == "skipped":
+                            out["skipped"] = "image"
                         else:
                             out["failed"] = "image"
                 else:
@@ -836,7 +936,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                         return out
                     res = optimize_image(a.path, a.path, preset.image_quality,
                                          convert_webp=False)
-                    if res:
+                    if res["status"] == "ok":
                         if h:
                             cache.store_hash(h, key, a.path)
                         # 审核修复（中-10）：登记产物自映射，防 in_place
@@ -849,6 +949,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                             detail="同名压缩" + (f"（{a.rpa_name}）" if a.in_rpa else "")))
                         if a.in_rpa:
                             out["rpa"] = (a.rpa_name, a.rel, a.path)
+                    elif res["status"] == "skipped":
+                        out["skipped"] = "image"
                     else:
                         out["failed"] = "image"
             elif a.kind == AssetKind.AUDIO:
@@ -870,7 +972,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                                        "为避免覆盖已跳过格式转换。")
                     else:
                         res = convert_audio(a.path, new_path, preset.audio_bitrate_k)
-                        if res:
+                        if res["status"] == "ok":
                             if not a.in_rpa:
                                 Path(a.path).unlink()
                             out["rename"] = (game_rel, new_rel)
@@ -882,6 +984,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                             if a.in_rpa:
                                 out["rpa"] = (a.rpa_name, a.rel,
                                               (new_rel, new_path))
+                        elif res["status"] == "skipped":
+                            out["skipped"] = "audio"
+                        else:
+                            out["failed"] = "audio"
                 elif a.ext in (".ogg", ".mp3") and a.bitrate and \
                         a.bitrate > preset.audio_bitrate_k + 32:
                     # 同名同格式重编码，成品模式下安全（带增量缓存）
@@ -899,7 +1005,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                                 out["rpa"] = (a.rpa_name, a.rel, a.path)
                         return out
                     res = reencode_audio(a.path, a.path, preset.audio_bitrate_k)
-                    if res:
+                    if res["status"] == "ok":
                         if h:
                             cache.store_hash(h, key, a.path)
                         # 审核修复（中-10）：同上，防重编码代际累积
@@ -911,6 +1017,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                             detail=f"{a.ext[1:].upper()} 降码率（保持格式）"))
                         if a.in_rpa:
                             out["rpa"] = (a.rpa_name, a.rel, a.path)
+                    elif res["status"] == "skipped":
+                        out["skipped"] = "audio"
                     else:
                         out["failed"] = "audio"
                 elif a.ext == ".wav":
@@ -929,15 +1037,22 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     except RuntimeError as e:
                         res = None
                         out["warn"] = str(e)
-                    if res:
+                    if res is not None and res["status"] == "ok":
                         out["saved"] = res["old_size"] - res["new_size"]
                         out["records"].append(ChangeRecord(
                             action="compress", src=a.rel,
                             detail=f"视频重编码 {_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
                         if a.in_rpa:
                             out["rpa"] = (a.rpa_name, a.rel, a.path)
-                    else:
-                        out["failed"] = "video"
+                    elif res is not None:
+                        if res["status"] == "skipped":
+                            out["skipped"] = "video"
+                            if res.get("reason"):
+                                out["warn"] = f"{a.rel}：{res['reason']}"
+                        else:
+                            out["failed"] = "video"
+                            if res.get("reason"):
+                                out["warn"] = f"{a.rel}：视频压缩失败（{res['reason']}）"
             elif a.kind == AssetKind.FONT and a.ext in (".ttf", ".otf"):
                 if a.size < 256 * 1024:
                     return out
@@ -980,6 +1095,37 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     if options.do_audio and not find_ffmpeg():
         report.warnings.append("未找到 FFmpeg，音频优化已跳过。")
 
+    # --- remap 预检（第二波接线）---
+    # 实验性运行时重映射必须在任务执行前通过两道预检，否则整批降级为
+    # 同名压缩（复用既有降级路径）。转换发生在 job 里、改名后无法挽回，
+    # 所以预检必须放在构建任务之前：
+    # ① 引擎支持（script_version ≥ 8.0.0 且无回调冲突）；
+    # ② 已有注入脚本（若存在）必须仍可解析，否则合并会丢旧映射。
+    remap_usable = bool(options.experimental_remap)
+    if remap_usable:
+        _ok_support, _reason = remap_mod.check_remap_support(game_dir_p)
+        if not _ok_support:
+            remap_usable = False
+            report.warnings.append(
+                f"运行时重映射暂不可用（{_reason}），"
+                "本次图片改走安全的同名压缩。")
+    if remap_usable:
+        _pre_script = game_dir_p / remap_mod.REMAP_SCRIPT_NAME
+        if _pre_script.exists():
+            try:
+                _pre_old, _pre_ok = remap_mod.parse_remap_mapping(
+                    _pre_script.read_text(encoding="utf-8", errors="ignore"))
+            except OSError:
+                _pre_old, _pre_ok = {}, False
+            if not _pre_ok:
+                remap_usable = False
+                report.warnings.append(
+                    "旧映射解析失败，为避免丢失映射已跳过注入，"
+                    "请检查 rtools_remap.rpy。本次图片改走安全的同名压缩。")
+            del _pre_old
+
+    _DIST_KIND = {AssetKind.IMAGE: "image", AssetKind.AUDIO: "audio",
+                  AssetKind.VIDEO: "video", AssetKind.FONT: "font"}
     dist_jobs = []
     for a in all_assets:
         # 引擎自带目录（renpy/common 等）里的资源不碰：
@@ -1003,7 +1149,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
             continue
         if a.kind == AssetKind.VIDEO and not options.do_videos:
             continue
-        dist_jobs.append(_dist_job(a))
+        # 第二波：_safe_job 包装兜底异常并按资源类型归因计 failed；
+        # 记账以返回 dict 的 failed/skipped 字段为准
+        dist_jobs.append(_safe_job(_DIST_KIND.get(a.kind, "image"),
+                                   _dist_job(a)))
 
     for r in _run_jobs_or_flush(p, "optimize", dist_jobs, cancel,
                                 output_dir, records, saved):
@@ -1015,8 +1164,20 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
             remap_map[r["remap"][0]] = r["remap"][1]
         if r["rpa"]:
             rpa_replacements.setdefault(r["rpa"][0], {})[r["rpa"][1]] = r["rpa"][2]
-        if r["failed"]:
-            failed[r["failed"]] += 1
+        # 记账以字段为准（第二波）：failed/skipped 均为类型名字符串；
+        # isinstance 防御兜底记录（极端路径下可能不是字符串），
+        # 绝不让记账环节抛 KeyError 把整批成果带崩。
+        fk = r.get("failed")
+        if isinstance(fk, str):
+            if fk in failed:
+                failed[fk] += 1
+            else:
+                # 收口修复：兜底归因 "internal" 等非类型名失败也计数，
+                # 不再被 isinstance 过滤静默吞掉（失败数虚低）。
+                failed[fk] = failed.get(fk, 0) + 1
+        sk = r.get("skipped")
+        if isinstance(sk, str) and sk in skipped:
+            skipped[sk] += 1
         if r["warn"]:
             report.warnings.append(r["warn"])
 
@@ -1024,44 +1185,77 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     # 审核修复（高-5）：从这里开始每一步都可能改盘（remap 注入/引用改写/
     # 封包重建/隔离/写报告），任何异常都要先把已发生的改动落清单
     try:
+        _check_cancel(cancel)
         if remap_map:
             script_path = game_dir_p / remap_mod.REMAP_SCRIPT_NAME
             # 审核修复：若上次运行已注入过脚本，先读回旧映射再合并——
             # 直接覆写会丢旧条目，而旧条目对应的原文件已被删除，
             # 丢了映射 = 那些图再也加载不到（坏图）
             merged = dict(remap_map)
+            inject = True
             if script_path.exists():
                 try:
-                    old_map = remap_mod.parse_remap_mapping(
+                    # 第二波接线：parse 现返回 (dict, bool) 元组
+                    old_map, ok = remap_mod.parse_remap_mapping(
                         script_path.read_text(encoding="utf-8", errors="ignore"))
                 except OSError:
-                    old_map = {}
-                merged = {**old_map, **remap_map}
-            script_path.write_text(remap_mod.build_remap_script(merged),
-                                   encoding="utf-8")
-            records.append(ChangeRecord(
-                action="remap_inject", src=remap_mod.REMAP_SCRIPT_NAME,
-                detail=f"{len(remap_map)} 个图片请求将在运行时被透明重定向（实验性功能）"))
-            report.warnings.append(
-                "已启用实验性功能：注入了运行时重映射脚本 game/"
-                f"{remap_mod.REMAP_SCRIPT_NAME}。若游戏出现异常，删掉该文件即可完全还原。")
+                    old_map, ok = {}, False
+                if not ok:
+                    # 收口修复：此时转换已全部完成（图片原件已删、
+                    # WebP 已就位），跳过注入 = 这批图失去运行时映射，
+                    # 产物不可发布。不再静默降级（"改走同名压缩"已不成立），
+                    # 明确报警并按既有口径计入失败；不回退文件（复杂度不可控）。
+                    inject = False
+                    report.warnings.append(
+                        "remap 映射写入失败：本次已转换的 "
+                        f"{len(remap_map)} 张图片映射未写入，请勿发布该产物。"
+                        f"（已有注入脚本 {remap_mod.REMAP_SCRIPT_NAME} "
+                        "解析失败，为避免丢失旧映射中止了合并写入）")
+                    failed["image"] = failed.get("image", 0) + len(remap_map)
+                else:
+                    merged = {**old_map, **remap_map}
+            if inject:
+                script_path.write_text(remap_mod.build_remap_script(merged),
+                                       encoding="utf-8")
+                records.append(ChangeRecord(
+                    action="remap_inject", src=remap_mod.REMAP_SCRIPT_NAME,
+                    detail=f"{len(remap_map)} 个图片请求将在运行时被透明重定向（实验性功能）"))
+                report.warnings.append(
+                    "已启用实验性功能：注入了运行时重映射脚本 game/"
+                    f"{remap_mod.REMAP_SCRIPT_NAME}。若游戏出现异常，删掉该文件即可完全还原。")
 
-        # 失败口径诚实化（BACKLOG B3）
+        # 失败口径诚实化（BACKLOG B3）；第二波：failed/skipped 分桶，
+        # 口径与工程模式一致——失败与“没变小/格式不适合”分开报。
         total_failed = sum(failed.values())
         if total_failed:
             report.warnings.append(
-                f"{total_failed} 个文件处理后未能进一步压缩（可能已是最优或格式不适合），"
+                f"{total_failed} 个文件处理失败（详见日志），"
                 "已原样保留，未计入节省体积。")
+        total_skipped = sum(skipped.values())
+        if total_skipped:
+            report.warnings.append(
+                f"{total_skipped} 个文件处理后未能进一步压缩"
+                "（可能已是最优或格式不适合），已原样保留，未计入节省体积。")
 
         # --- 第 4.5 步：带源码的成品，改写脚本引用 ---
+        _check_cancel(cancel)
         if rename_map and ref_index is not None:
             p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……")
             records.extend(ref_index.rewrite(rename_map))
 
         # --- 第 5 步：重建含优化内容的 RPA 封包 ---
         for rpa_name, repl in rpa_replacements.items():
+            _check_cancel(cancel)
             rpa_files = list(working_p.rglob(rpa_name))
             if not rpa_files:
+                continue
+            # 第二波：同名封包多份时不能盲取第一个重建——另外几份里的
+            # 同名条目仍旧，会产生不一致的兄弟副本；跳过重建并警告。
+            if len(rpa_files) > 1:
+                report.warnings.append(
+                    f"{rpa_name}：在工作副本里找到 {len(rpa_files)} 份同名封包，"
+                    "无法确定该重建哪一份，已跳过该批重建并保留原包。"
+                    "优化后的文件已按散落副本保留，游戏仍可加载。")
                 continue
             src_rpa = rpa_files[0]
             p.emit("rpa", f"正在重建封包 {rpa_name}（替换 {len(repl)} 个文件）……")
@@ -1123,6 +1317,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                            f"释放 {_fmt(junk['freed_bytes'])}"))
 
         # --- 第 7 步：报告 ---
+        _check_cancel(cancel)
         out = Path(output_dir)
         d = report.to_dict()
         d["unreferenced"] = unreferenced
@@ -1152,6 +1347,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         "warnings": report.warnings,
         "unreferenced": unreferenced,
         "failed": failed,
+        "skipped": skipped,
         "remapped": len(remap_map),
         "junk": junk,
         "report_dict": d,
@@ -1180,6 +1376,18 @@ def run_dist_smart(path: str, options: OptimizeOptions,
 
     src_name = Path(path).stem
     extract_dir = str(Path(work_root) / f"{src_name}-解压")
+    # 第二波：解压前先删除上次运行残留的同名目录——上次若崩溃在清理前，
+    # 残留会被本次扫描混入（重复记账/误打包）；删不掉时改用唯一后缀备用目录，
+    # 绝不在脏目录上继续。
+    if Path(extract_dir).exists():
+        try:
+            shutil.rmtree(extract_dir, ignore_errors=False)
+        except OSError:
+            p.emit("unpack",
+                   f"警告：无法删除残留解压目录 {Path(extract_dir).name}"
+                   "（可能被其他程序占用），已改用新临时目录继续。")
+            extract_dir = str(Path(work_root)
+                              / f"{src_name}-解压-{uuid.uuid4().hex[:8]}")
     p.emit("unpack", f"正在解压压缩包 {Path(path).name}……")
     archives.extract_archive(path, extract_dir, password)
     try:
@@ -1214,6 +1422,8 @@ def run_dist_smart(path: str, options: OptimizeOptions,
             "压缩包内是 APK：已按安全档瘦身（同名压缩、不换格式、未签名）。"
             "如需最大瘦身（图转 WebP/音转 OGG）或签名安装，"
             "请改用“APK 瘦身”页面直接选择这个 APK。")
+        # 第二波：APK 转入分支结束前也清掉解压目录（产物已挪到输出目录）
+        shutil.rmtree(extract_dir, ignore_errors=True)
         return r
     if len(dist_roots) > 1:
         names = "；".join(Path(x).name for x in dist_roots)
@@ -1227,6 +1437,9 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     result = run_dist(dist_root, options, work_root, output_dir, p,
                       cancel=cancel)
 
+    # 第二波：run_dist 之后的收尾步骤（改名/回包）同样尊重取消
+    _check_cancel(cancel)
+
     # 交付包里的文件夹用原成品目录名，不带时间戳，好认又整洁
     import shutil as _shutil
     proper_name = Path(dist_root).name
@@ -1235,10 +1448,22 @@ def run_dist_smart(path: str, options: OptimizeOptions,
         target = wd.parent / proper_name
         if target.exists():
             _shutil.rmtree(target, ignore_errors=True)
-        wd.rename(target)
+            if target.exists():
+                # 第二波：rmtree 静默失败时先检测残留——旧目标删不掉就绝不能
+                # 硬改名（会直接报 FileExistsError），给明确错误提示。
+                raise PipelineError(
+                    f"无法删除旧的目标目录 {target.name}"
+                    "（可能被其他程序占用），请关闭相关程序后重试。")
+        try:
+            wd.rename(target)
+        except OSError as e:
+            raise PipelineError(
+                f"无法把工作目录改名为 {target.name}"
+                f"（目标目录可能被其他程序占用）：{e}") from e
         result["working_dir"] = str(target)
 
     # 瘦身后的成品重新打包；输出 zip 用原始压缩包名，好认
+    _check_cancel(cancel)
     p.emit("repack", "正在把瘦身成品重新打包成 zip……")
     out_zip = str(Path(output_dir) / f"{src_name}-瘦身版.zip")
     archives.create_zip(result["working_dir"], out_zip)

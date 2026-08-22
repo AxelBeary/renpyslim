@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import logging
 import threading
 import time
 import traceback
@@ -23,6 +24,7 @@ from rtools.config import (CharsetOptions, OptimizeOptions, PRESETS,
 from rtools.models import Progress
 
 STATIC_DIR = Path(__file__).parent / "static"
+_LOG = logging.getLogger("renpyslim.web")
 
 app = FastAPI(title="Ren'Py 工具箱")
 
@@ -42,11 +44,13 @@ async def guard_local_only(request: Request, call_next):
     if host and host not in _ALLOWED_HOSTS:
         return JSONResponse({"ok": False, "error": "非本机请求，已拒绝"},
                             status_code=403)
-    origin = request.headers.get("origin", "")
-    if origin:
+    # Origin 头只要存在就必须能解析出本机主机名：空串、"null"、
+    # 非法值一律拒绝（旧版解析不出主机就放行，可被绕过）
+    if "origin" in request.headers:
         from urllib.parse import urlparse
+        origin = request.headers.get("origin", "")
         origin_host = (urlparse(origin).hostname or "").lower()
-        if origin_host and origin_host not in _ALLOWED_HOSTS:
+        if origin_host not in _ALLOWED_HOSTS:
             return JSONResponse({"ok": False, "error": "非本机来源，已拒绝"},
                                 status_code=403)
     return await call_next(request)
@@ -75,14 +79,16 @@ def _new_job(kind: str) -> str:
         # 超过 2 小时的直接丢，剩下的只保留最近 30 个
         # 审核修复（高-2）：超时清理必须跳过运行中的任务——
         # 旧版无状态检查，长任务跑超 2 小时后一建新任务就被删，
-        # 线程收尾 KeyError、状态永久卡死、还写假崩溃转储
+        # 线程收尾 KeyError、状态永久卡死、还写假崩溃转储；
+        # 排队中的任务同样豁免，否则队首还没开跑就被清掉、永远无人唤醒
         now = time.time()
         for k in [k for k, v in JOBS.items()
-                  if now - v["created"] > 7200 and v["status"] != "running"]:
+                  if now - v["created"] > 7200
+                  and v["status"] not in ("running", "queued")]:
             del JOBS[k]
         if len(JOBS) > 30:
             for k, _ in sorted(JOBS.items(), key=lambda kv: kv[1]["created"])[:-30]:
-                if JOBS[k]["status"] != "running":
+                if JOBS[k]["status"] not in ("running", "queued"):
                     del JOBS[k]
         JOBS[job_id] = {
             "id": job_id, "kind": kind, "status": "running",
@@ -112,13 +118,17 @@ def _dispatch_job(job_id: str, fn) -> None:
 
     排队时把可执行体存进 _JOB_TASKS（不放 JOBS：任务字典要原样
     过 JSON 接口，callable 塞不进去）。
+    busy 判断与 _RUNNING 占位在同一把 _QUEUE_LOCK 内原子完成，
+    杜绝“两个提交都看到空闲、双双开跑”的竞态窗口。
     """
     with _QUEUE_LOCK:
-        with JOBS_LOCK:
-            busy = _RUNNING["id"] and JOBS.get(_RUNNING["id"], {}).get(
-                "status") == "running"
+        busy = _RUNNING["id"] is not None
         if not busy:
             _RUNNING["id"] = job_id
+            with JOBS_LOCK:
+                job = JOBS.get(job_id)
+                if job:
+                    job["status"] = "running"
             _run_in_thread(job_id, fn)
             return
         with JOBS_LOCK:
@@ -130,28 +140,34 @@ def _dispatch_job(job_id: str, fn) -> None:
 
 
 def _scheduler_loop():
-    """后台调度：排队任务一个个接着跑（由 _run_in_thread 收尾时唤醒）。"""
-    while True:
-        with _QUEUE_LOCK:
-            job_id = None
-            while _QUEUE:
-                cand = _QUEUE.popleft()
-                with JOBS_LOCK:
-                    job = JOBS.get(cand)
-                if job and job["status"] == "queued":
-                    job_id = cand
-                    break
-                _JOB_TASKS.pop(cand, None)   # 排队时被取消的，丢弃
-            if not job_id:
-                _RUNNING["id"] = None
-                return
-            _RUNNING["id"] = job_id
-            fn = _JOB_TASKS.pop(job_id)
+    """后台调度：每轮只启动队首一个排队任务后立即结束本轮。
+
+    下一个任务由当前任务收尾时 _notify_job_done 链式唤醒启动，
+    保证任意时刻最多一个重任务在跑（旧版一轮循环弹出全部任务并
+    全部点火，串行保证失效）。
+    """
+    with _QUEUE_LOCK:
+        if _RUNNING["id"] is not None:
+            return   # 已有任务在跑（可能是唤醒间隙新提交的），让位
+        job_id = None
+        while _QUEUE:
+            cand = _QUEUE.popleft()
+            with JOBS_LOCK:
+                job = JOBS.get(cand)
+            if job and job["status"] == "queued":
+                job_id = cand
+                break
+            _JOB_TASKS.pop(cand, None)   # 排队时被取消的，丢弃
+        if not job_id:
+            _RUNNING["id"] = None
+            return
+        _RUNNING["id"] = job_id
+        fn = _JOB_TASKS.pop(job_id)
         with JOBS_LOCK:
             job = JOBS.get(job_id)
             if job and job["status"] == "queued":
                 job["status"] = "running"
-        _run_in_thread(job_id, fn)
+    _run_in_thread(job_id, fn)
 
 
 def _notify_job_done(_job_id: str) -> None:
@@ -165,38 +181,42 @@ def _run_in_thread(job_id: str, fn) -> None:
         # JOBS[job_id] 下标（任务字典可能被清理删掉）
         with JOBS_LOCK:
             kind = JOBS.get(job_id, {}).get("kind", "job")
+        final = {"status": "done", "result": None, "error": None,
+                 "traceback": None}
         try:
-            result = fn()
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                if job:
-                    job["status"] = "done"
-                    job["result"] = result
+            final["result"] = fn()
         except pipeline.PipelineCancelled:
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                if job:
-                    job["status"] = "canceled"
-                    job["error"] = "用户已取消，已完成的部分成果保留在结果目录。"
+            final["status"] = "canceled"
+            final["error"] = "用户已取消，已完成的部分成果保留在结果目录。"
         except scanner.ScanCancelled:
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                if job:
-                    job["status"] = "canceled"
-                    job["error"] = "用户已取消扫描。"
+            final["status"] = "canceled"
+            final["error"] = "用户已取消扫描。"
         except Exception as e:
             from rtools import crashdump
             dump = crashdump.write_crash(kind)
-            with JOBS_LOCK:
-                job = JOBS.get(job_id)
-                if job:
-                    job["status"] = "error"
-                    job["error"] = str(e) + (
-                        f"\n崩溃详情已存：{dump}" if dump else "")
-                    job["logs"].append(
-                        {"t": time.time(), "stage": "error",
-                         "message": traceback.format_exc(limit=5)})
+            final["status"] = "error"
+            final["error"] = str(e) + (
+                f"\n崩溃详情已存：{dump}" if dump else "")
+            final["traceback"] = traceback.format_exc(limit=5)
         finally:
+            # 审核修复：状态落终与 _RUNNING 清位在同一把 _QUEUE_LOCK 内
+            # 原子完成，再链式唤醒调度——关闭旧版“状态已 done 但占位未清”
+            # 窗口，杜绝两个重任务同时在跑
+            with _QUEUE_LOCK:
+                with JOBS_LOCK:
+                    job = JOBS.get(job_id)
+                    if job:
+                        job["status"] = final["status"]
+                        if final["result"] is not None:
+                            job["result"] = final["result"]
+                        if final["error"] is not None:
+                            job["error"] = final["error"]
+                        if final["traceback"]:
+                            job["logs"].append(
+                                {"t": time.time(), "stage": "error",
+                                 "message": final["traceback"]})
+                if _RUNNING["id"] == job_id:
+                    _RUNNING["id"] = None
             _notify_job_done(job_id)
 
     threading.Thread(target=wrapper, daemon=True).start()
@@ -250,7 +270,7 @@ class AnalyzeReq(BaseModel):
 
 class OptimizeReq(BaseModel):
     path: str
-    mode: str = "project"
+    mode: Optional[str] = None
     work_root: Optional[str] = None
     output: Optional[str] = None
     options: dict = {}
@@ -288,6 +308,8 @@ class SlimApkReq(BaseModel):
     keystore: Optional[str] = None
     ks_pass: Optional[str] = None
     key_alias: Optional[str] = None
+    key_pass: Optional[str] = None
+    new_key_password: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -391,11 +413,22 @@ def api_analyze(req: AnalyzeReq):
 
 @app.post("/api/optimize")
 def api_optimize(req: OptimizeReq):
+    # mode 口径：只认 project/dist/不传（自动检测），其余非法值 400；
+    # 压缩包输入一律走 dist——压缩包是成品形态，不存在工程模式，
+    # 用户显式传 project 只记日志警告并纠正，不报错打断。
+    if req.mode not in ("project", "dist", None):
+        return JSONResponse({"ok": False,
+                             "error": f"非法的 mode 值：{req.mode}，"
+                                      "只支持 project / dist / 不传（自动判断）"},
+                            status_code=400)
     path = Path(req.path)
     if not path.exists():
         return JSONResponse({"ok": False, "error": f"路径不存在：{req.path}"})
     if archives.is_archive(str(path)):
-        mode = req.mode if req.mode in ("project", "dist") else "dist"
+        if req.mode == "project":
+            _LOG.warning("optimize：压缩包输入不支持 project 模式，"
+                         "已自动改走 dist")
+        mode = "dist"
     else:
         mode = req.mode or _detect_mode(path)
     opts = _options_from_dict(req.options)
@@ -526,59 +559,116 @@ def api_get_sdk():
 
 
 # 审核修复（中-28）：tkinter 非线程安全，选择框必须串行化，
-# 连点两下浏览按钮曾有两个并发 Tk 实例带崩服务进程的风险
-_BROWSE_LOCK = threading.Lock()
+# 连点两下浏览按钮曾有两个并发 Tk 实例带崩服务进程的风险。
+# 收口修复（2026-08-23 审查 C 路）：旧方案锁由对话框线程自己释放、
+# 超时不放锁——对话框卡死/被遮挡/远程桌面挂起时线程永不结束，
+# 锁在进程余生内不再释放，浏览功能彻底死掉。兜底：锁状态显式记录
+# 获锁时间戳与代际令牌，下一次请求发现持有超过上限即视为卡死，
+# 打警告后强制重置、允许新对话框；旧线程迟到苏醒时 finally 释放
+# 按代际核对，不是自己那一代就不动新锁（幂等保护）。
+_BROWSE_META_LOCK = threading.Lock()
+_BROWSE_STATE = {"held": False, "since": None, "token": 0}
+_BROWSE_LOCK_MAX_HOLD = 600.0    # 秒：锁持有超过此时长即强制重置（测试可改）
+_BROWSE_JOIN_TIMEOUT = 180.0     # 秒：等对话框线程返回的时长（测试可注入）
+
+
+def _browse_try_acquire() -> Optional[int]:
+    """尝试占用浏览锁：成功返回本次的代际令牌，被占用返回 None。
+
+    锁持有超过 _BROWSE_LOCK_MAX_HOLD 视为对话框卡死：打警告后
+    强制重置状态，让新请求得以开新对话框。
+    """
+    with _BROWSE_META_LOCK:
+        now = time.time()
+        if _BROWSE_STATE["held"]:
+            held = now - (_BROWSE_STATE["since"] or now)
+            if held <= _BROWSE_LOCK_MAX_HOLD:
+                return None
+            _LOG.warning("browse：选择框锁已持有 %.0f 秒超过 %.0f 秒上限，"
+                         "疑似对话框卡死，强制重置锁状态。",
+                         held, _BROWSE_LOCK_MAX_HOLD)
+        _BROWSE_STATE["held"] = True
+        _BROWSE_STATE["since"] = now
+        _BROWSE_STATE["token"] += 1
+        return _BROWSE_STATE["token"]
+
+
+def _browse_release(token: int) -> None:
+    """幂等放锁：只对得上代际令牌的持有者生效。
+
+    被强制重置过的旧线程迟到苏醒时，其令牌已过期，释放直接忽略，
+    避免误放新一代对话框的锁。
+    """
+    with _BROWSE_META_LOCK:
+        if token != _BROWSE_STATE["token"]:
+            return
+        _BROWSE_STATE["held"] = False
+        _BROWSE_STATE["since"] = None
+
+
+def _browse_open_dialog(kind: str) -> str:
+    """弹原生选择框并返回选中路径（取消为空串）。独立成函数便于回归测试替换。"""
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    root.withdraw()
+    root.attributes("-topmost", True)
+    try:
+        if kind == "dir":
+            p = filedialog.askdirectory(title="选择文件夹")
+        elif kind == "font":
+            p = filedialog.askopenfilename(
+                title="选择字体文件",
+                filetypes=[("字体", "*.ttf *.otf *.ttc *.otc"),
+                           ("所有文件", "*.*")])
+        elif kind == "apk":
+            p = filedialog.askopenfilename(
+                title="选择 APK 文件",
+                filetypes=[("安卓安装包", "*.apk"),
+                           ("所有文件", "*.*")])
+        else:
+            p = filedialog.askopenfilename(
+                title="选择压缩包或成品文件",
+                filetypes=[("压缩包", "*.zip *.7z *.rar"),
+                           ("所有文件", "*.*")])
+    finally:
+        root.destroy()
+    return p or ""
 
 
 @app.get("/api/browse")
 def api_browse(kind: str = "file"):
     """在服务端弹出原生文件/文件夹选择框（本机工具的特权，网页做不到）。"""
-    if not _BROWSE_LOCK.acquire(blocking=False):
+    token = _browse_try_acquire()
+    if token is None:
         return JSONResponse({"ok": False,
                              "error": "已有一个选择框打开，请先在那边完成选择。"})
     result: dict = {}
 
     def run():
         try:
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True)
-            if kind == "dir":
-                p = filedialog.askdirectory(title="选择文件夹")
-            elif kind == "font":
-                p = filedialog.askopenfilename(
-                    title="选择字体文件",
-                    filetypes=[("字体", "*.ttf *.otf *.ttc *.otc"),
-                               ("所有文件", "*.*")])
-            elif kind == "apk":
-                p = filedialog.askopenfilename(
-                    title="选择 APK 文件",
-                    filetypes=[("安卓安装包", "*.apk"),
-                               ("所有文件", "*.*")])
-            else:
-                p = filedialog.askopenfilename(
-                    title="选择压缩包或成品文件",
-                    filetypes=[("压缩包", "*.zip *.7z *.rar"),
-                               ("所有文件", "*.*")])
-            root.destroy()
-            result["path"] = p or ""
+            result["path"] = _browse_open_dialog(kind)
         except Exception as e:
             result["error"] = str(e)
+        finally:
+            # 锁必须由线程自己在真正结束时释放（旧版 join 超时后照样放锁，
+            # 旧线程手里的 Tk 还活着，会开出第二个并发 Tk 实例带崩进程）；
+            # 超时后锁保持占用是期望行为——但持有超过上限会被强制重置，
+            # 此处按代际令牌幂等释放，不会误伤重置后的新锁。
+            _browse_release(token)
 
     t = threading.Thread(target=run)
     t.start()
-    t.join(180)
-    try:
-        if t.is_alive():
-            return JSONResponse({"ok": False, "error": "选择框超时，请重试。"})
-        if "error" in result:
-            return JSONResponse({"ok": False,
-                                 "error": "无法弹出选择框：" + result["error"]})
-        return {"ok": True, "path": result.get("path", "")}
-    finally:
-        _BROWSE_LOCK.release()
+    t.join(_BROWSE_JOIN_TIMEOUT)
+    if t.is_alive():
+        return JSONResponse({"ok": False,
+                             "error": "选择框超时，请重试。"
+                                      "若选择框仍开着，请先在那边完成选择；"
+                                      "若找不到对话框，请重启工具。"})
+    if "error" in result:
+        return JSONResponse({"ok": False,
+                             "error": "无法弹出选择框：" + result["error"]})
+    return {"ok": True, "path": result.get("path", "")}
 
 
 @app.get("/api/recent")
@@ -652,7 +742,9 @@ def api_slimapk(req: SlimApkReq):
                           sdk=packager.find_sdk(),
                           keystore=req.keystore, ks_pass=req.ks_pass,
                           key_alias=req.key_alias,
+                          key_pass=req.key_pass,
                           generate_key=req.gen_key,
+                          new_key_password=req.new_key_password,
                           remap_convert=req.remap,
                           progress=progress)
         r = dict(r)

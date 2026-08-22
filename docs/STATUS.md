@@ -385,3 +385,50 @@ dist\RenPySlim.exe                          # 如代码有变，先 build_exe.ba
 - 中文文件名传命令行会乱码：用 Python glob 拿路径，别在 shell 里拼中文路径
 - git add -A 前先看 .gitignore 是否挡住测试样本（曾误将 3GB 样本入提交，已回退教训）
 - apksigner（Java）对乱码输出路径报 Bad pathname：代码里已用英文临时路径规避
+
+## 2026-08-23 隐蔽缺陷审查与全量修复（四路审查 + 两轮核实 + 两波修复 + 收口）
+发布版本号：**v0.15.0**
+
+起因：对 v0.14.0 之后全部未提交变更做四路并行深度审查，两轮逐条对照
+源码核实，定案 **49 条发现：41 属实 / 8 部分属实 / 0 不实**。两波修复覆盖
+**17 项修复清单**，按模块摘要：
+- cli.py：参数错误也守 JSON 契约；--mode 默认改 None（去掉 object() 哨兵）；
+  移除死参数 --work-root；压缩包强制 dist，显式传 project 只警告纠正不报错
+- rtools/apk.py：撞名防护（归一化名收敛时降级同名压缩）+ APK 链路加固
+- rtools/archives.py：扫描改 os.scandir 自行递归不穿 Windows junction；
+  软链判断改 junction 感知
+- rtools/audio_optimizer.py + image_optimizer.py：体积守卫下沉缓存层（超限条目
+  按未命中、超限产物跳过入库，不抛错）
+- rtools/cache.py：编译脚本文本缓存加项目数上限并按最旧淘汰（常驻进程防内存单调增长）
+- rtools/charset.py：rpyc/rpymc 编译脚本文本也参与字符集统计；修 errors="ignore" 误吞字节
+- rtools/cleanup.py：残留临时文件识别改相对路径比对（修绝对路径错位失效）
+- rtools/packager.py：注入的归档配置打包后立即删除（finally 语义）；模板标记 +
+  用户同名文件先备份 .user.bak；产物清单只报本次新增/更新（mtime 快照）
+- rtools/pipeline.py：报告 JSON 原子写 + 临时名可识别可回收；磁盘变更密集段插入取消检查；
+  job 级异常兜底按类型归因计 failed；取消短超时轮询秒级生效；rpyc 缓存淘汰上限（收口）
+- rtools/procutil.py：超时/取消杀进程改连树拔除（.bat→cmd→java 链式孤儿不再占文件）
+- rtools/refs.py：本工具注入的重映射脚本排除出引用索引与改写目标（双保险）
+- rtools/remap.py：新增注入预检（引擎 ≥8.0.0 + 游戏自带文件回调则拒注入）；
+  解析失败显式返回失败标志不再静默空表
+- rtools/rpa.py：短读校验——封包截断明确报错，不再静默返回残缺内容
+- rtools/scanner.py + video_optimizer.py：ffprobe 惰性查找 + 程序旁 bin 兜底；视频改
+  ok/skipped/failed 三态记账，编码探测未知一律保守拒绝不盲编（收口）
+- rtools/updater.py：标签解析先剥离预发布后缀（v1.0.0-beta 不再被当 0）
+- rtools/vendor/unrpyc：后缀比对大小写不敏感（最小补丁）
+- web/app.py：浏览选择框锁加“最大持有时长 + 代际令牌”兜底（见收口小节）
+- tests/：新增 test_cli_contract / test_fix_decompile / test_fix_integrity /
+  test_packager_cleanup / test_task14_fixes / test_wave13_fixes / test_wave2_fixes 等回归文件，
+  既有测试同步加固（两波各带一批回归）
+- AGENTS.md：命令行口径与实验开关说明同步（随修复批更新）
+
+收口（三维评审：契约一致性 / 边界条件 / 回归覆盖）：两波修复落地后复查，本路（C 路）
+再补两处：①浏览框锁死兜底——旧方案锁由对话框线程自己释放、超时不放锁，对话框卡死/
+被遮挡/远程桌面挂起时锁在进程余生内不释放；改为元锁管理占用状态 + 获锁时间戳 +
+代际令牌，持有超 600 秒强制重置并告警，旧线程迟到释放按代际幂等忽略（超时文案补“若找不
+到对话框请重启工具”；join 等待时长提为可注入常量）；②评审点名的三条回归缺口补齐：
+浏览超时不放锁/超限强制重置/旧代际释放不误伤（挂住的假对话框线程 + 时间戳注入）、
+SlimApkReq 的 key_pass/new_key_password 同名透传、压缩包输入无论传什么 mode 都走 dist 且
+传 project 有纠正日志——新增 tests/test_web_api_regressions.py 5 条。
+
+测试基线：172 → **202 项全绿**（`pytest tests -q`，2 项环境依赖 skip：本机无 keytool/
+build-tools 时跳过）；ruff --select F,E9 全绿。

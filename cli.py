@@ -52,6 +52,25 @@ def _fail(msg: str) -> int:
     return 1
 
 
+
+
+
+class _JsonArgumentParser(argparse.ArgumentParser):
+    """参数错误也守 JSON 契约（审核修复）。
+
+    argparse 默认把 usage 打到 stderr 后退出 2，stdout 无 JSON，
+    违反"结果 JSON 走 stdout 且顶层有 ok"的约定。非法子命令、
+    缺必选参数（含 required 子命令缺失）、非法取值统统改走这里：
+    stdout 输出 {"ok": false, "error": ..., "usage": ...} 后退出 1。
+    """
+
+    def error(self, message: str):  # type: ignore[override]
+        print(json.dumps({"ok": False, "error": message,
+                          "usage": self.format_usage().strip()},
+                         ensure_ascii=False), flush=True)
+        sys.exit(1)
+
+
 def _make_cancel():
     """把 Ctrl+C 映射为取消回调（审核修复 中-3）。
 
@@ -167,10 +186,20 @@ def cmd_optimize(args) -> int:
     if not path.exists():
         return _fail(f"路径不存在：{args.path}")
     is_arc = archives.is_archive(str(path))
-    if args.mode:
-        mode = args.mode
-    elif is_arc:
+    # 审核修复：--mode 默认 None（用户未传）。旧版用 object() 哨兵当默认值，
+    # 哨兵是真值导致 `elif mode_arg:` 恒真，目录输入 100% 报取值校验错。
+    mode_arg = getattr(args, "mode", None)
+    if is_arc:
+        # 压缩包一律按 dist 处理：包内没有源码可当作工程优化；
+        # 用户显式传了 --mode project 时打警告但仍走 dist（审核修复）。
+        if mode_arg == "project":
+            print("警告：压缩包输入不支持工程模式，已自动改用 dist 模式。",
+                  file=sys.stderr, flush=True)
         mode = "dist"
+    elif mode_arg:
+        if mode_arg not in ("project", "dist"):
+            return _fail(f"--mode 取值只能是 project 或 dist，收到：{mode_arg}")
+        mode = mode_arg
     else:
         game = path / "game"
         mode = "project" if (game.is_dir() and any(game.rglob("*.rpy"))) else "dist"
@@ -292,7 +321,7 @@ def cmd_slimfont(args) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="renpyslim", description="RenPySlim：Ren'Py 资源瘦身与打包工具箱（无头模式）")
+    ap = _JsonArgumentParser(prog="renpyslim", description="RenPySlim：Ren'Py 资源瘦身与打包工具箱（无头模式）")
     ap.add_argument("--version", action="version", version=f"renpyslim {__version__}")
     sub = ap.add_subparsers(dest="command", required=True)
 
@@ -300,10 +329,11 @@ def main(argv=None) -> int:
     p.add_argument("--sdk", default=None)
     p.set_defaults(func=cmd_env)
 
+    # 子解析器默认继承主解析器类（_JsonArgumentParser），无需逐个指定。
     p = sub.add_parser("analyze", help="扫描分析资源")
     p.add_argument("path")
     p.add_argument("--mode", choices=["project", "dist"], default=None)
-    p.add_argument("--work-root", default=None)
+    # 审核修复：--work-root 从未被 analyze 使用，死参数移除。
     p.add_argument("--password", default=None, help="压缩包密码（如有）")
     p.set_defaults(func=cmd_analyze)
 
@@ -311,7 +341,11 @@ def main(argv=None) -> int:
                               ("full", cmd_full, "优化+打包一条龙")):
         p = sub.add_parser(name, help=help_)
         p.add_argument("path")
-        p.add_argument("--mode", choices=["project", "dist"], default=None)
+        # 审核修复：--mode 只对 optimize 有意义（full 语义上只适用于工程），
+        # 从 full 移除；默认 None 表示用户未传，走自动检测。
+        if name == "optimize":
+            p.add_argument("--mode", choices=["project", "dist"],
+                           default=None)
         p.add_argument("--preset", choices=list(PRESETS), default=DEFAULT_PRESET)
         p.add_argument("--work-root", default=None)
         p.add_argument("--output", default=None)

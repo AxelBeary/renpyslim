@@ -17,9 +17,14 @@ RELEASE_PAGE = f"https://github.com/{REPO}/releases"
 
 
 def _norm(tag: str) -> tuple:
-    """'v0.9.0' -> (0, 9, 0)，解析失败返回 (0,)"""
+    """'v0.9.0' -> (0, 9, 0)，解析失败返回 (0,)
+
+    先剥离 "-" 及其后缀（如 v1.0.0-beta → 1.0.0），否则带预发布后缀的
+    标签整个解析失败被当 0，白白报/漏报更新。
+    """
+    s = tag.lstrip("vV").split("-", 1)[0]
     try:
-        return tuple(int(x) for x in tag.lstrip("vV").split("."))
+        return tuple(int(x) for x in s.split("."))
     except ValueError:
         return (0,)
 

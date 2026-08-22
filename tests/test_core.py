@@ -216,7 +216,9 @@ def test_image_never_grows_in_place(tmp_path):
     Image.new("RGBA", (1, 1), (255, 0, 0, 255)).save(p, "PNG", optimize=True)
     before = p.read_bytes()
     res = optimize_image(str(p), str(p), quality=85)
-    if res is None:
+    if not res:
+        # 三态：已是最优归 skipped（不是失败），文件绝不能被动过
+        assert res["status"] in ("skipped", "failed")
         assert p.read_bytes() == before
     else:
         assert res["new_size"] < res["old_size"]

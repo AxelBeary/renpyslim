@@ -169,7 +169,15 @@ class RpaArchive:
                 raise RpaError(f"封包条目数据异常：{name}")
             # 文件体中前 len(prefix) 字节是冗余副本，跳过
             self._f.seek(off + len(prefix))
-            chunks.append(prefix + self._f.read(length - len(prefix)))
+            expected = length - len(prefix)
+            body = self._f.read(expected)
+            # 审核修复：短读校验——封包被截断时必须明确报错，
+            # 不能静默返回残缺内容（旧行为会把截断数据当完整文件用）
+            if len(body) != expected:
+                raise RpaError(
+                    f"封包数据被截断：{name} 期望长度 {length}，"
+                    f"实际只读到 {len(prefix) + len(body)}")
+            chunks.append(prefix + body)
         return b"".join(chunks)
 
     def extract(self, name: str, dest: str) -> None:

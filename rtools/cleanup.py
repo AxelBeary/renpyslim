@@ -10,8 +10,10 @@ from __future__ import annotations
 
 import hashlib
 import shutil
+from collections import OrderedDict
 from pathlib import Path
 
+from .charset import read_rpyc_text
 from .models import AssetInfo, AssetKind
 
 # 任意位置都安全删除的文件（可再生或与发布无关）
@@ -22,6 +24,44 @@ JUNK_EXTS = {".rpyb"}
 # game/ 下；任意层级的同名目录可能是第三方游戏自建的必需数据
 # （如 game/cache 存必需资源），曾无差别整删导致交付产物损坏
 _SAFE_JUNK_DIR_RELS = ("saves", "cache", "game/saves", "game/cache")
+
+# 审核修复：编译脚本文本缓存（同一进程内多次调用只解压一次）。
+# 收口修复：只保留最近 _RPYC_CACHE_MAX 个项目的条目——旧版只增不减，
+# 常驻 Web 进程连续处理多个项目时内存单调增长。
+_RPYC_CACHE_MAX = 2
+_RPYC_TEXT_CACHE: OrderedDict[str, str] = OrderedDict()
+
+
+def _compiled_script_text(game_dir: Path) -> str | None:
+    """把 game 目录下全部 .rpyc/.rpymc 的解压文本拼成一张大表。
+
+    供无引用判定的字节检索兜底：工程里没有 .rpy 源码（无源码成品）
+    或引用只写在编译脚本里时，RefIndex 找不到引用≠真没被用。
+    目录里没有编译脚本时返回 None（无需兜底）。结果按路径缓存复用。
+    """
+    try:
+        key = str(game_dir.resolve())
+    except OSError:
+        key = str(game_dir)
+    cached = _RPYC_TEXT_CACHE.get(key)
+    if cached is not None:
+        _RPYC_TEXT_CACHE.move_to_end(key)
+        return cached or None
+    parts: list[str] = []
+    try:
+        for p in game_dir.rglob("*"):
+            if p.is_file() and p.suffix.lower() in (".rpyc", ".rpymc"):
+                t = read_rpyc_text(p)
+                if t:
+                    parts.append(t)
+    except OSError:
+        pass
+    text = "\n".join(parts)
+    _RPYC_TEXT_CACHE[key] = text
+    # 收口修复：超出上限淘汰最旧项目（常驻进程防内存单调增长）
+    while len(_RPYC_TEXT_CACHE) > _RPYC_CACHE_MAX:
+        _RPYC_TEXT_CACHE.popitem(last=False)
+    return text or None
 
 
 def _is_rtools_tmp(name: str) -> bool:
@@ -71,13 +111,24 @@ def find_unused_assets(assets: list[AssetInfo], ref_index) -> list[str]:
     只对音频/视频/字体生效：这类资源必须写明确路径才能用。
     图片一律不标记：Ren'Py 8 会按文件名自动生成图片定义，
     "没有字面引用"不等于"没有被用到"。
+    审核修复：工程内存在 .rpyc/.rpymc 时，再拿全量编译脚本文本做字节
+    检索兜底，命中则不算无引用——堵上"引用只写在编译脚本里"的盲区。
     """
+    game_dir = getattr(ref_index, "game_dir", None)
+    compiled = _compiled_script_text(Path(game_dir)) if game_dir else None
     unused = []
     for a in assets:
         if a.kind not in (AssetKind.AUDIO, AssetKind.VIDEO, AssetKind.FONT):
             continue
-        if not ref_index.find(a.rel):
-            unused.append(a.rel)
+        if ref_index.find(a.rel):
+            continue
+        if compiled is not None:
+            # 完整相对路径与裸文件名两种写法都查（与 RefIndex._variants 同口径）
+            rel_norm = a.rel.replace("\\", "/")
+            bare = rel_norm.rsplit("/", 1)[-1]
+            if rel_norm in compiled or bare in compiled:
+                continue
+        unused.append(a.rel)
     return sorted(unused)
 
 

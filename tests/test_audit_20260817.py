@@ -500,14 +500,18 @@ def _mock_codec(monkeypatch, codec):
 
 def test_mp4_non_h264_refused(tmp_path, monkeypatch):
     """官方不支持 H.264 解码：非 H.264 的 mp4（如 HEVC）绝不能
-    转成 H.264——那会把原本能放的变成放不出来。"""
+    转成 H.264——那会把原本能放的变成放不出来。
+    第二波：拒绝从抛 RuntimeError 改为归 skipped（三态），
+    流水线按“格式不适合”记账而不是当成失败。"""
     import rtools.video_optimizer as vo
     _mock_codec(monkeypatch, "hevc")
     monkeypatch.setattr(vo, "find_ffmpeg", lambda: "fake-ffmpeg")
     src = tmp_path / "v.mp4"
     src.write_bytes(b"x")
-    with pytest.raises(RuntimeError, match="保留原文件"):
-        vo.compress_video(str(src), str(src))
+    res = vo.compress_video(str(src), str(src))
+    assert not res
+    assert res["status"] == "skipped"
+    assert "保留原文件" in res["reason"]
 
 
 def test_mp4_h264_allowed(tmp_path, monkeypatch):
@@ -524,13 +528,22 @@ def test_mp4_h264_allowed(tmp_path, monkeypatch):
 
 
 def test_webm_unsafe_codec_refused(tmp_path, monkeypatch):
+    """第二波：同改归 skipped（三态）；另验证探测返回 None（编码未知）
+    时不再盲编，同样保守拒绝。"""
     import rtools.video_optimizer as vo
     _mock_codec(monkeypatch, "h264")   # webm 容器装 h264：不在官方清单
     monkeypatch.setattr(vo, "find_ffmpeg", lambda: "fake-ffmpeg")
     src = tmp_path / "v.webm"
     src.write_bytes(b"x")
-    with pytest.raises(RuntimeError, match="保留原文件"):
-        vo.compress_video(str(src), str(src))
+    res = vo.compress_video(str(src), str(src))
+    assert not res
+    assert res["status"] == "skipped"
+    assert "保留原文件" in res["reason"]
+    # 探测未知（None）也拒绝，不猜不盲编（第二波修复）
+    _mock_codec(monkeypatch, None)
+    res2 = vo.compress_video(str(src), str(src))
+    assert not res2 and res2["status"] == "skipped"
+    assert "未知" in res2["reason"]
 
 
 def test_av1_option_wired():

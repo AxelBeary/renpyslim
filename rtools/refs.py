@@ -12,7 +12,8 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from .models import ChangeRecord, SCRIPT_EXTS, SKIP_DIRS
+from .models import SCRIPT_EXTS, SKIP_DIRS, ChangeRecord
+from .remap import REMAP_SCRIPT_NAME
 
 # 匹配点前面不允许是"文件名一部分"的字符，防止 logo.png 误匹配 gui_logo.png
 _LEFT_GUARD = r"(?<![\w.\-/])"
@@ -39,6 +40,10 @@ class RefIndex:
     def _load(self) -> None:
         for p in self.game_dir.rglob("*"):
             if not p.is_file() or p.suffix.lower() not in SCRIPT_EXTS:
+                continue
+            # 审核修复：本工具注入的重映射脚本内含大量旧文件名键，
+            # 进 RefIndex 会让"无引用判定/引用改写"全部误判，必须排除
+            if p.name == REMAP_SCRIPT_NAME:
                 continue
             if any(part in SKIP_DIRS for part in p.relative_to(self.game_dir).parts):
                 continue
@@ -93,6 +98,9 @@ class RefIndex:
                 patterns.append((variant_old, variant_new, pat))
 
         for frel, lines in self.files.items():
+            # 审核修复：同 _load，注入脚本永不参与改写（双保险）
+            if Path(frel).name == REMAP_SCRIPT_NAME:
+                continue
             changed = 0
             line_details: list[str] = []
             new_lines = []

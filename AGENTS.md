@@ -10,6 +10,7 @@
 - 有两个入口：图形界面（本地网页 127.0.0.1）和无头 CLI。**Agent 一律用无头 CLI，不要操作图形界面。**
 - 无头入口：仓库根目录的 `cli.py`（Python 源码方式运行）。
 - 输出约定：**结果 JSON 走 stdout，过程日志走 stderr**——解析时只读 stdout，stderr 不要当 JSON 解析。
+  参数错误也不例外：同样向 stdout 输出 `{"ok": false, ...}` JSON，退出码 1。
 - 所有命令的结果 JSON 顶层有 `"ok": true/false`；失败时带 `"error"` 字段。
 
 ## 运行方式
@@ -41,14 +42,17 @@ python cli.py env [--sdk SDK路径]
 要点：
 
 - `--mode` 可省略：有 `game/*.rpy` 源码自动判 `project`，否则 `dist`（成品）。
-- 直接输入 zip/7z/RAR 压缩包也可以（成品瘦身直进直出）；有密码就加 `--password`。
+  `--mode` 仅 `analyze` / `optimize` 有；`full` 无此参数（工程专用，不吃压缩包）。
+- 直接输入 zip/7z/RAR 压缩包也可以（成品瘦身直进直出）；压缩包一律按成品（`dist`）处理，
+  显式传 `--mode project` 会打警告但仍走 `dist`。有密码就加 `--password`。
 - `--preset` 三档：`conservative`（默认，画质优先）/ `balanced`（均衡）/ `aggressive`（体积优先）。
 - 实验性开关（默认全关，开启前必须征得用户同意）：`--png-quant`（PNG 有损量化）、
   `--videos`（视频重编码）、`--av1`（视频 AV1，仅 8.0+ 引擎）、`--remap`（成品注入重映射）、
   `--decompile`（反编译 rpyc 解锁无源码成品的格式转换）。
 - 产物默认写到输入路径旁边的 `_rtools_work/`（中间产物）和 `_rtools_output/`
   （报告 analysis.json、改动清单 changelog.json、校验 validation.txt、成品包）。
-  可用 `--work-root` / `--output` 改位置。
+  可用 `--work-root` / `--output` 改位置（仅适用于 `optimize` / `full`；
+  `analyze` 不支持这两个参数）。
 
 ## Agent 必须遵守的安全规则
 
@@ -85,7 +89,8 @@ python cli.py env [--sdk SDK路径]
   **Agents must use the headless CLI only; never drive the GUI.**
 - Headless entry: `cli.py` at the repository root (run from source).
 - Output contract: **result JSON on stdout, progress logs on stderr**.
-  Parse stdout only; stderr is never JSON.
+  Parse stdout only; stderr is never JSON. Argument errors are no exception:
+  they also emit `{"ok": false, ...}` JSON on stdout and exit with code 1.
 - Every result JSON has top-level `"ok": true/false`; failures carry `"error"`.
 
 ## Running
@@ -118,8 +123,11 @@ python cli.py env [--sdk PATH_TO_SDK]
 Notes:
 
 - `--mode` is optional: auto-detected as `project` when `game/*.rpy` sources
-  exist, otherwise `dist` (built game).
-- zip/7z/RAR archives are accepted directly; add `--password` if protected.
+  exist, otherwise `dist` (built game). `--mode` exists only on `analyze` /
+  `optimize`; `full` has no such flag (project-only, no archive input).
+- zip/7z/RAR archives are accepted directly and are always treated as a built
+  game (`dist`); passing `--mode project` explicitly only triggers a warning
+  while the run still uses `dist`. Add `--password` if protected.
 - Presets: `conservative` (default, quality-first) / `balanced` / `aggressive`.
 - Experimental flags (all off by default; get user consent first): `--png-quant`
   (lossy PNG quantization), `--videos` (video re-encode), `--av1` (AV1 video,
@@ -127,7 +135,8 @@ Notes:
   `--decompile` (decompile rpyc to unlock format conversion on source-less games).
 - Outputs go to `_rtools_work/` (intermediate) and `_rtools_output/`
   (analysis.json, changelog.json, validation.txt, final packages) next to the
-  input; override with `--work-root` / `--output`.
+  input; override with `--work-root` / `--output` (only `optimize` / `full`
+  accept them; `analyze` does not).
 
 ## Safety rules for agents
 

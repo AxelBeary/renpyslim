@@ -95,6 +95,79 @@ def test_error_finish_still_advances_queue():
     assert _wait(lambda: _status(j2) == "done")   # 前一个崩了也要接着跑
 
 
+def test_three_jobs_serial_never_more_than_one_running():
+    """排队 3 个任务：任意时刻最多 1 个在跑，且按提交顺序串行。"""
+    counter = {"running": 0, "max": 0}
+    lock = threading.Lock()
+    order = []
+
+    def make(name, gate, wait_secs):
+        def task():
+            with lock:
+                counter["running"] += 1
+                counter["max"] = max(counter["max"], counter["running"])
+            order.append(name)
+            gate.wait(wait_secs)
+            with lock:
+                counter["running"] -= 1
+        return task
+
+    gate1 = threading.Event()
+    j1 = _new_job("optimize")
+    _dispatch_job(j1, make("a", gate1, 5))
+    j2 = _new_job("optimize")
+    _dispatch_job(j2, make("b", threading.Event(), 0.2))
+    j3 = _new_job("optimize")
+    _dispatch_job(j3, make("c", threading.Event(), 0.2))
+    assert _status(j2) == "queued" and _status(j3) == "queued"
+    gate1.set()
+    assert _wait(lambda: all(_status(j) == "done" for j in (j1, j2, j3)),
+                 timeout=10.0)
+    assert counter["max"] <= 1      # 并发计数器：任意时刻运行数 ≤ 1
+    assert order == ["a", "b", "c"]  # 链式推进按提交顺序
+    assert app_mod._RUNNING["id"] is None
+
+
+def test_cleanup_exempts_queued_jobs():
+    """任务清理（超 2 小时/只留 30）不得删排队中的任务。"""
+    # ① 超时清理分支：超过 2 小时但还在排队的任务不被删
+    j_old_queued = _new_job("optimize")
+    with JOBS_LOCK:
+        JOBS[j_old_queued]["status"] = "queued"
+        JOBS[j_old_queued]["created"] -= 7300
+    _new_job("analyze")   # 触发一轮清理
+    assert j_old_queued in JOBS
+    assert _status(j_old_queued) == "queued"
+
+    # ② 只留最近 30 分支：最老的排队任务同样豁免，只删已结束的
+    with JOBS_LOCK:
+        JOBS.clear()
+    for i in range(31):
+        with JOBS_LOCK:
+            JOBS[f"done{i}"] = {
+                "id": f"done{i}", "kind": "optimize", "status": "done",
+                "logs": [], "result": None, "error": None,
+                "cancel": False, "created": 1000.0 + i,
+            }
+    with JOBS_LOCK:
+        JOBS["keep_queued"] = {
+            "id": "keep_queued", "kind": "optimize", "status": "queued",
+            "logs": [], "result": None, "error": None,
+            "cancel": False, "created": 999.0,   # 全场最老，但排队中
+        }
+    _new_job("analyze")
+    assert "keep_queued" in JOBS
+
+
+@pytest.mark.skipif(TestClient is None, reason="缺少测试客户端依赖")
+def test_optimize_invalid_mode_400(tmp_path):
+    with TestClient(app_mod.app,
+                    base_url="http://127.0.0.1:52786") as client:
+        r = client.post("/api/optimize",
+                        json={"path": str(tmp_path), "mode": "bogus"})
+        assert r.status_code == 400
+
+
 @pytest.mark.skipif(TestClient is None, reason="缺少测试客户端依赖")
 def test_api_jobs_and_queued_cancel():
     gate = threading.Event()

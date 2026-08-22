@@ -5,10 +5,9 @@ from pathlib import Path
 
 import pytest
 
-from rtools import crashdump, updater
-from rtools import scanner
-from rtools.pipeline import PipelineCancelled, _run_jobs
+from rtools import crashdump, scanner, updater
 from rtools.models import Progress
+from rtools.pipeline import PipelineCancelled, _run_jobs
 
 
 def test_updater_version_norm():
@@ -44,25 +43,42 @@ def test_scan_cancel(tmp_path):
 
 
 def test_run_jobs_cancel_preserves_done(tmp_path):
-    """取消时抛 PipelineCancelled，已完成的结果保留。"""
-    flag = {"stop": False}
+    """取消时抛 PipelineCancelled，已完成的结果保留在 partial_results。"""
     jobs = []
     for i in range(6):
-        def make(n=i):
-            def job():
-                return {"saved": 100, "records": []}
-            return f"j{i}", job
-        jobs.append(make())
+        def job():
+            return {"saved": 100, "records": []}
+        jobs.append((f"j{i}", job))
 
-    def cancel_after_first():
-        flag["stop"] = True
-        return flag["stop"]
-
-    # 第一个完成后即取消
-    call = {"n": 0}
-    def cancel_fn():
-        call["n"] += 1
-        return call["n"] > 1
-
+    # 第一次轮询间隙就喊停（第二波短超时轮询下取消秒级生效）
     with pytest.raises(PipelineCancelled):
-        _run_jobs(Progress(), "test", jobs, cancel_fn)
+        _run_jobs(Progress(), "test", jobs, lambda: True)
+
+
+def test_run_jobs_cancel_midway_preserves_done(tmp_path):
+    """中途取消：已完成的成果随异常带出，不会丢账。"""
+    import time
+    done_count = {"n": 0}
+
+    def quick():
+        done_count["n"] += 1
+        return {"saved": 100, "records": []}
+
+    def slow():
+        # 用可被杀的子进程拖住（模拟真实长任务）
+        import sys
+
+        from rtools import procutil
+        # 被杀后 run_quiet 正常返回（返回码非 0），无需吞异常
+        procutil.run_quiet([sys.executable, "-c",
+                            "import time; time.sleep(60)"], timeout=120)
+        return {"saved": 999, "records": []}
+
+    jobs = [(f"q{i}", quick) for i in range(4)] + [("slow", slow)]
+    started = time.monotonic()
+    with pytest.raises(PipelineCancelled) as ei:
+        _run_jobs(Progress(), "test", jobs,
+                  lambda: done_count["n"] >= 4
+                  and time.monotonic() - started > 0.3)
+    # 快任务的成果全部保留在 partial_results 里
+    assert sum(r.get("saved", 0) for r in ei.value.partial_results) >= 400

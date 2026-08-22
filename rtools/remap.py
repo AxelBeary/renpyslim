@@ -16,9 +16,15 @@ loadable() 对 config.loadable_callback 的短路判断（8.5 已核实）。
 """
 from __future__ import annotations
 
+import ast
 import json
+from pathlib import Path
 
 REMAP_SCRIPT_NAME = "rtools_remap.rpy"
+
+# 钩子最低引擎版本：config.file_open_callback / loadable_callback
+# 链在 8.0 之前行为不一致，注入可能导致游戏加载错乱（审核修复）
+_MIN_REMAP_VERSION = (8, 0, 0)
 
 _TEMPLATE = '''# 由 RenPySlim 自动生成：运行时文件重映射（实验性功能）。
 # 删掉本文件即可完全还原。请勿手动编辑。
@@ -65,24 +71,66 @@ def parse_remap_targets(script_text: str) -> int:
     return script_text.count('": ')
 
 
-def parse_remap_mapping(script_text: str) -> dict[str, str]:
+def check_remap_support(game_root: Path) -> tuple[bool, str]:
+    """注入前预检：该游戏能不能安全启用运行时重映射（审核修复）。
+
+    两项检查：
+    1. script_version.txt 解析出的引擎版本必须 >= 8.0.0（钩子链的
+       行为边界）；文件缺失或格式坏一律拒绝注入。
+    2. 扫描 .rpy 源码（排除本工具注入的脚本）：游戏自己设置了
+       config.file_open_callback / config.loadable_callback 时，
+       注入会直接覆盖游戏回调，拒绝注入。
+    返回 (支持, 人类可读原因)；支持时原因恒为空串。
+    """
+    game_root = Path(game_root)
+    sv_path = game_root / "script_version.txt"
+    if not sv_path.exists():
+        return False, "缺少 script_version.txt，无法确认引擎版本，已拒绝注入 remap"
+    try:
+        raw = sv_path.read_text(encoding="utf-8", errors="ignore").strip()
+    except OSError:
+        return False, "读取 script_version.txt 失败，已拒绝注入 remap"
+    try:
+        parsed = ast.literal_eval(raw)
+        version = tuple(int(x) for x in parsed)
+    except Exception:
+        return False, f"无法解析 script_version.txt 内容（{raw!r}），已拒绝注入 remap"
+    if version < _MIN_REMAP_VERSION:
+        v_show = ".".join(str(x) for x in version)
+        return False, f"引擎版本 {v_show} 低于 remap 要求的 8.0.0，已拒绝注入"
+
+    # 回调冲突扫描：只看 .rpy 明文脚本，跳过本工具自己注入的脚本
+    for p in game_root.rglob("*.rpy"):
+        if not p.is_file() or p.name == REMAP_SCRIPT_NAME:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8", errors="ignore")
+        except OSError:
+            continue
+        if "file_open_callback" in text or "loadable_callback" in text:
+            return False, "检测到游戏自身设置了文件加载回调，remap 可能冲突"
+    return True, ""
+
+
+def parse_remap_mapping(script_text: str) -> tuple[dict[str, str], bool]:
     """从已注入的重映射脚本里把映射表读回来。
 
     二次运行时用来合并旧映射：只拿新表覆盖写会把旧条目弄丢，
     而旧表里的原文件已被删除，丢了映射 = 图加载不到。（审核修复）
-    解析失败返回空 dict（保守：不阻断流程）。
+    返回 (映射, 是否解析成功)：任何失败（缺标记/无花括号/JSON 错/
+    非 dict）返回 ({}, False)，调用方据此决定是信任旧表还是报警。
     """
     marker = "_renpyslim_remap = "
     idx = script_text.find(marker)
     if idx < 0:
-        return {}
+        return {}, False
     brace = script_text.find("{", idx)
     if brace < 0:
-        return {}
+        return {}, False
     try:
         obj, _end = json.JSONDecoder().raw_decode(script_text[brace:])
     except ValueError:
-        return {}
+        return {}, False
     if not isinstance(obj, dict):
-        return {}
-    return {str(k): str(v) for k, v in obj.items()}
+        return {}, False
+    return {str(k): str(v) for k, v in obj.items()}, True

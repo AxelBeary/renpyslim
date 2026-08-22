@@ -78,7 +78,9 @@ def _iter_text_files(root: Path):
         rel_parts = p.relative_to(root).parts
         if any(part in SKIP_DIRS for part in rel_parts):
             continue
-        if p.suffix.lower() in TEXT_EXTS:
+        # 审核修复：编译脚本 .rpyc/.rpymc 里的文本也参与字符集统计，
+        # 补上"工程里只有编译产物、或 rpy 与 rpyc 内容不一致"的盲区
+        if p.suffix.lower() in TEXT_EXTS or p.suffix.lower() in (".rpyc", ".rpymc"):
             yield p
 
 
@@ -94,11 +96,18 @@ def extract_charset(root: str, options: CharsetOptions
     dynamic_input_files: list[str] = []
 
     for p in _iter_text_files(root_p):
+        suffix = p.suffix.lower()
+        if suffix in (".rpyc", ".rpymc"):
+            text = read_rpyc_text(p)
+            # 编译产物含 pickle 操作码等不可打印字节，只收可打印字符，
+            # 与成品模式口径保持一致，不给字体瘦身引入垃圾字形需求
+            chars.update(c for c in text if c.isprintable())
+            continue
         text = read_text_robust(p)
         if not text:
             continue
         chars.update(text)
-        if p.suffix.lower() in (".rpy", ".rpym", ".py"):
+        if suffix in (".rpy", ".rpym", ".py"):
             if DYNAMIC_INPUT_RE.search(text):
                 dynamic_input_files.append(p.relative_to(root_p).as_posix())
 
@@ -137,10 +146,10 @@ def extract_charset_dist(root: str, options: CharsetOptions
         if suffix in (".rpyc", ".rpymc"):
             text = read_rpyc_text(p)
         elif suffix in TEXT_EXTS:
-            try:
-                text = p.read_bytes().decode("utf-8", errors="ignore")
-            except OSError:
-                continue
+            # 审核修复：旧写法 decode("utf-8", errors="ignore") 会把
+            # GBK/GB18030 编码的文本文件里的汉字整片丢掉，改用带编码
+            # 回退的稳健读取（utf-8 -> gb18030）
+            text = read_text_robust(p)
         else:
             continue
         chars.update(c for c in text if c.isprintable())
