@@ -37,10 +37,15 @@ jobs:
             --hidden-import rtools.packager `
             --hidden-import pystray._win32 main.py
 
-      - name: Create Release with exe attached
+      # 若 Release 已手动建好（含发布说明），只补传 exe 不覆盖；否则照常自动创建。
+      - name: Publish Release with exe attached
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >
-          gh release create ${{ github.ref_name }} dist\RenPySlim.exe
-          --title "${{ github.ref_name }}"
-          --generate-notes
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if (gh release view $tag 2>$null) {
+            Write-Host "Release $tag 已存在，仅补传 exe 附件"
+            gh release upload $tag dist\RenPySlim.exe --clobber
+          } else {
+            gh release create $tag dist\RenPySlim.exe --title $tag --generate-notes
+          }
