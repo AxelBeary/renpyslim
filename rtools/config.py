@@ -92,7 +92,11 @@ KATAKANA = "".join(chr(c) for c in range(0x30A1, 0x30F7)) + "ー・"
 
 @dataclass
 class CharsetOptions:
-    """字体瘦身的保底字符集开关 + 手动追加。"""
+    """字体瘦身的保底字符集开关 + 手动追加。
+
+    字符集永远取全语言合集（多语言大包口径）；语言级的精确由
+    逐字体的语言定向瘦身实现，不提供单语言发行过滤。
+    """
     base_latin: bool = True
     cjk_punct: bool = True
     fullwidth: bool = False

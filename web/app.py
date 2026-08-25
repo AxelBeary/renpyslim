@@ -375,6 +375,18 @@ def api_analyze(req: AnalyzeReq):
                 chars, warns = charset.extract_charset(game, CharsetOptions())
                 report.warnings.extend(warns)
                 report.charset_size = len(chars)
+                report.languages = charset.detect_languages(game)
+                # 字体使用处数：前端分析报告与 CLI 同口径；
+                # languages 字段在分析报告里如实展示检测到的语言清单。
+                from rtools.refs import RefIndex
+                from rtools import cleanup as _cleanup
+                from rtools.models import AssetKind
+                ref_index = RefIndex(game)
+                fonts = [a for a in assets if a.kind == AssetKind.FONT
+                         and a.ext in (".ttf", ".otf")]
+                report.font_usage, usage_warns = _cleanup.font_usage_report(
+                    ref_index, fonts)
+                report.warnings.extend(usage_warns)
                 charlist_str = "".join(sorted(c for c in chars if c.isprintable()))
             else:
                 # 分析必须只读：解包封包用临时目录，分析完立即清理
@@ -390,6 +402,7 @@ def api_analyze(req: AnalyzeReq):
                                                      cancel=lambda: _job_cancelled(job_id),
                                                      extract_scripts=True)
                     report = analyzer.analyze(loose + packed, str(p), "dist")
+                    report.languages = charset.detect_languages(str(p))
                 finally:
                     shutil.rmtree(work, ignore_errors=True)
                 # 防误用：目录里找不到编译脚本，很可能选错了目录

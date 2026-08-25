@@ -83,6 +83,16 @@ Dört giriş noktası: **Süper Paketleyici / Hazır Ürün İnceltme / APK İnc
   ttc/otc koleksiyonları otomatik olarak ayrılıp kalınlıklarına göre ayrı ayrı çıktılanır;
   asıl dosyanın üzerine asla yazılmaz, kullanılan karakter listesi de hediye
 
+### Dil farkındalıklı yazı tipi küçültme
+
+Yazı tipi küçültme, oyun metnini çeviri dillerine göre (tl/ klasörü) gruplandırır ve her zaman “çok dilli
+paket” modunda çalışır: yazı tipleri artık tüm dillerin gliflerini toptan taşımaz. Küçültme üç kademede
+yapılır: satır içi etiket yazı tipleri yalnızca gerçekten görüntüledikleri karakterleri korur; yalnızca bazı
+dillerin başvurduğu yazı tipleri (ör. yalnızca Tayca için bir yazı tipi) gerçekten hizmet ettikleri dillere
+daraltılır; kesin belirleme yapılamadığında otomatik olarak tam karakter setine geri dönülür — asla eksik
+karakter kutusu oluşmaz. Eksik karakter uyarıları her yazı tipinin fiilen geçerli karakter setine göre
+denetlenir; böylece dillere göre farklı yazı tipleri kullanan oyunlar artık yanlış alarmlara boğulmaz.
+
 ### Çalışma güvenceleri
 
 - Çalışma sırasında istediğiniz an "Görevi durdur"a tıklayabilirsiniz (tamamlanan kısım korunur); görev başarısız olursa çökme dökümü otomatik kaydedilir

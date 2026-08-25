@@ -81,6 +81,37 @@ class RefIndex:
                         hits.append((frel, i))
         return hits
 
+    def refs_in_font_tags(self, rel_name: str) -> tuple[int, int]:
+        """统计字体引用：(出现在闭合 {font=…}…{/font} 标签内的行数, 总引用行数)。
+
+        与 find() 共用同一匹配模式、同行级口径。三重保守：
+        同一行既有标签又有其他引用时该行不计入标签数；注释行（#
+        开头）不参与统计——注释里的标签对判定是假阳性；标签必须在
+        同一行闭合，未闭合标签（作用到行尾/跨行）拿不到归属证据。
+        精确瘦身只在引用全都落在闭合标签里时启用，宁可回退全量。
+        """
+        total = tagged = 0
+        for variant in self._variants(rel_name):
+            ref_pat = re.compile(_LEFT_GUARD + re.escape(variant)
+                                 + _RIGHT_GUARD)
+            tag_pat = re.compile(r"\{font\s*=\s*[\"']?" + re.escape(variant)
+                                 + r"[\"']?\s*\}.*\{/font\}")
+            for lines in self.files.values():
+                for line in lines:
+                    if line.lstrip().startswith("#"):
+                        continue   # 注释行：引用与标签都不算数（防假阳性）
+                    if ref_pat.search(line):
+                        total += 1
+                        m = tag_pat.search(line)
+                        if m:
+                            # 同行混合引用防护：剔除闭合标签段后仍有引用，
+                            # 说明该字体另有样式等用法（可能渲染任意文本），
+                            # 该行不算“全在标签内”，宁可回退全量。
+                            if not ref_pat.search(line[:m.start()]
+                                                  + line[m.end():]):
+                                tagged += 1
+        return tagged, total
+
     def rewrite(self, mapping: dict[str, str]) -> list[ChangeRecord]:
         """批量改写引用。mapping: 旧相对路径 -> 新相对路径。
 

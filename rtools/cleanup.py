@@ -9,11 +9,13 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import shutil
+import threading
 from collections import OrderedDict
 from pathlib import Path
 
-from .charset import read_rpyc_text
+from .charset import lang_of_script_rel, read_rpyc_text, BASE_BUCKET
 from .models import AssetInfo, AssetKind
 
 # 任意位置都安全删除的文件（可再生或与发布无关）
@@ -30,6 +32,9 @@ _SAFE_JUNK_DIR_RELS = ("saves", "cache", "game/saves", "game/cache")
 # 常驻 Web 进程连续处理多个项目时内存单调增长。
 _RPYC_CACHE_MAX = 2
 _RPYC_TEXT_CACHE: OrderedDict[str, str] = OrderedDict()
+# Web 常驻进程里分析任务可并发，缓存读写加锁防竞态；
+# 缓存键含编译脚本的最新修改时间与文件数，内容变更后自动失效。
+_RPYC_CACHE_LOCK = threading.Lock()
 
 
 def _compiled_script_text(game_dir: Path) -> str | None:
@@ -37,30 +42,39 @@ def _compiled_script_text(game_dir: Path) -> str | None:
 
     供无引用判定的字节检索兜底：工程里没有 .rpy 源码（无源码成品）
     或引用只写在编译脚本里时，RefIndex 找不到引用≠真没被用。
-    目录里没有编译脚本时返回 None（无需兜底）。结果按路径缓存复用。
+    目录里没有编译脚本时返回 None（无需兜底）。结果按路径+时效缓存复用。
     """
     try:
-        key = str(game_dir.resolve())
+        base_key = str(game_dir.resolve())
     except OSError:
-        key = str(game_dir)
-    cached = _RPYC_TEXT_CACHE.get(key)
-    if cached is not None:
-        _RPYC_TEXT_CACHE.move_to_end(key)
-        return cached or None
-    parts: list[str] = []
+        base_key = str(game_dir)
+    files: list[Path] = []
+    stamp = 0
     try:
         for p in game_dir.rglob("*"):
             if p.is_file() and p.suffix.lower() in (".rpyc", ".rpymc"):
-                t = read_rpyc_text(p)
-                if t:
-                    parts.append(t)
+                files.append(p)
+                try:
+                    stamp = max(stamp, p.stat().st_mtime_ns)
+                except OSError:
+                    pass
     except OSError:
         pass
+    if not files:
+        return None
+    key = f"{base_key}|{stamp}|{len(files)}"
+    with _RPYC_CACHE_LOCK:
+        cached = _RPYC_TEXT_CACHE.get(key)
+        if cached is not None:
+            _RPYC_TEXT_CACHE.move_to_end(key)
+            return cached or None
+    parts = [t for t in (read_rpyc_text(p) for p in files) if t]
     text = "\n".join(parts)
-    _RPYC_TEXT_CACHE[key] = text
-    # 收口修复：超出上限淘汰最旧项目（常驻进程防内存单调增长）
-    while len(_RPYC_TEXT_CACHE) > _RPYC_CACHE_MAX:
-        _RPYC_TEXT_CACHE.popitem(last=False)
+    with _RPYC_CACHE_LOCK:
+        _RPYC_TEXT_CACHE[key] = text
+        # 收口修复：超出上限淘汰最旧项目（常驻进程防内存单调增长）
+        while len(_RPYC_TEXT_CACHE) > _RPYC_CACHE_MAX:
+            _RPYC_TEXT_CACHE.popitem(last=False)
     return text or None
 
 
@@ -122,14 +136,108 @@ def find_unused_assets(assets: list[AssetInfo], ref_index) -> list[str]:
             continue
         if ref_index.find(a.rel):
             continue
+        # 大小写盲区兜底：Windows 文件系统不区分大小写，脚本写
+        # Fonts/A.ttf 而磁盘是 fonts/a.ttf 时不算无引用（防误隔离）。
+        # 子串口径比守卫正则宽松，但只影响“跳过隔离”判定，方向保守安全。
+        if _ref_index_find_ci(ref_index, a.rel):
+            continue
         if compiled is not None:
-            # 完整相对路径与裸文件名两种写法都查（与 RefIndex._variants 同口径）
+            # 完整相对路径与裸文件名两种写法都查（与 RefIndex._variants 同口径），
+            # 同样忽略大小写。
             rel_norm = a.rel.replace("\\", "/")
             bare = rel_norm.rsplit("/", 1)[-1]
-            if rel_norm in compiled or bare in compiled:
+            compiled_lower = compiled.lower()
+            if (rel_norm.lower() in compiled_lower
+                    or bare.lower() in compiled_lower):
                 continue
         unused.append(a.rel)
     return sorted(unused)
+
+
+def _ref_index_find_ci(ref_index, rel_name: str) -> bool:
+    """大小写不敏感的引用检索（仅限“无引用判定”这种保守用途）。"""
+    rel = rel_name.replace("\\", "/")
+    bare = rel.rsplit("/", 1)[-1]
+    for lines in ref_index.files.values():
+        joined = "".join(lines).lower()
+        if rel.lower() in joined or bare.lower() in joined:
+            return True
+    return False
+
+
+def font_usage_report(ref_index, fonts: list[AssetInfo]
+                      ) -> tuple[dict, list[str]]:
+    """字体使用处数统计：每个字体被引用几处、在哪些文件，附少用字体警告。
+
+    只报告不动手。引用 ≤2 处的字体点名提醒（0 处的不在此列——
+    无引用资源检测 find_unused_assets 已单独点名）。
+    脚本里零引用的字体会拿编译脚本文本做兜底检索（与 find_unused_assets
+    同口径）：引用只写在 .rpyc 里时不至于误报成零。
+    """
+    game_dir = getattr(ref_index, "game_dir", None)
+    compiled = _compiled_script_text(Path(game_dir)) if game_dir else None
+    usage: dict[str, dict] = {}
+    for a in fonts:
+        refs = ref_index.find(a.rel)
+        files = sorted({f for f, _ in refs})
+        n = len(refs)
+        langs: set[str] | None = None
+        if files:
+            # 引用的语言归属：tl/<语言>/ 下的算该语言，其余算主剧本/公共；
+            # 字体只被部分语言引用时，这是“语言定向瘦身”的依据。
+            langs = {lang_of_script_rel(f) or BASE_BUCKET for f in files}
+        if n == 0 and compiled is not None:
+            rel_norm = a.rel.replace("\\", "/")
+            bare = rel_norm.rsplit("/", 1)[-1]
+            # 带左右边界的正则计数（与 RefIndex 同口径）：子串 count 会把
+            # domain.ttf 误计给 main.ttf，也会把 pickle 里的重复串超计。
+            # 完整路径优先；裸名只补充完整路径未命中的部分
+            pat = re.compile(r"(?<![\w.\-/])" + re.escape(rel_norm)
+                             + r"(?![\w.\-/@])")
+            n = len(pat.findall(compiled))
+            if n == 0:
+                pat_bare = re.compile(r"(?<![\w.\-/])" + re.escape(bare)
+                                      + r"(?![\w.\-/@])")
+                n = len(pat_bare.findall(compiled))
+            if n:
+                files = ["（编译脚本 .rpyc/.rpymc）"]
+                langs = None   # 编译文本定位不到语言，归属不可知 → 不定向
+        usage[a.rel] = {"refs": n, "files": files,
+                        "langs": sorted(langs) if langs is not None else None}
+    rare = [(rel, u["refs"]) for rel, u in usage.items()
+            if 1 <= u["refs"] <= 2]
+    warnings: list[str] = []
+    if rare:
+        names = "、".join(f"{rel}（{n} 处）" for rel, n in rare)
+        warnings.append(
+            f"以下字体在脚本里引用很少：{names}。"
+            "字体瘦身时会优先按它们的实际用法精确保留字符"
+            "（识别不了用法时自动回退为全量字符集保留）。")
+    return usage, warnings
+
+
+def compiled_font_ref_mismatch(game_dir, rel: str) -> bool:
+    """编译脚本里是否存在该字体的非标签引用（rpy/rpyc 不一致防护）。
+
+    .rpy 里的引用全在标签内、但编译脚本里另有样式等其他引用时，
+    说明两者内容不一致，精确瘦身判定证据不足，宁可降级。无编译脚本返回 False。
+    """
+    compiled = _compiled_script_text(Path(game_dir))
+    if compiled is None:
+        return False
+    rel_norm = rel.replace("\\", "/")
+    bare = rel_norm.rsplit("/", 1)[-1]
+    for variant in (rel_norm, bare):
+        total = len(re.findall(r"(?<![\w.\-/])" + re.escape(variant)
+                               + r"(?![\w.\-/@])", compiled))
+        if not total:
+            continue
+        tagged = len(re.findall(
+            r"\{font\s*=\s*[\"']?" + re.escape(variant)
+            + r"[\"']?\s*\}.*?\{/font\}", compiled))
+        if tagged < total:
+            return True   # 存在标签外引用（或计数口径差异）→ 降级更安全
+    return False
 
 
 def quarantine_files(root: str, rels: list[str]) -> list[str]:

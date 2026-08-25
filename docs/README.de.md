@@ -81,6 +81,17 @@ deine Auswahl wird gespeichert). Vier Einstiegspunkte: **Super-Packer / Fertiges
 - **Schriften abspecken** (eigenständiges Werkzeug): Kein Spielprojekt nötig – einfach Schriftart + Textquelle wählen und abspecken;
   ttc/otc-Sammlungen werden automatisch aufgetrennt und nach Schriftstärke separat ausgegeben; das Original wird nie überschrieben, und eine Liste der verwendeten Zeichen gibt's obendrauf
 
+### Mehrsprachigkeitsbewusstes Schrift-Abspecken
+
+Das Schrift-Abspecken bucketisiert den Text des Spiels automatisch nach Übersetzungssprachen (tl/-Ordner)
+und läuft immer im Modus „mehrsprachiges Gesamtpaket“: Schriften tragen nicht mehr pauschal die Glyphen aller
+Sprachen mit sich. Abgespeckt wird in drei Stufen: Inline-Tag-Schriften behalten exakt die Zeichen, die sie
+tatsächlich anzeigen; Schriften, die nur von manchen Sprachen referenziert werden (z. B. eine rein thailändische
+Schrift), werden auf die Sprachen reduziert, die sie wirklich bedienen; wo keine sichere Zuordnung möglich ist,
+wird automatisch auf den vollständigen Zeichensatz zurückgefallen — es entstehen nie „Tofu“-Boxen.
+Fehlende-Zeichen-Hinweise werden gegen den tatsächlich wirksamen Zeichensatz jeder Schrift geprüft, sodass
+Spiele mit sprachweise gemischten Schriften nicht mehr in Fehlalarmen ertrinken.
+
 ### Laufzeit-Absicherung
 
 - Während der Ausführung kannst du jederzeit auf "Aufgabe stoppen" klicken (bereits abgeschlossene Teile bleiben erhalten); schlägt eine Aufgabe fehl, wird automatisch ein Crash-Dump gespeichert

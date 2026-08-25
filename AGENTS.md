@@ -46,6 +46,10 @@ python cli.py env [--sdk SDK路径]
 - 直接输入 zip/7z/RAR 压缩包也可以（成品瘦身直进直出）；压缩包一律按成品（`dist`）处理，
   显式传 `--mode project` 会打警告但仍走 `dist`。有密码就加 `--password`。
 - `--preset` 三档：`conservative`（默认，画质优先）/ `balanced`（均衡）/ `aggressive`（体积优先）。
+- 字体瘦身按“多语言大包”口径自动优化（无需参数）：文本按翻译语言分桶，
+  行内标签字体精确到实际显示过的字；只被部分语言引用的字体收窄到它服务的语言；
+  拿不准的一律回退全量字符集。缺字提醒按字体实际生效的字符集对账（压假警报）。
+  分析结果里的 `languages` / `font_usage` 字段可查看语言清单与字体使用处数。
 - 实验性开关（默认全关，开启前必须征得用户同意）：`--png-quant`（PNG 有损量化）、
   `--videos`（视频重编码）、`--av1`（视频 AV1，仅 8.0+ 引擎）、`--remap`（成品注入重映射）、
   `--decompile`（反编译 rpyc 解锁无源码成品的格式转换）。
@@ -129,6 +133,13 @@ Notes:
   game (`dist`); passing `--mode project` explicitly only triggers a warning
   while the run still uses `dist`. Add `--password` if protected.
 - Presets: `conservative` (default, quality-first) / `balanced` / `aggressive`.
+- Font slimming runs automatically in "multilingual bundle" mode (no flag needed):
+  text is bucketed by translation language; inline-tag fonts keep exactly the characters
+  they display; fonts referenced by only some languages are narrowed to the languages
+  they serve; anything uncertain falls back to the full charset. Missing-glyph warnings
+  are checked against each font's effective charset (fewer false alarms). See the
+  `languages` / `font_usage` fields of analyze results for the language list and
+  per-font reference counts.
 - Experimental flags (all off by default; get user consent first): `--png-quant`
   (lossy PNG quantization), `--videos` (video re-encode), `--av1` (AV1 video,
   Ren'Py 8.0+ only), `--remap` (runtime remap injection for dists),

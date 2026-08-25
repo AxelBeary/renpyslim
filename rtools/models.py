@@ -94,6 +94,9 @@ class AnalysisReport:
     entries: list[AnalysisEntry] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)   # 全局级提醒（如检测到动态输入）
     charset_size: Optional[int] = None                  # 扫描到的唯一字符数
+    languages: list[str] = field(default_factory=list)  # tl/ 下检测到的翻译语言（不含 None）
+    font_usage: dict = field(default_factory=dict)      # 字体引用处数：rel -> {refs, files}
+    font_slim_modes: dict = field(default_factory=dict)  # 字体瘦身模式：rel -> precise/global
 
     def to_dict(self) -> dict:
         return {
@@ -101,6 +104,9 @@ class AnalysisReport:
             "mode": self.mode,
             "total_size": self.total_size,
             "charset_size": self.charset_size,
+            "languages": self.languages,
+            "font_usage": self.font_usage,
+            "font_slim_modes": self.font_slim_modes,
             "warnings": self.warnings,
             "entries": [e.to_dict() for e in self.entries],
         }

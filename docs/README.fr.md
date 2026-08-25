@@ -78,6 +78,17 @@ Quatre points d'entrée : **Super empaqueteur / Allègement de jeu prêt / Allè
 - **Allègement de polices** (outil indépendant) : aucun projet de jeu n'est nécessaire, il suffit de choisir une police + des sources de texte pour l'alléger ;
   les collections ttc/otc sont automatiquement découpées et produites séparément selon la graisse ; les originaux ne sont jamais écrasés, et la liste des caractères utilisés est fournie
 
+### Allègement des polices sensible aux langues
+
+L'allègement des polices classe le texte du jeu par langue de traduction (dossier tl/) et travaille toujours
+en mode «paquet multilingue» : les polices ne portent plus les glyphes de toutes les langues indistinctement.
+Elles sont allégées en trois paliers : les polices des balises en ligne gardent exactement les caractères
+affichés ; les polices référencées par certaines langues seulement (par ex. une police réservée au thaï) sont
+limitées aux langues qu'elles servent ; en cas de doute, retour automatique au jeu de caractères complet :
+aucun carré ne s'affichera jamais. Les alertes de caractères manquants sont vérifiées contre le jeu de
+caractères réellement effectif de chaque police, pour que les jeux qui mélangent les polices par langue ne
+soient plus noyés sous les fausses alertes.
+
 ### Garanties à l'exécution
 
 - Tu peux cliquer à tout moment sur « Arrêter la tâche » pendant une exécution (ce qui est déjà terminé est conservé) ; en cas d'échec d'une tâche, un vidage de crash est automatiquement enregistré

@@ -69,6 +69,17 @@ recuerda). Cuatro entradas: **Optimizar y empaquetar / Adelgazar distribución /
 - **Adelgazar APK**: elige un archivo .apk, tres pasos (nivel / modo de máximo adelgazado / firma — por defecto se crea una clave nueva), y obtienes un paquete adelgazado listo para instalar
 - **Adelgazar fuentes** (autónomo): no se necesita el proyecto del juego — elige una fuente + fuentes de texto; las colecciones ttc/otc se separan por peso; los originales nunca se sobrescriben; se incluye la lista de caracteres usados
 
+### Reducción de fuentes con conciencia de idiomas
+
+La reducción de fuentes clasifica el texto del juego por idioma de traducción (carpeta tl/) y trabaja siempre
+en modo «paquete multilingüe»: las fuentes ya no cargan los glifos de todos los idiomas por igual. Se reducen
+en tres niveles: las fuentes de etiquetas en línea conservan exactamente los caracteres que muestran; las fuentes
+referenciadas solo por algunos idiomas (p. ej., una fuente solo para tailandés) se limitan a los idiomas que
+realmente sirven; cuando la atribución no es segura, se vuelve automáticamente al juego de caracteres completo:
+nunca aparecen cuadros de carácter faltante. Las advertencias de caracteres ausentes se comprueban contra el
+conjunto realmente efectivo de cada fuente, por lo que los juegos que mezclan fuentes por idioma ya no se
+ahogan en falsas alarmas.
+
 ### Garantías durante la ejecución
 
 - Puedes pulsar «Detener» en cualquier momento (el trabajo completado se conserva); los fallos escriben automáticamente un volcado

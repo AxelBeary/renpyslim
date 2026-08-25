@@ -76,6 +76,16 @@ Quatro portas de entrada: **Super Empacotador / Redução de Obra Pronta / Redu�
 - **Redução de Fonte** (ferramenta independente): não precisa de um projeto de jogo — basta escolher a fonte + a origem do texto para reduzir;
   coleções ttc/otc são separadas automaticamente e geradas por peso de fonte; nunca sobrescreve o original e inclui a lista de caracteres usados
 
+### Redução de fontes com consciência de idiomas
+
+A redução de fontes organiza o texto do jogo por idioma de tradução (pasta tl/) e trabalha sempre no modo
+«pacote multilíngue»: as fontes deixam de carregar os glifos de todos os idiomas indiscriminadamente. São
+reduzidas em três níveis: fontes de tags inline mantêm exatamente os caracteres que exibem; fontes referenciadas
+por apenas alguns idiomas (p. ex., uma fonte só do tailandês) ficam restritas aos idiomas que realmente servem;
+quando a atribuição não é certa, o conjunto completo de caracteres é mantido automaticamente — nunca aparecem
+quadrados de caractere ausente. Os avisos de caracteres faltantes são conferidos contra o conjunto realmente
+efetivo de cada fonte, para que jogos que misturam fontes por idioma não sejam mais afogados em falsos alarmes.
+
 ### Garantias durante a execução
 
 - Durante a execução você pode clicar em "Parar tarefa" a qualquer momento (o que já foi concluído é mantido); se a tarefa falhar, um despejo de erro é salvo automaticamente

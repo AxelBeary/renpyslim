@@ -231,6 +231,50 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
 # 模式 A：工程优化
 # ===========================================================================
 
+def _font_slim_plan(rel: str, build_chars: set, buckets: dict,
+                    tag_buckets: dict, scope_langs,
+                    ref_index, cs,
+                    tainted_keys: set | None = None) -> tuple[set, str]:
+    """单字体瘦身计划：(字符集, 模式)。三档精度，拿不准就保守。
+
+    瘦身永远按“多语言大包”口径（build_chars = 全语言合集），
+    语言级的精确靠逐字体定向实现。
+    红线：引用的静态坐标只是服务范围的必要证据而非充分证据，
+    任何拿不准都必须回退全量，绝不剃掉可能显示的字。
+
+    precise     —— 所有引用都落在闭合的 {font=…} 行内标签里、归属到了字符、
+                   且标签体不含 [插值]：只留实际显示过的字 + 保底集；
+    lang_scoped —— 字体引用只出现在部分语言的翻译目录里（tl 外零引用）：
+                   收窄到这些语言 + 主剧本桶（未翻译字符串仍会以该字体
+                   渲染原文，主剧本字符绝不能丢）；
+    global      —— 拿不准（主对话字体/混合引用/归属不可知）：
+                   保留全语言字符集。
+    """
+    base_text = {c for c in cs.base_text()}
+    tagged, total = ref_index.refs_in_font_tags(rel)
+    if total > 0 and tagged == total:
+        merged_map: dict[str, set[str]] = {}
+        for lang_map in tag_buckets.values():
+            for key, got in lang_map.items():
+                merged_map.setdefault(key, set()).update(got)
+        attributed = charset.tag_chars_for_font(rel, merged_map)
+        # 有任一标签体带插值的字体不进精确档：插值处运行时显示什么无法静态预知，
+        # 只留字面字符必出方框（聊天系统/动态称号类游戏常见）。
+        tainted = bool(tainted_keys) and charset.font_keys_match(rel, tainted_keys)
+        if attributed and not tainted:
+            return attributed | base_text, "precise"
+    if scope_langs is not None and charset.BASE_BUCKET not in scope_langs:
+        # 语言定向仅对“只被部分语言翻译引用、tl 外零引用”的字体生效；
+        # 含 base 引用（主剧本/菜单/样式定义）的字体可能服务任何语言，禁止收窄。
+        # 即便收窄，也永远并入主剧本桶：翻译不完整时未翻译串仍用该字体渲染原文。
+        scoped = set(base_text) | set(buckets.get(charset.BASE_BUCKET, set()))
+        for l in scope_langs:
+            scoped |= buckets.get(l, set())
+        if scoped < build_chars:
+            return scoped, "lang_scoped"
+    return build_chars, "global"
+
+
 def run_project(project_dir: str, options: OptimizeOptions,
                 work_root: str, output_dir: str,
                 progress: Progress | None = None,
@@ -269,10 +313,14 @@ def run_project(project_dir: str, options: OptimizeOptions,
         cancel=cancel)
     report = analyzer.analyze(assets, root=game_dir, mode="project")
 
-    # --- 第 3 步：字符集 ---
-    chars, charset_warnings = charset.extract_charset(game_dir, options.charset)
+    # --- 第 3 步：字符集（一遍扫描产出全部多语言字表，供字体定向瘦身共用） ---
+    buckets, tag_buckets, tainted_keys, dyn_files = charset.scan_charset_tables(
+        game_dir)
+    chars, charset_warnings = charset.merge_charset(
+        buckets, dyn_files, options.charset)
     report.warnings.extend(charset_warnings)
     report.charset_size = len(chars)
+    report.languages = charset.detect_languages(game_dir)
     charlist_path = font_tool.write_charlist(
         chars, str(Path(output_dir) / "charlist.txt"))
     p.emit("analyze", f"扫描到 {len(assets)} 个资源文件，实际使用字符 {len(chars)} 个")
@@ -296,22 +344,46 @@ def run_project(project_dir: str, options: OptimizeOptions,
         report.warnings.append(
             f"发现 {len(duplicates)} 组内容完全相同的重复文件，多余副本共占 "
             f"{_fmt(total_waste)}（见结果 duplicates 字段）。请自行确认后手动处理。")
-    missing_glyphs: dict[str, list[str]] = {}
-    for a in [x for x in assets if x.kind == AssetKind.FONT
-              and x.ext in (".ttf", ".otf")]:
-        miss = charset.find_missing_glyphs(a.path, chars)
-        if miss:
-            missing_glyphs[a.rel] = miss
-            report.warnings.append(
-                f"{a.rel}：脚本用到了 {len(miss)} 个该字体里没有的字，"
-                f"如「{''.join(miss[:12])}」等——这些字会显示方框（除非配置了回退字体），"
-                "与瘦身无关，瘦身前就存在。")
 
     todo_images = [a for a in assets if a.kind == AssetKind.IMAGE]
     todo_audio = [a for a in assets if a.kind == AssetKind.AUDIO]
     todo_videos = [a for a in assets if a.kind == AssetKind.VIDEO]
     todo_fonts = [a for a in assets if a.kind == AssetKind.FONT
                   and a.ext in (".ttf", ".otf")]
+    # 字体使用处数统计（只报告不动手）：少用字体点名，供用户知情，
+    # 其中的语言归属字段是“语言定向瘦身”的依据。
+    report.font_usage, usage_warns = cleanup.font_usage_report(
+        ref_index, todo_fonts)
+    report.warnings.extend(usage_warns)
+    # 标签归属与插值污染已随第 3 步的一遍扫描产出（不再重复扫）。
+    # 逐字体预先定好瘦身计划（三档：精确/语言定向/全量兜底），
+    # 缺字对账与实际瘦身共用同一计划，保证两处口径一致。
+    font_plans: dict[str, tuple] = {}
+    for a in todo_fonts:
+        scope = report.font_usage.get(a.rel, {}).get("langs")
+        scope_set = set(scope) if scope is not None else None
+        plan = _font_slim_plan(
+            a.rel, chars, buckets, tag_buckets, scope_set,
+            ref_index, options.charset, tainted_keys)
+        # rpy/rpyc 不一致防护：编译脚本里另有引用时，精确档与语言定向档
+        # 同样证据不足（一个遗留编译样式引用就能让字体渲染所有语言），降级全量
+        if plan[1] in ("precise", "lang_scoped") and \
+                cleanup.compiled_font_ref_mismatch(game_dir, a.rel):
+            plan = (chars, "global")
+        font_plans[a.rel] = plan
+
+    # 缺字对账：按每个字体“实际生效的字符集”查（而非整个发行字符集），
+    # 压掉“交叉用字体的游戏里字体缺无关语言字”的假警报。
+    missing_glyphs: dict[str, list[str]] = {}
+    for a in todo_fonts:
+        slim_chars, _mode = font_plans[a.rel]
+        miss = charset.find_missing_glyphs(a.path, slim_chars)
+        if miss:
+            missing_glyphs[a.rel] = miss
+            report.warnings.append(
+                f"{a.rel}：脚本用到了 {len(miss)} 个该字体里没有的字，"
+                f"如「{''.join(miss[:12])}」等——这些字会显示方框（除非配置了回退字体），"
+                "与瘦身无关，瘦身前就存在。")
     # 失败计数（BACKLOG B3：报告口径诚实化）；第二波：skipped 单独分桶，
     # “压完没变小/格式不支持”不再混入失败（旧版一律记 failed 导致失败数虚高）
     failed = {"image": 0, "audio": 0, "video": 0, "font": 0}
@@ -592,29 +664,43 @@ def run_project(project_dir: str, options: OptimizeOptions,
                                           output_dir, records, saved), "video")
 
     if options.do_fonts and preset.font_subset:
-        try:
-            for i, a in enumerate(todo_fonts, start=1):
-                if cancel and cancel():
-                    raise PipelineCancelled()
-                p.emit("optimize", f"字体 {i}/{len(todo_fonts)}：{a.rel}")
-                if a.size < 256 * 1024:      # 小于 256KB 的字体瘦身收益有限
-                    continue
-                # 字体不走缓存：结果依赖字符集，命中率低、意义小
+        def _font_job(a):
+            def job():
+                out = {"records": [], "saved": 0, "rename": None, "warn": None,
+                       "failed": None, "skipped": None,
+                       "font_rel": a.rel, "font_mode": None}
+                slim_chars, mode = font_plans.get(a.rel, (chars, "global"))
                 try:
-                    res = subset_font(a.path, a.path, chars)
-                    saved += res["old_size"] - res["new_size"]
-                    records.append(ChangeRecord(
-                        action="subset_font", src=a.rel,
-                        detail=f"字形 {res['glyphs_before']} -> {res['glyphs_after']}，"
-                               f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"))
+                    res = subset_font(a.path, a.path, slim_chars)
                 except Exception as e:
-                    failed["font"] += 1
-                    report.warnings.append(f"{a.rel}：字体瘦身失败，保留原文件（{e}）")
-        except BaseException:
-            # 审核修复（高-5）：取消与意外异常都落部分清单，
-            # 字体子集化不可逆，已剃的必须有对账依据
-            _flush_partial_changelog(output_dir, records, saved)
-            raise
+                    out["failed"] = "font"
+                    out["warn"] = f"{a.rel}：字体瘦身失败，保留原文件（{e}）"
+                    return out
+                out["saved"] = res["old_size"] - res["new_size"]
+                out["font_mode"] = mode
+                mode_note = {"precise": "，精确模式（只留该字体实际显示过的字）",
+                             "lang_scoped": "，语言定向（只留该字体服务的语言的字）"
+                             }.get(mode, "")
+                out["records"].append(ChangeRecord(
+                    action="subset_font", src=a.rel,
+                    detail=f"字形 {res['glyphs_before']} -> {res['glyphs_after']}，"
+                           f"{_fmt(res['old_size'])} -> {_fmt(res['new_size'])}"
+                           f"{mode_note}"))
+                return out
+            return a.rel, job
+
+        # 字体文件互不相干、瘦身计划又已逐字预先定好，任务只执行不决策，
+        # 与图片/音频同款并行（含取消/异常落部分清单）；小于 256KB 的
+        # 字体瘦身收益有限直接跳过。字体不走缓存：结果依赖字符集，
+        # 命中率低、意义小。
+        jobs = [_safe_job("font", _font_job(a)) for a in todo_fonts
+                if a.size >= 256 * 1024]
+        font_results = _run_jobs_or_flush(p, "optimize", jobs, cancel,
+                                          output_dir, records, saved)
+        _aggregate(font_results, "font")
+        for r in font_results:
+            if r.get("font_mode"):
+                report.font_slim_modes[r["font_rel"]] = r["font_mode"]
 
     # 第二波记账口径：failed（真错误）与 skipped（已是最优/不支持）分开；
     # “压完没变小”不再计失败，但两者都原样保留、不计节省。
@@ -769,6 +855,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     chars, warnings = charset.extract_charset_dist(working, options.charset)
     report.warnings.extend(warnings)
     report.charset_size = len(chars)
+    report.languages = charset.detect_languages(working)
     p.emit("analyze", f"扫描到 {len(loose)} 个散落资源、{len(packed)} 个封包内资源，"
                       f"实际使用字符 {len(chars)} 个")
 

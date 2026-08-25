@@ -159,6 +159,17 @@ def cmd_analyze(args) -> int:
             chars, warns = charset.extract_charset(str(game), CharsetOptions())
             report.warnings.extend(warns)
             report.charset_size = len(chars)
+            report.languages = charset.detect_languages(str(game))
+            # 字体使用处数：让用户在优化前就看到哪些字体只用在一两处
+            from rtools.refs import RefIndex
+            from rtools import cleanup as _cleanup
+            from rtools.models import AssetKind
+            ref_index = RefIndex(str(game))
+            fonts = [a for a in assets if a.kind == AssetKind.FONT
+                     and a.ext in (".ttf", ".otf")]
+            report.font_usage, usage_warns = _cleanup.font_usage_report(
+                ref_index, fonts)
+            report.warnings.extend(usage_warns)
         else:
             # 分析必须只读：解包用临时目录，用完立即清理
             import shutil
@@ -172,6 +183,7 @@ def cmd_analyze(args) -> int:
                                                  progress=scan_log,
                                                  extract_scripts=True)
                 report = analyzer.analyze(loose + packed, str(path), "dist")
+                report.languages = charset.detect_languages(str(path))
             finally:
                 shutil.rmtree(extract, ignore_errors=True)
         return _ok({"report": report.to_dict()})
