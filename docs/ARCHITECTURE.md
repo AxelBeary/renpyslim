@@ -25,7 +25,8 @@ rtools/            核心引擎（不依赖 Web/CLI，可独立调用与测试�
   config.py        档位（conservative/balanced/aggressive）、保底字符集、选项
   scanner.py       资源扫描（两步：先数总数再逐个报进度），ffprobe 元数据
   analyzer.py      报告生成：问题/建议/优先级/预计节省
-  charset.py       字符集提取（工程/成品/独立三种来源）、缺字对账、健壮编码
+  charset.py       字符集提取（工程/成品/独立三种来源）、缺字对账、健壮编码；
+                   按翻译语言分桶与引擎内置界面安全字（多语言感知，v0.16.0）
   font_optimizer.py 字体瘦身（临时文件策略 + 空壳防御 _sanity_check）
   font_tool.py     独立字体瘦身流程（TTC/OTC 拆分、字符清单导出）
   image_optimizer.py 图片优化（临时文件策略，没变小不替换）
