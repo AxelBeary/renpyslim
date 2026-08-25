@@ -35,6 +35,31 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = sys.stdout or _devnull
     sys.stderr = sys.stderr or _devnull
 
+# 启动自检：从源码运行且忘装依赖时，给人话指引而非裸 traceback。
+# 窗口模式没有控制台可看，额外弹一个系统对话框。
+import rtools
+_missing = rtools.missing_dependencies(gui=True)
+if _missing:
+    _msg = (f"缺少 Python 依赖：{', '.join(_missing)}\n\n"
+            "请在仓库根目录先运行：\n"
+            "    pip install -r requirements.txt\n"
+            "然后重新启动本工具。\n"
+            "（exe 发行版用户不会遇到此问题，依赖已随包内置）")
+    try:
+        print(_msg, file=sys.stderr)
+    except Exception:
+        pass
+    try:
+        import tkinter
+        from tkinter import messagebox
+        _root = tkinter.Tk()
+        _root.withdraw()
+        messagebox.showerror("RenPySlim — 缺少依赖 / Missing dependencies", _msg)
+        _root.destroy()
+    except Exception:
+        pass
+    sys.exit(1)
+
 from rtools import runtime  # noqa: E402
 
 DEFAULT_PORT = 52786

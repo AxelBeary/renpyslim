@@ -25,21 +25,36 @@ import signal
 import sys
 from pathlib import Path
 
-from rtools import packager, pipeline, scanner, analyzer, charset, font_tool
-from rtools import archives
-from rtools import __version__
-from rtools.config import OptimizeOptions, CharsetOptions, PRESETS, DEFAULT_PRESET
-from rtools.models import Progress
+import rtools
+
+# Windows 控制台默认 GBK，会把中文 JSON 弄坏，强制 UTF-8
+# （提到自检之前，缺依赖的中文指引同样要可读）
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+    sys.stderr.reconfigure(encoding="utf-8")
+
+# 启动自检：从源码运行且忘装依赖时，输出人话指引而非裸 traceback；
+# 同样守 JSON 契约（结果走 stdout、顶层有 ok、退出码 1）。
+_missing = rtools.missing_dependencies(gui=False)
+if _missing:
+    print(json.dumps(
+        {"ok": False,
+         "error": f"缺少 Python 依赖：{', '.join(_missing)}。"
+                  "请先在仓库根目录运行 'pip install -r requirements.txt' 后重试"
+                  "（exe 发行版用户不会遇到此问题，依赖已随包内置）。"},
+        ensure_ascii=False, indent=2))
+    sys.exit(1)
+
+from rtools import packager, pipeline, scanner, analyzer, charset, font_tool  # noqa: E402
+from rtools import archives  # noqa: E402
+from rtools import __version__  # noqa: E402
+from rtools.config import (OptimizeOptions, CharsetOptions, PRESETS,  # noqa: E402
+                           DEFAULT_PRESET)
+from rtools.models import Progress  # noqa: E402
 
 
 def _log(stage: str, message: str) -> None:
     print(f"[{stage}] {message}", file=sys.stderr, flush=True)
-
-
-# Windows 控制台默认 GBK，会把中文 JSON 弄坏，强制 UTF-8
-if hasattr(sys.stdout, "reconfigure"):
-    sys.stdout.reconfigure(encoding="utf-8")
-    sys.stderr.reconfigure(encoding="utf-8")
 
 
 def _ok(data: dict) -> int:

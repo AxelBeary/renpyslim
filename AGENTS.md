@@ -73,6 +73,7 @@ python cli.py env [--sdk SDK路径]
 
 | 现象 | 处理 |
 |---|---|
+| 从源码启动提示缺依赖 | 工具会自检并点名缺哪个包；先 `pip install -r requirements.txt` 再重试（exe 版无此问题） |
 | `找不到 Ren'Py SDK` | 用 `--sdk` 指定 SDK 目录，或先 `env` 体检 |
 | 压缩包解不开 | 确认是否需要 `--password`；RAR 需要系统装有 unrar 类工具时看报错提示 |
 | 音频没变小 | 检查 FFmpeg 是否在 PATH（`env` 可见） |
@@ -168,6 +169,7 @@ Notes:
 
 | Symptom | Fix |
 |---|---|
+| Startup reports missing dependencies | The tool self-checks and names the missing packages; run `pip install -r requirements.txt` first (exe builds never hit this) |
 | `找不到 Ren'Py SDK` | Pass `--sdk <dir>` or run `env` first |
 | Archive won't extract | Check whether `--password` is needed |
 | Audio unchanged | Ensure FFmpeg is on PATH (visible in `env`) |
