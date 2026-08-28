@@ -6,6 +6,8 @@
 多语言感知（2026-08-25 补第一天起的缺口）：文本按翻译语言分桶，
 字符集始终取全语言合集（用本工具就是发多语言包）；语言级的精确
 交给“字体按实际服务的语言定向瘦身”，绝不做单语言发行过滤。
+字体归属走标签栈解析（2026-08-28）：嵌套标签回退外层字体、
+转义双花括号按字面文本处理，与 Ren'Py 文本解析语义对齐。
 """
 from __future__ import annotations
 
@@ -22,13 +24,6 @@ DYNAMIC_INPUT_RE = re.compile(r"\brenpy\.input\s*\(|(?<![\w.])input\s*\(")
 # 属公共内容。
 TL_DIR = "tl"
 TL_BASE_LANG = "None"
-
-# 行内换字体标签：{font=路径}…{/font}。标签内的字由该字体显示，
-# 是"少用字体精确归属"的唯一可靠依据（样式引用无法静态精确归属）。
-FONT_TAG_RE = re.compile(
-    r"\{font\s*=\s*[\"']?([^{}\"']+?)[\"']?\s*\}(.*?)\{/font\}", re.DOTALL)
-# 标签体内可能嵌套其他文本标签（{b}{size=…} 等），它们不提供字形，先剔掉
-INNER_TAG_RE = re.compile(r"\{[^{}]*\}")
 
 # 分桶键：主剧本 + tl/None + tl 外的内容（公共内容，永远计入）
 BASE_BUCKET = "base"
@@ -157,6 +152,76 @@ def scan_language_buckets(root: str) -> tuple[dict, list]:
     return buckets, dynamic_input_files
 
 
+def _parse_font_spans(text: str) -> tuple[dict, set]:
+    """按 Ren'Py 文本标签语义解析整段文本，把显示字符归属到 {font=…}。
+
+    用标签栈替代正则：{font=…} 压栈、{/font} 弹栈，字符归当前栈顶字体；
+    内层 {/font} 关闭后字符自动回退给外层字体（嵌套标签不丢字）。
+    {{ 与 [[ 是转义的字面括号，不构成标签/插值开头；[插值] 处的字面字符
+    运行时不显示，跳过并污染栈顶字体。返回 (字体键->字符集, 污染键集)。
+    """
+    tag_map: dict[str, set] = {}
+    tainted: set[str] = set()
+    stack: list[str] = []
+    i, n = 0, len(text)
+    while i < n:
+        c = text[i]
+        if c == "{":
+            if i + 1 < n and text[i + 1] == "{":
+                # {{ 转义为字面左括号，不是标签开头；字面字符照样显示，
+                # 归当前栈顶字体（无栈则无人认领，不进任何字表）
+                if stack:
+                    tag_map.setdefault(stack[-1], set()).add("{")
+                i += 2
+                continue
+            j = text.find("}", i)
+            if j < 0:
+                break  # 花括号未闭合：后续内容解析不可靠，放弃归属（保守）
+            body = text[i + 1:j]
+            if body == "/font":
+                if stack:
+                    stack.pop()
+            elif (body[:4] == "font" and len(body) > 4
+                    and body[4] in " \t=" and "=" in body):
+                key = body.split("=", 1)[1].strip().strip("\"'").strip()
+                key = key.replace("\\", "/")
+                if key:
+                    stack.append(key)
+            # 其他标签（{b}{size=…} 等）自身不产生可显示字符，其内容照常流入栈顶字体；
+            # 裸 {font}（无值）不是合法标签，不压栈，内容与旧口径一致不归属。
+            i = j + 1
+            continue
+        if c == "[":
+            if i + 1 < n and text[i + 1] == "[":
+                # [[ 转义为字面左括号，不是插值开头，照常归属显示字符；
+                # 转义写法不进污染集（显示的是确定字符，无方框风险）
+                if stack:
+                    tag_map.setdefault(stack[-1], set()).add("[")
+                i += 2
+                continue
+            # 插值：运行时显示什么无法静态预知，跳过内容并污染栈顶字体。
+            # 括号按成对跳过（插值内部可再嵌变量，如 [a[b]]），
+            # [[ 转义不改变嵌套深度。
+            if stack:
+                tainted.add(stack[-1])
+            depth = 1
+            i += 1
+            while i < n and depth > 0:
+                if text[i] == "[" and i + 1 < n and text[i + 1] == "[":
+                    i += 2
+                    continue
+                if text[i] == "[":
+                    depth += 1
+                elif text[i] == "]":
+                    depth -= 1
+                i += 1
+            continue
+        if stack and c.isprintable():
+            tag_map.setdefault(stack[-1], set()).add(c)
+        i += 1
+    return tag_map, tainted
+
+
 def scan_charset_tables(root: str) -> tuple:
     """一遍扫描产出全部多语言字表：(语言分桶, 标签分桶, 插值污染集, 动态输入文件)。
 
@@ -184,16 +249,14 @@ def scan_charset_tables(root: str) -> tuple:
             buckets.setdefault(lang, set()).update(text)
             if suffix in (".rpy", ".rpym", ".py") and DYNAMIC_INPUT_RE.search(text):
                 dynamic_input_files.append(p.relative_to(root_p).as_posix())
-        # 行内 {font=…} 标签：归属分桶 + 插值污染标记同一遍完成；
+        # 行内 {font=…} 标签：标签栈解析归属 + 插值污染标记同一遍完成；
+        # 嵌套标签的字正确回退外层字体，转义双花括号按字面文本处理。
         # 编译脚本里的对白同样含标签文本，一并计入。
         lang_map = tag_buckets.setdefault(lang, {})
-        for m in FONT_TAG_RE.finditer(text):
-            key = m.group(1).strip().replace("\\", "/")
-            if "[" in m.group(2):
-                tainted.add(key)
-            got = {c for c in INNER_TAG_RE.sub("", m.group(2)) if c.isprintable()}
-            if got:
-                lang_map.setdefault(key, set()).update(got)
+        got_map, tainted_keys = _parse_font_spans(text)
+        tainted |= tainted_keys
+        for key, got in got_map.items():
+            lang_map.setdefault(key, set()).update(got)
     return buckets, tag_buckets, tainted, dynamic_input_files
 
 

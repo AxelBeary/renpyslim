@@ -10,7 +10,7 @@ SPDX-License-Identifier: AGPL-3.0-or-later
 
 import importlib.util
 
-__version__ = "0.16.0"
+__version__ = "0.16.1"
 
 # pip 包名 -> 导入名（第三方依赖，与 requirements.txt 保持同步）。
 # 本 __init__ 不导入任何第三方包，入口可在重模块加载前安全自检。

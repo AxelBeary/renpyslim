@@ -95,6 +95,56 @@ def test_collect_font_tag_chars(tmp_path):
     assert "{" not in got and "b" not in got
 
 
+def test_nested_font_tags_keep_outer_chars(tmp_path):
+    """嵌套 {font=}：内层 {/font} 关闭后，外层字体继续显示后续字。
+    旧正则实现把字归丢、外层字体进精确档后剃掉这些字出方框（2026-08-28 修复）。"""
+    from rtools import pipeline
+    game = _make_font_project(tmp_path)
+    (game / "script2.rpy").write_text(
+        'label start:\n'
+        '    e "{font=fonts/title.ttf}你好{font=fonts/main.ttf}世界{/font}再见{/font}"\n',
+        encoding="utf-8")
+    tag_map = charset.collect_font_tag_chars(str(game))
+    outer = tag_map["fonts/title.ttf"]
+    assert "你" in outer and "好" in outer
+    # 内层标签关闭后的字必须回退给外层字体，一个字不丢（修复点）
+    assert "再" in outer and "见" in outer
+    assert "世" in tag_map["fonts/main.ttf"] and "界" in tag_map["fonts/main.ttf"]
+
+    # 整条链路：精确档下外层字体的字一个不少（“再见”不被剃）
+    idx = RefIndex(str(game))
+    buckets, tag_buckets, tainted, _ = charset.scan_charset_tables(str(game))
+    cs = CharsetOptions()
+    build_chars = set()
+    for got in buckets.values():
+        build_chars |= got
+    build_chars.update(cs.base_text())
+    slim, mode = pipeline._font_slim_plan(
+        "fonts/title.ttf", build_chars, buckets, tag_buckets,
+        {charset.BASE_BUCKET}, idx, cs, tainted)
+    assert mode == "precise"
+    assert "再" in slim and "见" in slim and "你" in slim
+
+
+def test_escaped_braces_are_literal_text(tmp_path):
+    """{{font=…}} 是转义字面文本：不是真标签，字不得归到该字体（修复点），
+    也不构成污染（显示的是确定字符，无方框风险）。
+    用独立工程：确保该字体全项目没有任何真标签干扰断言。"""
+    game = tmp_path / "game"
+    (game / "fonts").mkdir(parents=True)
+    (game / "fonts" / "esc.ttf").write_bytes(b"fake")
+    (game / "script.rpy").write_text(
+        'label start:\n'
+        '    e "写法示例：{{font=fonts/esc.ttf}}示例字{{/font}}，双大括号是字面"\n',
+        encoding="utf-8")
+    tag_map = charset.collect_font_tag_chars(str(game))
+    got = tag_map.get("fonts/esc.ttf", set())
+    assert "示" not in got and "例" not in got and "字" not in got
+    # 字面字符不是插值，不得把字体拖进污染集（否则白丢精确档资格）
+    assert not charset.font_keys_match(
+        "fonts/esc.ttf", charset.scan_tainted_font_keys(str(game)))
+
+
 def test_tag_chars_for_font_matching_variants():
     tag_map = {
         "fonts/title.ttf": {"甲"},
