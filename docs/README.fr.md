@@ -158,7 +158,7 @@ Couvrent la lecture/écriture des archives RPA (y compris les deux générations
 la sécurité de la réécriture des références, la préservation des originaux par les optimiseurs de polices/images,
 l'analyse rpyc, l'allègement d'APK (protection du moteur / retrait de la signature /
 conversion des chemins préfixés par x- / génération de la clé), l'annulation et les vidages de crash, les valeurs sûres par défaut, la non-régression des correctifs d'audit,
-les protections locales du backend et l'intégrité des dictionnaires des huit langues de l'interface — 114 tests en tout.
+les protections locales du backend et l'intégrité des dictionnaires des huit langues de l'interface — 232 tests en tout.
 
 ## Développement
 

@@ -149,7 +149,7 @@ Covers RPA archive read/write (both format generations plus malicious-archive
 blocking), reference-rewrite safety, font/image optimizers not corrupting originals,
 rpyc parsing, APK slimming (engine protection / signature removal / x- prefix path
 translation / key generation), cancellation and crash dumps, safe defaults, review-fix
-regressions, backend local-only guard, and eight-language i18n dictionary completeness — 114 tests.
+regressions, backend local-only guard, and eight-language i18n dictionary completeness — 232 tests.
 
 ## Development
 

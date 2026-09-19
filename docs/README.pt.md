@@ -155,7 +155,7 @@ usa automaticamente uma porta livre atribuída pelo sistema. Use a variável de 
 Cobre leitura/escrita de pacotes RPA (incluindo os dois formatos, antigo e novo, e bloqueio de pacotes maliciosos), segurança da reescrita de referências,
 otimização de fontes/imagens sem corromper os arquivos originais, análise de rpyc, redução de APK (proteção do motor / remoção de assinatura /
 conversão de caminhos com prefixo x- / geração de chaves), cancelamento e despejos de erro, padrões seguros, regressões de correções de auditoria,
-proteção local do backend e integridade dos dicionários dos oito idiomas — 114 itens no total.
+proteção local do backend e integridade dos dicionários dos oito idiomas — 232 itens no total.
 
 ## Desenvolvimento
 

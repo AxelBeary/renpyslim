@@ -3,6 +3,9 @@
 > 本文件写给 AI 编码助手与自动化脚本：如何用无头模式正确调用 RenPySlim。
 > 人类用户请看 [README.md](README.md)（图形界面为主）。
 > English version is at the bottom of this file.
+>
+> **维护约定 / Maintenance note:** 中英文两版契约内容须同步修改，以中文版为事实源。
+> Both language sections must be kept in sync; the Chinese version is the source of truth.
 
 ## 关键事实（先读这个）
 
@@ -171,6 +174,6 @@ Notes:
 |---|---|
 | Startup reports missing dependencies | The tool self-checks and names the missing packages; run `pip install -r requirements.txt` first (exe builds never hit this) |
 | `找不到 Ren'Py SDK` | Pass `--sdk <dir>` or run `env` first |
-| Archive won't extract | Check whether `--password` is needed |
+| Archive won't extract | Check whether `--password` is needed; for RAR, ensure an unrar-compatible tool is installed and follow the error prompt |
 | Audio unchanged | Ensure FFmpeg is on PATH (visible in `env`) |
 | Garbled Chinese in JSON | Terminal encoding issue only; stdout is UTF-8 |

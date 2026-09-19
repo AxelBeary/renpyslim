@@ -162,7 +162,7 @@ Abgedeckt werden: Lesen/Schreiben von RPA-Archiven (inklusive beider Formate –
 Sicherheit des Verweis-Umschreibens, dass Schrift-/Bildoptimierung die Originaldateien nicht beschädigt, rpyc-Parsing,
 APK-Abspeckung (Engine-Schutz/Signaturentfernung/x-Präfix-Pfadumsetzung/Schlüsselerzeugung), Abbruch und Crash-Dumps,
 sichere Standardwerte, Regressionstests für Audit-Reparaturen, lokale Schutzmechanismen des Backends und die Vollständigkeit
-der acht Sprachwörterbücher der Oberfläche – insgesamt 114 Tests.
+der acht Sprachwörterbücher der Oberfläche – insgesamt 232 Tests.
 
 ## Entwicklung
 

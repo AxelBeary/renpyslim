@@ -152,7 +152,7 @@ optimizadores de fuentes/imágenes no dañen originales, análisis de rpyc, adel
 de APK (protección del motor / eliminación de firma / conversión de rutas x- /
 generación de claves), cancelación y volcados de fallos, valores por defecto
 seguros, regresiones de correcciones, protección local del backend e integridad de
-los diccionarios de localización de los ocho idiomas — 114 pruebas.
+los diccionarios de localización de los ocho idiomas — 232 pruebas.
 
 ## Desarrollo
 

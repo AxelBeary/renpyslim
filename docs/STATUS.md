@@ -383,7 +383,7 @@ debug 扫描压测 8 种边缘写法，发现嵌套 {font=} 标签会把外层�
 
 ```
 git status                                  # 应干净
-.venv\Scripts\python -m pytest tests -q     # 应 68 passed
+.venv\Scripts\python -m pytest tests -q     # 应 232 passed, 2 skipped
 dist\RenPySlim.exe                          # 如代码有变，先 build_exe.bat 重建
 ```
 
