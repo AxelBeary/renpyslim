@@ -6,6 +6,8 @@ build/
 dist/
 *.spec
 .pytest_cache/
+.ruff_cache/
+.qoder/
 _test_*/
 _tw*/
 _to*/
