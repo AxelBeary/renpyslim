@@ -5,6 +5,9 @@ __pycache__/
 build/
 dist/
 *.spec
+# 根目录两个 PyInstaller 构建配方是构建输入，须入库（2026-09-29 用户拍板）
+!RenPySlim.spec
+!RenPyToolbox.spec
 .pytest_cache/
 .ruff_cache/
 .qoder/
