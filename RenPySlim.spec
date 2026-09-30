@@ -1,4 +1,6 @@
 # -*- mode: python ; coding: utf-8 -*-
+# exe 构建配方唯一事实源：release.yml 与 build_exe.bat 均以本文件调用 PyInstaller，
+# 改打包参数只改这里，勿在调用方重复内联。
 
 
 a = Analysis(

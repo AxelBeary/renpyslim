@@ -166,7 +166,8 @@ engelleme dahil), referans yeniden yazma güvenliği, yazı tipi/görsel optimiz
 asıl dosyaları bozmaması, rpyc çözümleme, APK inceltme (motor koruması / imza kaldırma /
 x- önekli yol dönüşümü / anahtar üretimi), iptal ve çökme dökümleri, güvenli varsayılanlar,
 denetim düzeltmelerinin gerileme testleri, arka uç yerel koruması ve arayüzün sekiz dil
-sözlük bütünlüğü — toplam 232 test.
+sözlük bütünlüğü. Test sayısı burada bilerek sabit tutulmaz — esas alınan,
+`python -m pytest tests -q` komutunun topladığı sonuçtur.
 
 ## Geliştirme
 

@@ -20,22 +20,14 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt pyinstaller pytest httpx
+        run: pip install -r requirements.txt -r requirements-dev.txt pyinstaller
 
       # 发布前先跑一遍回归，红了就不发版
       - name: Sanity tests
         run: python -m pytest tests -q
 
-      - name: Build exe (same recipe as build_exe.bat)
-        run: |
-          python -m PyInstaller --noconfirm --onefile --windowed --name RenPySlim `
-            --icon assets\icon.ico `
-            --add-data "web\static;web/static" `
-            --add-data "assets;assets" `
-            --add-data "rtools\vendor\unrpyc;rtools/vendor/unrpyc" `
-            --hidden-import rtools.pipeline `
-            --hidden-import rtools.packager `
-            --hidden-import pystray._win32 main.py
+      - name: Build exe (recipe: RenPySlim.spec)
+        run: python -m PyInstaller --noconfirm RenPySlim.spec
 
       # 若 Release 已手动建好（含发布说明），只补传 exe 不覆盖；否则照常自动创建。
       - name: Publish Release with exe attached

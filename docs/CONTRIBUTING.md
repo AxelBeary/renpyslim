@@ -7,7 +7,7 @@
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt pyinstaller pytest
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
 python main.py            # 启动图形界面（开发模式）
 ```
 
@@ -26,7 +26,7 @@ python main.py            # 启动图形界面（开发模式）
 
 ## 提交要求 / PR checklist
 
-- [ ] `pytest tests -q` 全绿（当前基线 232 项），新功能须补回归测试
+- [ ] `python -m pytest tests -q` 全绿（测试数量以收集结果为准，不在文档写死），新功能须补回归测试
 - [ ] 涉及文件读写的新代码：路径来自压缩包/封包条目时必须过 `utils.safe_join`
 - [ ] 破坏性操作：先备份/副本、可反悔、产出修改清单
 - [ ] 界面改动：中/英 × 亮/暗四组合自查

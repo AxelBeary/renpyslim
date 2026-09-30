@@ -20,6 +20,7 @@
 
 ```
 pip install -r requirements.txt          # 先装依赖
+pip install -r requirements-dev.txt      # 改代码时再装开发依赖（pytest/ruff/httpx）
 python cli.py <命令> <参数>
 ```
 
@@ -72,15 +73,25 @@ python cli.py env [--sdk SDK路径]
 5. `slimapk --gen-key` 会换新签名身份（玩家需卸载重装），提示用户后果后再用。
 6. 不要把本地网页服务（127.0.0.1）以任何方式暴露到网络。
 
+## 修改本仓库代码
+
+以下是改 RenPySlim 自身源码（非处理游戏资源）时的路由指引，与 `.github/workflows/ci.yml` 口径逐字一致：
+
+- 回归测试：`python -m pytest tests -q`
+- 静态检查（只查真错误，vendor 不查）：`ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`
+- 安全红线与架构约束：见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- PR 提交清单：见 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
+
 ## 常见报错排查
 
 | 现象 | 处理 |
 |---|---|
-| 从源码启动提示缺依赖 | 工具会自检并点名缺哪个包；先 `pip install -r requirements.txt` 再重试（exe 版无此问题） |
+| 从源码启动提示缺依赖 | 工具会自检并点名缺哪个包；先 `pip install -r requirements.txt`（改代码再加 `-r requirements-dev.txt`）再重试（exe 版无此问题） |
 | `找不到 Ren'Py SDK` | 用 `--sdk` 指定 SDK 目录，或先 `env` 体检 |
 | 压缩包解不开 | 确认是否需要 `--password`；RAR 需要系统装有 unrar 类工具时看报错提示 |
 | 音频没变小 | 检查 FFmpeg 是否在 PATH（`env` 可见） |
 | JSON 里中文乱码 | 是终端编码问题，不是工具问题；stdout 本身是 UTF-8 |
+| `意外错误` 开头的失败 JSON | 完整堆栈已自动落盘转储（家目录 `.renpyslim/crashes/`，stderr 的 `[crash]` 行与 error 文案会给出转储文件路径），读那个文件定位 |
 
 ---
 
@@ -105,6 +116,7 @@ python cli.py env [--sdk SDK路径]
 
 ```
 pip install -r requirements.txt
+pip install -r requirements-dev.txt   # dev deps for code work (pytest/ruff/httpx)
 python cli.py <command> <args>
 ```
 
@@ -168,12 +180,24 @@ Notes:
    warn the user before using it.
 6. Never expose the local web service (127.0.0.1) to any network.
 
+## Modifying this repository's code
+
+Routing guide for changing RenPySlim's own source (not game assets);
+commands mirror `.github/workflows/ci.yml` verbatim:
+
+- Regression tests: `python -m pytest tests -q`
+- Static check (real errors only, vendor excluded):
+  `ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`
+- Security red lines & architecture constraints: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- PR checklist: see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
+
 ## Troubleshooting
 
 | Symptom | Fix |
 |---|---|
-| Startup reports missing dependencies | The tool self-checks and names the missing packages; run `pip install -r requirements.txt` first (exe builds never hit this) |
+| Startup reports missing dependencies | The tool self-checks and names the missing packages; run `pip install -r requirements.txt` first (add `-r requirements-dev.txt` for code work; exe builds never hit this) |
 | `找不到 Ren'Py SDK` | Pass `--sdk <dir>` or run `env` first |
 | Archive won't extract | Check whether `--password` is needed; for RAR, ensure an unrar-compatible tool is installed and follow the error prompt |
 | Audio unchanged | Ensure FFmpeg is on PATH (visible in `env`) |
 | Garbled Chinese in JSON | Terminal encoding issue only; stdout is UTF-8 |
+| Failure JSON whose error starts with `意外错误` ("unexpected error") | The full stack trace is auto-dumped to `.renpyslim/crashes/` in the home directory; the `[crash]` stderr line and the error text name the dump file — open it to diagnose |

@@ -2,20 +2,15 @@
 
 历史事故：字符集与字体对不上时，瘦身把字形删光，产出 1~2KB 空壳字体。
 这里的测试模拟同样的灾难场景，验证防御机制能拦住。
+
+字体夹具走 conftest 的 cjk_font（运行时用 fontTools 程序化生成含大量汉字的
+临时字体），不再依赖任何本机外部字体路径，CI 上也能真实执行而非静默跳过。
 """
 from __future__ import annotations
-
-from pathlib import Path
 
 import pytest
 
 from rtools import font_optimizer, charset           # noqa: E402
-
-# 用一个真实的大字体（含大量汉字）才能复现空壳场景
-CJK_FONT = Path(r"E:\renpy\sdk-fonts\SourceHanSansLite.ttf")
-
-pytestmark = pytest.mark.skipif(not CJK_FONT.exists(),
-                                reason="缺少测试用的大字体")
 
 
 class _KillerSubsetter:
@@ -31,22 +26,23 @@ class _KillerSubsetter:
         font.getBestCmap().clear()
 
 
-def test_empty_shell_rejected_and_original_safe(tmp_path, monkeypatch):
+def test_empty_shell_rejected_and_original_safe(cjk_font, tmp_path, monkeypatch):
     monkeypatch.setattr(font_optimizer.subset, "Subsetter", _KillerSubsetter)
     dst = tmp_path / "out.ttf"
     chars = set("你好世界中文测试字体瘦身防御机制必须拦住空壳结果")
+    size_before = cjk_font.stat().st_size
     with pytest.raises(ValueError, match="瘦身结果异常"):
-        font_optimizer.subset_font(str(CJK_FONT), str(dst), chars)
+        font_optimizer.subset_font(str(cjk_font), str(dst), chars)
     assert not dst.exists(), "异常结果绝不能落地"
-    # 原字体完好无损
-    assert CJK_FONT.stat().st_size > 1024 * 1024
+    # 原字体完好无损：体积一字未变
+    assert cjk_font.stat().st_size == size_before
 
 
-def test_normal_subset_not_false_positive(tmp_path):
+def test_normal_subset_not_false_positive(cjk_font, tmp_path):
     """正常瘦身不被误拦：保留字数与预期相符。"""
     dst = tmp_path / "out.ttf"
     chars = set("你好世界中文测试")
-    res = font_optimizer.subset_font(str(CJK_FONT), str(dst), chars)
+    res = font_optimizer.subset_font(str(cjk_font), str(dst), chars)
     assert res["glyphs_after"] >= 8, "该保留的字必须留下"
     assert dst.exists()
 

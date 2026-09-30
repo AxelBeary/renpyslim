@@ -46,7 +46,7 @@ if _missing:
     sys.exit(1)
 
 from rtools import packager, pipeline, scanner, analyzer, charset, font_tool  # noqa: E402
-from rtools import archives  # noqa: E402
+from rtools import archives, crashdump  # noqa: E402
 from rtools import __version__  # noqa: E402
 from rtools.config import (OptimizeOptions, CharsetOptions, PRESETS,  # noqa: E402
                            DEFAULT_PRESET)
@@ -447,7 +447,16 @@ def main(argv=None) -> int:
         return args.func(args)
     except Exception as e:
         # 审核修复（中-32）：统一顶层兜底，任何异常都保证以结果
-        # JSON 收场，不再裸 traceback 破坏 stdout 契约
+        # JSON 收场，不再裸 traceback 破坏 stdout 契约。
+        # 兜底时落一份含堆栈的崩溃转储（~/.renpyslim/crashes/），
+        # 事后追查有迹可循；堆栈只进转储文件与 stderr 日志，
+        # stdout 仍然只有合法结果 JSON。
+        dump = crashdump.write_crash(
+            f"cli-{getattr(args, 'command', 'unknown')}")
+        if dump:
+            _log("crash", f"完整堆栈已存转储：{dump}")
+            return _fail(f"意外错误：{type(e).__name__}: {e}"
+                         f"（完整堆栈已存：{dump}）")
         return _fail(f"意外错误：{type(e).__name__}: {e}")
 
 

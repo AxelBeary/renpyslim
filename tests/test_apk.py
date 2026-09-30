@@ -91,15 +91,19 @@ def test_generate_keystore(tmp_path):
 def test_slim_apk_sign_flow_with_generated_key(tmp_path):
     """生成钥匙参与签名流程：钥匙必须生成并传给签名器。
 
+    SDK 位置用 packager.find_sdk() 自动探测（与其他测试同一口径），
+    不写死本机路径；真正缺 SDK/build-tools 的环境才跳过。
+
     注：假 APK 没有 AndroidManifest.xml，apksigner 会拒签（真实 APK 必有清单），
     所以这里只断言钥匙生成与流程走通；真实签名由真实 APK 实测覆盖。
     """
     import pytest as _pt
+    from rtools import packager
     if not apk.find_keytool():
         _pt.skip("本机无 keytool")
-    sdk = r"E:\renpy"
-    if not (Path(sdk) / "rapt" / "Sdk" / "build-tools").is_dir():
-        _pt.skip("本机无 Android build-tools")
+    sdk = packager.find_sdk()
+    if not sdk or not apk.find_build_tools(sdk)[0]:
+        _pt.skip("本机无 Ren'Py SDK 的 Android build-tools")
     apk_path = tmp_path / "fake.apk"
     _make_fake_apk(apk_path)
     result = apk.slim_apk(str(apk_path), "balanced", sdk=sdk,

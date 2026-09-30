@@ -9,8 +9,8 @@
 Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.16.1（自更新检查靶子，
 附 exe；发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
 v0.12.0 曾遭 GitHub 503 静默缺失，本次已验证）
-回归测试：232 项全绿（`pytest tests -q`，含 test_font_lang 26 条多语言字体瘦身专项；
-test_i18n 八本字典互检）
+回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
+含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检）
 
 **项目状态：休闲期**（v0.16.1 属 debug 扫描抓出的字体标签 bug 修复，纯补丁无新功能；
 完工后回归休闲期/维护口径，日常只收 bug 修复与依赖安全更新，新需求先落 BACKLOG 待评估）。
@@ -24,6 +24,15 @@ debug 扫描压测 8 种边缘写法，发现嵌套 {font=} 标签会把外层�
 与 Ren'Py 文本标签语义对齐；顺带修好 [[ 字面左括号被误判插值、
 白丢精确档资格的问题。新增 2 条回归测试；全量 232 项全绿。
 同期入库（上一版未发版部分）：源码运行缺依赖的人话安装指引自检。
+
+## 2026-09-29 构建配方收敛（RenPySlim.spec 成唯一事实源）
+
+release.yml 与 build_exe.bat 的 PyInstaller 调用改为
+`python -m PyInstaller --noconfirm RenPySlim.spec`（逐项核对与旧内联参数
+等价：onefile/windowed/名称/图标/datas/hiddenimports 均一致，spec 未增删）。
+旧待办“exe 打包纳入 rtools/vendor”经核实早已完成，已随本次收敛销账。
+RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同），
+发版不用它，本次未动；如需废弃另行拍板。
 
 ## 2026-08-18 v0.14.0 发版（用户拍板：把能做的语言全加上）
 
@@ -206,8 +215,10 @@ debug 扫描压测 8 种边缘写法，发现嵌套 {font=} 标签会把外层�
   movies.rpa 14 个；反编译 59 个 rpy；引用改写验证通过
   （如 liluo_common/common/fastwork_01.webp）
 - 回归测试 109 项全绿（新增 rebuild 改名替换 + 反编译往返 2 条）
-- 待办提醒：exe 打包需把 rtools/vendor/ 纳入 PyInstaller 数据
-  （RenPySlim.spec / build_exe.bat，下次发版前处理）
+- 待办提醒：~~exe 打包需把 rtools/vendor/ 纳入 PyInstaller 数据
+  （RenPySlim.spec / build_exe.bat，下次发版前处理）~~ 已销账（2026-09-29
+  核实：两个 spec/build_exe.bat/release.yml 均已纳入 vendor；发版配方
+  已收敛为以 RenPySlim.spec 为唯一事实源，见页首 2026-09-29 节）
 
 ## 2026-08-17 多语言四语上线（用户四步计划）
 
@@ -383,7 +394,7 @@ debug 扫描压测 8 种边缘写法，发现嵌套 {font=} 标签会把外层�
 
 ```
 git status                                  # 应干净
-.venv\Scripts\python -m pytest tests -q     # 应 232 passed, 2 skipped
+.venv\Scripts\python -m pytest tests -q     # 全绿为准（数量以 pytest 收集结果为准，不写死）
 dist\RenPySlim.exe                          # 如代码有变，先 build_exe.bat 重建
 ```
 
