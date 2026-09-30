@@ -26,7 +26,7 @@ jobs:
       - name: Sanity tests
         run: python -m pytest tests -q
 
-      - name: Build exe (recipe: RenPySlim.spec)
+      - name: "Build exe (recipe: RenPySlim.spec)"
         run: python -m PyInstaller --noconfirm RenPySlim.spec
 
       # 若 Release 已手动建好（含发布说明），只补传 exe 不覆盖；否则照常自动创建。
