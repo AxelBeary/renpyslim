@@ -8,8 +8,14 @@ updates:
     schedule:
       interval: "weekly"
     ignore:
+      # 注意：update-types 合法值只有下面三个 semver 粒度（旧写法
+      # "version-update" 不被识别，2026-10-01 实测失效放过纯 bump PR）。
+      # 安全更新不属于 version-update，不受此 ignore 影响，照常推送。
       - dependency-name: "*"
-        update-types: ["version-update"]
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
+          - "version-update:semver-patch"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
