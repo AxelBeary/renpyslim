@@ -84,5 +84,5 @@
 | # | 事项 | 研判结论 | 状态 |
 |---|---|---|---|
 | D1 | 内嵌 unrpyc 从 v2.0.3 同步到上游 v2.0.4 | 上游 2.0.4 只做了两件事：把 corrupy 从内嵌子模块改成外部 PyPI 依赖 + 修 `un.rpyc` 构建路径的回归。本工具只程序化调用反编译内核、不用 un.rpyc 那条路径；同步的代价是新增运行时依赖 corrupy 并扩大 exe 体积。已查清后判为“价值低、代价真实”，不同步 | 💡 待评估（下次上游有反编译内核修正时一并抬） |
-| D2 | starlette TestClient 提示“用 httpx 已弃用，请装 httpx2” | 每次跑测试都飘这条 StarletteDeprecationWarning（不影响结果：全量门禁绿）。上游真删 httpx 支持的那天，网页防护类测试会静默变红/变跳。届时只需在 dev 清单补 `httpx2` 并验证 TestClient 走新后端 | 💡 待评估（上游正式发布前不动） |
+| D2 | starlette TestClient 提示“用 httpx 已弃用，请装 httpx2” | 先实测再采纳：本机**卸掉 httpx、只留 httpx2** 后全量测试依旧绿，且仓里没有任何代码直接 `import httpx`（只有 starlette 的 TestClient 在用）——说明 httpx 已可直接汰。换后 StarletteDeprecationWarning 消失，测试仅余一条由用例故意造的 zipfile 重名告警 | ✅ v0.16.2 后续补债已修：dev 清单 httpx → httpx2（实测无 httpx 环境跑绿后才换） |
 | D3 | 要不要给 CI 加“按下限装最旧依赖”的第二路矩阵 | 能暴露“下限写了但从没测过”的问题，但本仓已把下限抬到实测通过版、又有 lock 冻结与 test_deps_lock 对账，收益下降；个人项目一台 windows runner 的开销不便宜 | 💡 待评估（出现“用户装不到可用依赖”的真实反馈再开） |

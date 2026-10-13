@@ -2,7 +2,7 @@
 
 > La boîte à outils tout-en-un pour alléger et empaqueter les ressources de tes jeux Ren'Py
 
-**Langue / Language:** [简体中文（默认）](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | **Français**
+**🌐 Langue :** [简体中文](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | **Français**
 
 **Licence : [AGPL-3.0](../LICENSE)** · Les mentions des tiers sont dans [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
@@ -101,10 +101,10 @@ soient plus noyés sous les fausses alertes.
 
 ```
 python cli.py env                                  # bilan de santé de l'environnement
-python cli.py analyze <路径> --mode project        # analyser
-python cli.py optimize <路径> --preset balanced    # optimiser
-python cli.py full <工程路径> --platforms pc,mac   # optimiser + empaqueter de bout en bout
-python cli.py slimfont <字体> <文本来源...>        # allègement de police autonome
+python cli.py analyze <chemin> --mode project      # analyser
+python cli.py optimize <chemin> --preset balanced  # optimiser
+python cli.py full <projet> --platforms pc,mac     # optimiser + empaqueter de bout en bout
+python cli.py slimfont <police> <textes...>        # allègement de police autonome
 python cli.py slimapk <apk> --remap --gen-key      # allègement d'APK (images→WebP/audio→OGG + re-signature)
 ```
 
@@ -182,7 +182,7 @@ build_exe.bat             # reconditionne l'exe
 
 | Langue | Interface | Documentation | État |
 |---|---|---|---|
-| 简体中文 | ✅ par défaut | ✅ le présent document | En ligne |
+| 简体中文 | ✅ par défaut | ✅ document original (chinois) | En ligne |
 | English | ✅ | [README.en.md](README.en.md) | En ligne |
 | Русский | ✅ | [README.ru.md](README.ru.md) | En ligne |
 | Español | ✅ | [README.es.md](README.es.md) | En ligne |

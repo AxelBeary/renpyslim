@@ -2,7 +2,7 @@
 
 > Ferramenta completa para reduzir o tamanho e empacotar recursos de jogos Ren'Py · Ren'Py asset slimming & packaging toolkit
 
-**Idioma / Language:** [简体中文（默认）](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | **Português (BR)** | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
+**🌐 Idioma:** [简体中文](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | **Português (BR)** | [Türkçe](README.tr.md) | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 **Licença: [AGPL-3.0](../LICENSE)** · Avisos de terceiros em [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
@@ -40,7 +40,7 @@ recursos sem referência encontrada jamais são renomeados; cada execução gera
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-python main.py            # 启动图形界面
+python main.py            # iniciar a interface gráfica
 ```
 
 ## Interface gráfica (recomendado)
@@ -97,12 +97,12 @@ efetivo de cada fonte, para que jogos que misturam fontes por idioma não sejam 
 ## Modo headless (para scripts/automação, saída em JSON o tempo todo)
 
 ```
-python cli.py env                                  # 环境体检
-python cli.py analyze <路径> --mode project        # 分析
-python cli.py optimize <路径> --preset balanced    # 优化
-python cli.py full <工程路径> --platforms pc,mac   # 优化+打包一条龙
-python cli.py slimfont <字体> <文本来源...>        # 独立字体瘦身
-python cli.py slimapk <apk> --remap --gen-key      # APK 瘦身（图转WebP/音转OGG+重签名）
+python cli.py env                                  # checagem do ambiente
+python cli.py analyze <caminho> --mode project     # análise
+python cli.py optimize <caminho> --preset balanced # otimização
+python cli.py full <projeto> --platforms pc,mac    # otimização + empacotamento
+python cli.py slimfont <fonte> <textos...>         # redução de fonte independente
+python cli.py slimapk <apk> --remap --gen-key      # redução de APK (imagens WebP / áudio OGG + reassinatura)
 ```
 
 > Assistentes de IA / scripts de automação: leia primeiro o [AGENTS.md](../AGENTS.md) (inclui regras de segurança e solução de erros).
@@ -165,8 +165,8 @@ testes não é fixado aqui de propósito — o que vale é o resultado da coleta
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
-python main.py            # 启动图形界面
-build_exe.bat             # 重新打包 exe
+python main.py            # iniciar a interface gráfica
+build_exe.bat             # reempacotar o exe
 ```
 
 **Mantenedores/Agentes, leiam primeiro:**
@@ -179,7 +179,7 @@ build_exe.bat             # 重新打包 exe
 
 | Idioma | Interface | Documentação | Situação |
 |---|---|---|---|
-| 简体中文 | ✅ padrão | ✅ este documento | Disponível |
+| 简体中文 | ✅ padrão | ✅ documento original (zh) | Disponível |
 | English | ✅ | [README.en.md](README.en.md) | Disponível |
 | Русский | ✅ | [README.ru.md](README.ru.md) | Disponível |
 | Español | ✅ | [README.es.md](README.es.md) | Disponível |

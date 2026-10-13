@@ -22,7 +22,9 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）
    CVE-2026-23879（high）仅 1.1.3 修，旧下限 `>=0.21` 放行 0.21～1.1.2。
    新口径：下限 = 首个无已知 CVE 且本机实测通过的版本。六运行依赖 + 三开发依赖
    全部抬到当时最新版（pillow 12.3.0 / fonttools 4.66.1 / fastapi 0.143.0 /
-   uvicorn 0.54.0 / py7zr 1.1.4 / pystray 0.19.5；pytest 9.1.1 / ruff 0.17.0 / httpx 0.28.1）。
+   uvicorn 0.54.0 / py7zr 1.1.4 / pystray 0.19.5；pytest 9.1.1 / ruff 0.17.0 / httpx2 2.13.1）。
+   开发依赖现为四条（pytest / ruff / httpx2 / packaging）：packaging 由加固批新增，
+   httpx2 由下面的“发版后补债”从 httpx 换名而来。
    评审加固批（62af70f）另新增第四条开发依赖 packaging 26.3：守卫改用 PEP 440
    版本比较后显式申报，不靠 pytest 的传递依赖偷用。
    兼容代价核实：`fonttools>=4.66` 本身就要求 **Python 3.11+**（10-01 已入库），
@@ -39,12 +41,36 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）
    0.16.10<0.17.0），不合只关并留说明。
 4. **遗留清理**：删旧名死配方 `RenPyToolbox.spec`（含 .gitignore 反选行）；内嵌
    unrpyc 不同步 v2.0.4（代价是新增 corrupy 依赖，收益只覆盖我们不用的 un.rpyc 路径）；
-   starlette TestClient 的 httpx 弃用告警记入 BACKLOG D2。两笔研判均落 BACKLOG。
+   starlette TestClient 的 httpx 弃用告警当场记入 BACKLOG D2（发版后同天已修，见下）。两笔研判均落 BACKLOG。
 
 实测：升级后全量测试全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，
 不在文档写死）；ruff 0.17.0 按 CI 口径全绿；`pip check` 无冲突；
 `cli.py env` 与 `cli.py analyze <真实工程>` 行为不变（518 资源/字符集 6734/10 语言）；
 守卫自证能报错（把 py7zr 下限改回 0.21 立刻红，还原即绿）。
+
+### 发版后补债（同天，用户拍板“既有债能修全修”）
+
+v0.16.2 发布后把核验时报的遗留债一并清偿（纯维护，不影响已发的 exe）：
+
+1. **D2 真修掉而不是等上游**：开发依赖由 httpx 换成 httpx2——先实测“本机没 httpx 只
+   有 httpx2”时全量测试依旧绿（且仓里没有任何代码直接 import httpx），确认后才换；
+   StarletteDeprecationWarning 从此消失（告警从 2 条降到 1 条，剩下那条是测试自己
+   故意造重复条目触发的 zipfile 警告）。
+2. **lock 生成口径补严**：发现旧口径直接拿开发用 .venv 做 freeze，会把本机残留包混进
+   冻结清单（实测混了 certifi / httpcore / PyYAML 三个无人使用的包）。现改为从**干净 venv**
+   解析生成，额外好处是顺便验证“空环境拿两份清单装得起来、跑得过全量测试”（以前从未测过）；
+   新 lock 44 条（starlette 1.8.0 / pydantic 2.14.1 / anyio 4.15.1 等），已在干净 venv 里
+   跑出 238 passed / 2 skipped 才冻结，文档里的重生成命令实测幂等。
+3. **八语 README 翻译债清零**：pt/tr/de/fr 的语言切换行补齐 `🌐` 并去掉“（默认）”后缀、
+   “简体中文”行不再自称“本文档”（按 en/ru/es 正确口径改写主文档）；四份里残留的中文
+   注释与占位符本地化（命令本体逐字未变，已用脚本比对确认）；ru/es 补上缺的 AGENTS.md
+   指引行；8 份代码块行尾注释列统一到同一列（27/52/27）。
+4. **其余小钉**：AUDIT 档案标题加“（现名 RenPySlim）”限定；issue 模板版本示例从 v0.10.0
+   抬到 v0.16.2；测试收集基线常量按实测更新为 240。
+
+仍未动的两笔（依旧落在 BACKLOG）：D1 不同步 unrpyc v2.0.4（代价是新增运行时依赖，
+收益只覆盖我们用不到的 un.rpyc 路径）；D3 不加“按下限装最旧依赖”的 CI 第路矩阵
+（属成本选型，不是缺陷）。
 
 **项目状态：休闲期**（v0.16.1 属 debug 扫描抓出的字体标签 bug 修复，纯补丁无新功能；
 完工后回归休闲期/维护口径，日常只收 bug 修复与依赖安全更新，新需求先落 BACKLOG 待评估）。
@@ -299,7 +325,7 @@ RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同）�
 - **后端本地防护**（用户拍板加）：web/app.py 中间件 guard_local_only
   核对 Host/Origin，非本机来源一律 403（防 DNS 重绑定/恶意网页
   指挥本地服务）；测试用 fastapi TestClient + base_url 指定本机
-  Host（默认 testserver 会被自己的防护拦下），需 httpx 依赖
+  Host（默认 testserver 会被自己的防护拦下），需 httpx2 依赖（2026-10-13 前为 httpx）
 - **Release**（release.yml）：打 v* 标签自动构建 exe + 发 Release
   （发版命令：git tag v0.x.0 && git push origin v0.x.0，全自动）
 - **CodeQL**：用用户在网页开的仓库级默认扫描（default setup）；自定义

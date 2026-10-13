@@ -20,7 +20,7 @@
 
 ```
 pip install -r requirements.txt          # 先装依赖
-pip install -r requirements-dev.txt      # 改代码时再装开发依赖（pytest/ruff/httpx/packaging）
+pip install -r requirements-dev.txt      # 改代码时再装开发依赖（pytest/ruff/httpx2/packaging）
 python cli.py <命令> <参数>
 ```
 
@@ -125,7 +125,7 @@ python cli.py env [--sdk SDK路径]
 
 ```
 pip install -r requirements.txt
-pip install -r requirements-dev.txt   # dev deps for code work (pytest/ruff/httpx/packaging)
+pip install -r requirements-dev.txt   # dev deps for code work (pytest/ruff/httpx2/packaging)
 python cli.py <command> <args>
 ```
 

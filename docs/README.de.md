@@ -2,7 +2,7 @@
 
 > Die All-in-One-Werkzeugkiste zum Abspecken und Verpacken von Ren'Py-Ressourcen · Ren'Py asset slimming & packaging toolkit
 
-**Sprache / Language:** [简体中文（默认）](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | **Deutsch** | [Français](README.fr.md)
+**🌐 Sprache:** [简体中文](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | [Türkçe](README.tr.md) | **Deutsch** | [Français](README.fr.md)
 
 **Lizenz: [AGPL-3.0](../LICENSE)** · Hinweise zu Drittanbietern findest du in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
@@ -44,7 +44,7 @@ lade `RenPySlim.exe` herunter, führe es per Doppelklick aus – der Browser öf
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-python main.py            # 启动图形界面
+python main.py            # grafische Oberfläche starten
 ```
 
 ## Grafische Oberfläche (empfohlen)
@@ -103,12 +103,12 @@ Spiele mit sprachweise gemischten Schriften nicht mehr in Fehlalarmen ertrinken.
 ## Headless-Modus (für Skripte/Automatisierung, durchgehend JSON-Ausgabe)
 
 ```
-python cli.py env                                  # 环境体检
-python cli.py analyze <路径> --mode project        # 分析
-python cli.py optimize <路径> --preset balanced    # 优化
-python cli.py full <工程路径> --platforms pc,mac   # 优化+打包一条龙
-python cli.py slimfont <字体> <文本来源...>        # 独立字体瘦身
-python cli.py slimapk <apk> --remap --gen-key      # APK 瘦身（图转WebP/音转OGG+重签名）
+python cli.py env                                  # Umgebung prüfen
+python cli.py analyze <Pfad> --mode project        # analysieren
+python cli.py optimize <Pfad> --preset balanced    # optimieren
+python cli.py full <Projekt> --platforms pc,mac    # optimieren + verpacken in einem Schritt
+python cli.py slimfont <Schrift> <Textquelle...>   # eigenständiges Schriften-Abspecken
+python cli.py slimapk <apk> --remap --gen-key      # APK abspecken (Bilder zu WebP, Audio zu OGG + Neusignierung)
 ```
 
 > KI-Assistenten / Automatisierungsskripte: Bitte lies vor dem Aufruf zuerst [AGENTS.md](../AGENTS.md) (enthält Sicherheitsregeln und Fehlerbehebung).
@@ -171,8 +171,8 @@ festgeschrieben – maßgeblich ist das Ergebnis von `python -m pytest tests -q`
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
-python main.py            # 启动图形界面
-build_exe.bat             # 重新打包 exe
+python main.py            # grafische Oberfläche starten
+build_exe.bat             # exe neu verpacken
 ```
 
 **Bitte zuerst lesen, für Maintainer/Agenten:**
@@ -185,7 +185,7 @@ build_exe.bat             # 重新打包 exe
 
 | Sprache | Oberfläche | Dokumentation | Status |
 |---|---|---|---|
-| 简体中文 | ✅ Standard | ✅ dieses Dokument | Veröffentlicht |
+| 简体中文 | ✅ Standard | ✅ Hauptdokument (chinesisch) | Veröffentlicht |
 | English | ✅ | [README.en.md](README.en.md) | Veröffentlicht |
 | Русский | ✅ | [README.ru.md](README.ru.md) | Veröffentlicht |
 | Español | ✅ | [README.es.md](README.es.md) | Veröffentlicht |

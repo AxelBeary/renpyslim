@@ -19,9 +19,9 @@ import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
 
-# 集中常量：基线收集数（2026-09-29 `pytest --collect-only -q` 实测，含本条）。
+# 集中常量：基线收集数（2026-10-13 `pytest tests --collect-only -q` 实测，含本条）。
 # 只许改这一处；文档里不要再写任何测试数量数字。
-TEST_COLLECT_BASELINE = 235
+TEST_COLLECT_BASELINE = 240
 
 
 def test_collected_count_in_flexible_range():

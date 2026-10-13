@@ -1,9 +1,13 @@
 # 开发依赖（测试 + 静态检查），运行本工具本身不需要
 # 与 CI 口径一致：ci.yml / release.yml 装 requirements.txt + 本清单
 # 下限口径同 requirements.txt（首个无已知 CVE 且实测通过的版本）
+# 开发依赖：pytest / ruff / httpx2 / packaging
 # PyInstaller 按既定口径仍为内联安装（见 release.yml / CONTRIBUTING），
 # 但它的版本已被 requirements-lock.txt 精确冻结，因此也在 Dependabot 视野内。
 pytest>=9.1.1
 ruff>=0.17.0
-httpx>=0.28.1        # fastapi TestClient 依赖 httpx，缺了测试会静默跳过
+# 2026-10-13：TestClient 后端由 httpx 换成 httpx2——starlette 已弃用 httpx 后端
+# （旧警告“Using httpx ... is deprecated”），实测本机卸载 httpx 后全量测试依旧绿，
+# 且仓里没有任何代码直接 import httpx；继续列 httpx 只会多一个无人使的包。
+httpx2>=2.13.1       # fastapi TestClient 的底层 HTTP 客户端；缺了网页防护测试会静默跳过
 packaging>=26.3      # test_deps_lock 用它做 PEP 440 版本比较（不靠传递依赖偷用）

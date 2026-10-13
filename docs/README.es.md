@@ -98,6 +98,8 @@ python cli.py slimfont <fuente> <textos...>        # adelgazado de fuentes autó
 python cli.py slimapk <apk> --remap --gen-key      # adelgazar APK (WebP/OGG + re-firmado)
 ```
 
+> Asistentes de IA / scripts de automatización: lea primero [AGENTS.md](../AGENTS.md) (incluye reglas de seguridad y solución de errores).
+
 ## Requisitos
 
 | Dependencia | Para qué | Nota |

@@ -2,7 +2,7 @@
 
 > Ren'Py kaynak dosyalarınızı tek elden inceltip paketleyen hepsi bir arada araç kutusu
 
-**Dil / Language:** [简体中文（默认）](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | **Türkçe** | [Deutsch](README.de.md) | [Français](README.fr.md)
+**🌐 Dil:** [简体中文](../README.md) | [English](README.en.md) | [Русский](README.ru.md) | [Español](README.es.md) | [Português (BR)](README.pt.md) | **Türkçe** | [Deutsch](README.de.md) | [Français](README.fr.md)
 
 **Lisans: [AGPL-3.0](../LICENSE)** · Üçüncü taraf bildirimleri için [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)
 
@@ -44,7 +44,7 @@ tarayıcınız otomatik olarak yönetim sayfasını açar.
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt
-python main.py            # 启动图形界面
+python main.py            # grafik arayüzü başlat
 ```
 
 ## Grafik arayüz (önerilir)
@@ -104,12 +104,12 @@ denetlenir; böylece dillere göre farklı yazı tipleri kullanan oyunlar artık
 ## Başsız mod (betik/otomasyon için, baştan sona JSON çıktısı)
 
 ```
-python cli.py env                                  # 环境体检
-python cli.py analyze <路径> --mode project        # 分析
-python cli.py optimize <路径> --preset balanced    # 优化
-python cli.py full <工程路径> --platforms pc,mac   # 优化+打包一条龙
-python cli.py slimfont <字体> <文本来源...>        # 独立字体瘦身
-python cli.py slimapk <apk> --remap --gen-key      # APK 瘦身（图转WebP/音转OGG+重签名）
+python cli.py env                                  # ortam kontrolü
+python cli.py analyze <yol> --mode project         # analiz
+python cli.py optimize <yol> --preset balanced     # optimizasyon
+python cli.py full <proje_yolu> --platforms pc,mac # optimizasyon + paketleme tek adımda
+python cli.py slimfont <yazı_tipi> <metin...>      # bağımsız yazı tipi inceltme
+python cli.py slimapk <apk> --remap --gen-key      # APK inceltme (görseller WebP / sesler OGG + yeniden imzalama)
 ```
 
 > Yapay zekâ asistanları / otomasyon betikleri: çağırmadan önce mutlaka [AGENTS.md](../AGENTS.md) dosyasını okuyun (güvenlik kuralları ve hata giderme dahildir).
@@ -175,8 +175,8 @@ sözlük bütünlüğü, ayrıca bağımlılık listesiyle dondurulmuş listenin
 ```
 python -m venv .venv
 .venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
-python main.py            # 启动图形界面
-build_exe.bat             # 重新打包 exe
+python main.py            # grafik arayüzü başlat
+build_exe.bat             # exe'yi yeniden paketle
 ```
 
 **Bakımcılar/Agent'lar önce şunları okuyun:**
@@ -189,7 +189,7 @@ build_exe.bat             # 重新打包 exe
 
 | Dil | Arayüz | Belgeler | Durum |
 |---|---|---|---|
-| 简体中文 | ✅ varsayılan | ✅ bu belge | Yayında |
+| 简体中文 | ✅ varsayılan | ✅ ana belge (zh Çince) | Yayında |
 | English | ✅ | [README.en.md](README.en.md) | Yayında |
 | Русский | ✅ | [README.ru.md](README.ru.md) | Yayında |
 | Español | ✅ | [README.es.md](README.es.md) | Yayında |
