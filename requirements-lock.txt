@@ -3,15 +3,18 @@
 #   1) release.yml 以 -c 约束安装，exe 构建版本可复现、可审计；
 #   2) 让 Dependabot 的安全告警覆盖 starlette/pydantic/anyio 等传递依赖
 #      ——只有 >= 下限的清单看不见它们，抬下限也护不到它们。
-# 重生成口径（每次动依赖后必做，详见 docs/CONTRIBUTING.md）：先升到最新并跑绿全量
-# 门禁，再用 pip freeze 覆盖本文件的 body（保留 # 开头的注释行）：
+# 重生成口径（每次动依赖后必做，详见 docs/CONTRIBUTING.md「依赖更新」四步）：
 #   .venv\Scripts\python -m pip install -U -r requirements.txt -r requirements-dev.txt pyinstaller
-#   .venv\Scripts\python -m pytest tests -q
-#   $h = Get-Content requirements-lock.txt | Where-Object { $_ -like '#*' }
-#   $b = .venv\Scripts\python -m pip freeze | Sort-Object -CaseSensitive:$false
-#   [System.IO.File]::WriteAllLines("requirements-lock.txt", $h + $b, (New-Object System.Text.UTF8Encoding($false)))
-# 注意：不要用 -Encoding ascii 写本文件——头部中文注释会被压成问号。
-# 结构自洽由 tests/test_deps_lock.py 机械核对（每行 name==version、下限不脱节、安全底线不回落）。
+#   .venv\Scripts\python -m pytest tests -q          # 全绿才允许冻结
+#   重生成 body（整行复制执行；保留本文件 # 头部，只换后面的 pin 行）：
+#   .venv\Scripts\python -c "import pathlib,subprocess as s;p=pathlib.Path('requirements-lock.txt');h=[l for l in p.read_text(encoding='utf-8').splitlines() if l.startswith('#')];b=sorted([x for x in s.run(['.venv/Scripts/python.exe','-m','pip','freeze'],capture_output=True,text=True).stdout.split() if x],key=str.casefold);p.write_text('\n'.join(h+b)+'\n',encoding='utf-8')"
+# body 规则：pip freeze 的每行 `name==version`，按整行 casefold 升序排列
+# （tests/test_deps_lock.py 会校验排序，乱序即红；固定顺序是为了 diff 只反映真实变更）。
+# 编码硬性要求：UTF-8 无 BOM；PowerShell 下禁用 `Set-Content -Encoding ascii`
+# （会把头部中文注释压成问号），用 Python 的 write_text(encoding="utf-8") 或
+# [System.IO.File]::WriteAllLines($path, $lines, (New-Object System.Text.UTF8Encoding($false)))。
+# 结构自洽由 tests/test_deps_lock.py 机械核对：精确 pin、覆盖清单下限、安全底线不回落、
+# 构建工具被冻结、无重复条目、body 已排序。手改本文件不被禁止，但改完必须跑守卫。
 altgraph==0.17.5
 annotated-doc==0.0.5
 annotated-types==0.8.0
@@ -39,8 +42,8 @@ psutil==7.2.2
 py7zr==1.1.4
 pybcj==1.0.8
 pycryptodomex==3.23.0
-pydantic_core==2.46.4
 pydantic==2.13.4
+pydantic_core==2.46.4
 Pygments==2.20.0
 pyinstaller-hooks-contrib==2026.8
 pyinstaller==6.22.3
@@ -54,6 +57,6 @@ setuptools==84.0.0
 six==1.17.0
 starlette==1.6.0
 texttable==1.7.0
-typing_extensions==4.16.0
 typing-inspection==0.4.4
+typing_extensions==4.16.0
 uvicorn==0.54.0

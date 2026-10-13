@@ -154,3 +154,15 @@ def test_build_tool_is_frozen():
     locked = _lock_map()
     for tool in BUILD_TOOLS:
         assert _canon(tool) in locked, f"{tool} 未被 lock 冻结，exe 构建不可复现"
+
+
+def test_lock_body_is_sorted():
+    """body 必须按整行 casefold 升序（与 requirements-lock.txt 头部重生成口径逐字一致）。
+
+    固定顺序不是为了好看：乱序的 lock 会让下次 `pip freeze` 重生成产生整片 diff，
+    把“到底哪个包变了”埋进噪声里，而依赖审查只需要看那一两行。
+    """
+    body = _read_lines("requirements-lock.txt")
+    assert body == sorted(body, key=str.casefold), (
+        "requirements-lock.txt 的 pin 行乱序，请按该文件头部口径重生成（而不是手改）"
+    )
