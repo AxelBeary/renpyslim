@@ -11,6 +11,8 @@ python -m venv .venv
 python main.py            # 启动图形界面（开发模式）
 ```
 
+源码运行需 **Python 3.11+**（由依赖下限决定；发布的 exe 自带解释器）。
+
 外部依赖（可选，按功能需要）：Ren'Py SDK、FFmpeg、Java/JDK，
 详见 README「环境要求」。
 
@@ -24,9 +26,30 @@ python main.py            # 启动图形界面（开发模式）
    单文件零依赖架构：不引外部 CSS/JS、不加载网络资源；新增文案必须
    四语齐全（I18N 的 zh/en/ru/es 字典，缺一会被测试拦下）。
 
+## 依赖更新 / Dependency updates
+
+口径（2026-10-13 起）：**下限 = 首个无已知 CVE 且实测通过的版本**。不再追求“越宽容越好”：
+`>=` 下限写得太旧，等于允许旧 Python 环境装上有洞的版本，而这类洞
+Dependabot 看不见（它只评估实际解析出的版本）。分工：
+
+- `requirements.txt` / `requirements-dev.txt`：人工抬下限（安全告警与发版周期驱动）
+- `requirements-lock.txt`：逐条精确 pin（含传递依赖与 PyInstaller），`release.yml`
+  以 `-c` 消费它，保证 exe 构建可复现；`ci.yml` 故意不锁，装最新版当预警
+- `.github/dependabot.yml`：pip 生态 `open-pull-requests-limit: 0`，版本 bump PR 归零，
+  安全更新 PR 不受此限照推（实测 `ignore` + `update-types` 压不住，别再加回去）
+
+改依赖后四步（缺一不算改完）：
+
+1. 升到目标版本并跑门禁：`python -m pytest tests -q` + 上面的 ruff 命令 + `python -m pip check`
+2. 重生成 lock：`python -m pip freeze` 覆盖 body，**保留文件头部的 `#` 注释行**
+   （具体命令见 requirements-lock.txt 头部；别用 `-Encoding ascii`，中文注释会被压成问号）
+3. 复跑 `python -m pytest tests -q`，确认 `tests/test_deps_lock.py` 四道守卫绿
+4. 同步 `docs/THIRD_PARTY_NOTICES.md` 的版本列与 `docs/STATUS.md`
+
 ## 提交要求 / PR checklist
 
 - [ ] `python -m pytest tests -q` 全绿（测试数量以收集结果为准，不在文档写死），新功能须补回归测试
+- [ ] 动过依赖（requirements*.txt）：按上面「依赖更新」四步走完，lock 与清单同步提交
 - [ ] 涉及文件读写的新代码：路径来自压缩包/封包条目时必须过 `utils.safe_join`
 - [ ] 破坏性操作：先备份/副本、可反悔、产出修改清单
 - [ ] 界面改动：中/英 × 亮/暗四组合自查

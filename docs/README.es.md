@@ -102,6 +102,7 @@ python cli.py slimapk <apk> --remap --gen-key      # adelgazar APK (WebP/OGG + r
 
 | Dependencia | Para qué | Nota |
 |---|---|---|
+| Python 3.11+ | Versión del intérprete necesaria para ejecutar la herramienta desde el código fuente | Solo al ejecutarla desde el código fuente; el exe publicado ya lleva su propio intérprete integrado, así que los usuarios normales no necesitan instalar nada (el mínimo lo marca el límite inferior de las dependencias, ver requirements.txt) |
 | Ren'Py SDK | Empaquetado, compilación de guiones de reasignación APK | Suele detectarse solo; si no, indícalo en «Ajustes» |
 | FFmpeg | Optimización de audio/vídeo | En el PATH o en la carpeta bin junto al programa |
 | Java/JDK | Empaquetado Android, re-firmado de APK | El primer empaquetado Android requiere completar la configuración de Android en el lanzador de Ren'Py |

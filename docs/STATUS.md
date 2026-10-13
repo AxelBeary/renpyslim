@@ -1,16 +1,47 @@
-# RenPySlim 交接状态（截至 2026-08-28 v0.16.1 发版日）
+# RenPySlim 交接状态（截至 2026-10-13 v0.16.2 发版日）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.16.1（字体标签扫描精确度修复补丁；v0.10.0 起 AGPL-3.0）
+## 当前版本：v0.16.2（依赖治理发版：下限抬到实测通过版 + 冻结清单 + 停版本 bump PR；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.16.1（自更新检查靶子，
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.16.2（自更新检查靶子，
 附 exe；发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
 v0.12.0 曾遭 GitHub 503 静默缺失，本次已验证）
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
-含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检）
+含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
+
+## 2026-10-13 v0.16.2 依赖警报治本（用户拍板：该升级升级，尽可能治本）
+
+起因：GitHub 上积压两个 Dependabot 版本 bump PR（#20 fastapi、#21 ruff）。研判结果：
+开放的安全/代码扫描/密钥告警都是 0，真正的问题在旧策略留下的两个坑。
+
+1. **抬下限（不再是“越宽容越好”）**：拉 GHSA 公告库实测——pillow 四个 high CVE
+   （2026-59205/59204/59200/59199）仅 12.3.0 修，旧下限 `>=10.0` 全放行；py7zr
+   CVE-2026-23879（high）仅 1.1.3 修，旧下限 `>=0.21` 放行 0.21～1.1.2。
+   新口径：下限 = 首个无已知 CVE 且本机实测通过的版本。六运行依赖 + 三开发依赖
+   全部抬到当时最新版（pillow 12.3.0 / fonttools 4.66.1 / fastapi 0.143.0 /
+   uvicorn 0.54.0 / py7zr 1.1.4 / pystray 0.19.5；pytest 9.1.1 / ruff 0.17.0 / httpx 0.28.1）。
+   兼容代价核实：`fonttools>=4.66` 本身就要求 **Python 3.11+**（10-01 已入库），
+   所以抬下限不新增任何限制——只是把从没写进文档的事实补进 README/CONTRIBUTING/AGENTS。
+2. **新增 `requirements-lock.txt`**：逐条精确 pin（含传递依赖与 PyInstaller）。
+   `release.yml` 以 `-c` 消费它（exe 构建可复现，补上了“内联装 PyInstaller 不在
+   任何清单里、Dependabot 看不见”的盲区）；`ci.yml` 故意不锁，装最新当上游破坏
+   性发布的 canary，并新增一步 `python -m pip check`。腐烂护栏：`tests/test_deps_lock.py`。
+3. **Dependabot 根因修复**：2026-10-01 那次“把 ignore 语法改对”实测**没治住**
+   ——10-11 周检仍送来 #20/#21。改用官方硬开关 `open-pull-requests-limit: 0`
+   （文档原文：可停用该生态版本更新；“Security update pull requests are not subject
+   to this limit”），并删掉无效的 ignore 段、把失效原因写进注释防后人加回去。
+   github-actions 生态照旧收 bump。#20/#21 内容已被本次抬升超越（0.142.4<0.143.0、
+   0.16.10<0.17.0），不合只关并留说明。
+4. **遗留清理**：删旧名死配方 `RenPyToolbox.spec`（含 .gitignore 反选行）；内嵌
+   unrpyc 不同步 v2.0.4（代价是新增 corrupy 依赖，收益只覆盖我们不用的 un.rpyc 路径）；
+   starlette TestClient 的 httpx 弃用告警记入 BACKLOG D2。两笔研判均落 BACKLOG。
+
+实测：升级后全量 `233 passed, 2 skipped`；ruff 0.17.0 按 CI 口径全绿；`pip check` 无冲突；
+`cli.py env` 与 `cli.py analyze <真实工程>` 行为不变（518 资源/字符集 6734/10 语言）；
+守卫自证能报错（把 py7zr 下限改回 0.21 立刻红，还原即绿）。
 
 **项目状态：休闲期**（v0.16.1 属 debug 扫描抓出的字体标签 bug 修复，纯补丁无新功能；
 完工后回归休闲期/维护口径，日常只收 bug 修复与依赖安全更新，新需求先落 BACKLOG 待评估）。
@@ -31,8 +62,8 @@ release.yml 与 build_exe.bat 的 PyInstaller 调用改为
 `python -m PyInstaller --noconfirm RenPySlim.spec`（逐项核对与旧内联参数
 等价：onefile/windowed/名称/图标/datas/hiddenimports 均一致，spec 未增删）。
 旧待办“exe 打包纳入 rtools/vendor”经核实早已完成，已随本次收敛销账。
-RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同），
-发版不用它，本次未动；如需废弃另行拍板。
+RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同），发版不用它；
+**已于 2026-10-13 v0.16.2 删除**（用户拍板清遗留，.gitignore 的反选行同步移除）。
 
 ## 2026-08-18 v0.14.0 发版（用户拍板：把能做的语言全加上）
 
@@ -267,8 +298,10 @@ RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同）�
   （发版命令：git tag v0.x.0 && git push origin v0.x.0，全自动）
 - **CodeQL**：用用户在网页开的仓库级默认扫描（default setup）；自定义
   workflow 与其互斥已删除，别再建 codeql.yml
-- **Dependabot**：pip 只收安全更新（纯版本 bump 已配 ignore，因
-  requirements.txt 用宽容下限是刻意设计）；github-actions 正常收升级 PR
+- **Dependabot**：pip 只收安全更新——用 `open-pull-requests-limit: 0` 停用版本 bump PR
+  （2026-10-13 改：此前靠 ignore + update-types，实测压不住，详见页首 v0.16.2 节）；
+  抬下限改为人工在发版周期做，传递依赖与 PyInstaller 的安全监控靠
+  `requirements-lock.txt` 的精确 pin 兜底；github-actions 正常收升级 PR
 - 用户曾在网页模板市场误开 Fortify/Conda 模板，已删除；再遇类似“其他
   CI workflows”模板先核实再留
 - CodeQL 首批 16 警报处理完毕（开放清零）：1 个真问题（ci.yml 缺最小权限

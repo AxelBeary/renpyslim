@@ -118,6 +118,7 @@ python cli.py slimapk <apk> --remap --gen-key      # APK 瘦身（图转WebP/音
 
 | Bağımlılık | Kullanım amacı | Açıklama |
 |---|---|---|
+| Python 3.11+ | Aracı kaynak kodundan çalıştırmak için gereken yorumlayıcı sürümü | Yalnızca kaynak kodundan çalıştırırken istenir; yayınlanan exe kendi yorumlayıcısını içinde taşıdığı için normal kullanıcılardan bu beklenmez (alt sınır, bağımlılıkların asgari sürümleriyle belirlenir; bkz. requirements.txt) |
 | Ren'Py SDK | Paketleme, APK yeniden eşleme betiklerinin derlenmesi | Genellikle otomatik bulunur; bulunamazsa arayüzdeki "Ayarlar"dan belirtin |
 | FFmpeg | Ses/video optimizasyonu | PATH'e kurmak ya da programın yanındaki bin klasörüne koymak yeterlidir |
 | Java/JDK | Android paketleme, APK yeniden imzalama | Android paketleme için ilk kez Ren'Py başlatıcısında Android yapılandırmasını tamamlamak gerekir |

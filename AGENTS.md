@@ -24,6 +24,8 @@ pip install -r requirements-dev.txt      # 改代码时再装开发依赖（pyte
 python cli.py <命令> <参数>
 ```
 
+源码运行需 **Python 3.11+**（由依赖下限决定；exe 版自带解释器，终端用户无此要求）。
+
 外部依赖（可选，缺了相关功能自动跳过）：Ren'Py SDK（打包/签名）、
 FFmpeg（音频/视频）、Java JDK（安卓）。先跑一次体检确认环境：
 
@@ -79,6 +81,9 @@ python cli.py env [--sdk SDK路径]
 
 - 回归测试：`python -m pytest tests -q`
 - 静态检查（只查真错误，vendor 不查）：`ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`
+- 动依赖（`requirements*.txt`）＝三处同步：抬下限 → 按 `requirements-lock.txt` 头部口径重生成冻结清单
+  → 跑 `python -m pytest tests -q`。下限＝首个无已知 CVE 且实测通过的版本（理由写在
+  requirements.txt 头注释）；exe 构建按 lock 冻结（release.yml 用 `-c`），CI 装最新当预警。
 - 安全红线与架构约束：见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - PR 提交清单：见 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 
@@ -91,6 +96,7 @@ python cli.py env [--sdk SDK路径]
 | 压缩包解不开 | 确认是否需要 `--password`；RAR 需要系统装有 unrar 类工具时看报错提示 |
 | 音频没变小 | 检查 FFmpeg 是否在 PATH（`env` 可见） |
 | JSON 里中文乱码 | 是终端编码问题，不是工具问题；stdout 本身是 UTF-8 |
+| `test_deps_lock` 报红 | 冻结清单 requirements-lock.txt 与两份清单脱节、或版本跌回已知有洞的版本；先把依赖升到实测通过版再按该文件头部口径重生成 lock |
 | `意外错误` 开头的失败 JSON | 完整堆栈已自动落盘转储（家目录 `.renpyslim/crashes/`，stderr 的 `[crash]` 行与 error 文案会给出转储文件路径），读那个文件定位 |
 
 ---
@@ -119,6 +125,9 @@ pip install -r requirements.txt
 pip install -r requirements-dev.txt   # dev deps for code work (pytest/ruff/httpx)
 python cli.py <command> <args>
 ```
+
+Running from source needs **Python 3.11+** (set by the dependency floors; the
+exe bundles its own interpreter, so end users need nothing).
 
 Optional external tools (features degrade gracefully without them):
 Ren'Py SDK (packaging/signing), FFmpeg (audio/video), Java JDK (Android).
@@ -188,6 +197,11 @@ commands mirror `.github/workflows/ci.yml` verbatim:
 - Regression tests: `python -m pytest tests -q`
 - Static check (real errors only, vendor excluded):
   `ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`
+- Touching dependencies (`requirements*.txt`) means three places in sync: raise the
+  floor → regenerate `requirements-lock.txt` per the recipe in its header → rerun
+  `python -m pytest tests -q`. A floor is "the lowest version free of known CVEs and
+  verified locally" (rationale in the requirements.txt header); exe builds are frozen
+  against the lock (`-c` in release.yml) while CI installs latest as an early warning.
 - Security red lines & architecture constraints: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - PR checklist: see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 
@@ -200,4 +214,5 @@ commands mirror `.github/workflows/ci.yml` verbatim:
 | Archive won't extract | Check whether `--password` is needed; for RAR, ensure an unrar-compatible tool is installed and follow the error prompt |
 | Audio unchanged | Ensure FFmpeg is on PATH (visible in `env`) |
 | Garbled Chinese in JSON | Terminal encoding issue only; stdout is UTF-8 |
+| `test_deps_lock` failures | requirements-lock.txt drifted from the two manifests, or a version fell back to one with known CVEs; upgrade to verified versions, then regenerate the lock per its header recipe |
 | Failure JSON whose error starts with `意外错误` ("unexpected error") | The full stack trace is auto-dumped to `.renpyslim/crashes/` in the home directory; the `[crash]` stderr line and the error text name the dump file — open it to diagnose |

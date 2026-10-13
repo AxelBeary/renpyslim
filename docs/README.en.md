@@ -103,6 +103,7 @@ python cli.py slimapk <apk> --remap --gen-key      # APK slimming (WebP/OGG + re
 
 | Dependency | Used for | Notes |
 |---|---|---|
+| Python 3.11+ | Interpreter version needed to run this tool from source | Only when running from source; the released exe ships with its interpreter bundled in, so regular users have no such requirement (the minimum follows the dependency floor — see requirements.txt) |
 | Ren'Py SDK | Packaging, compiling APK remap scripts | Usually auto-detected; otherwise set it in Settings |
 | FFmpeg | Audio/video optimization | On PATH or in the bin folder next to the app |
 | Java/JDK | Android packaging, APK re-signing | First-time Android packaging requires completing Android setup in the Ren'Py launcher |

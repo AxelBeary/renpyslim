@@ -114,6 +114,7 @@ python cli.py slimapk <apk> --remap --gen-key      # allègement d'APK (images�
 
 | Dépendance | Utilisation | Remarques |
 |---|---|---|
+| Python 3.11+ | Version de l'interpréteur requise pour exécuter l'outil depuis le code source | Uniquement si tu l'exécutes depuis le code source ; l'exe publié embarque déjà son propre interpréteur, les utilisateurs classiques n'ont donc rien à installer (le minimum vient de la borne basse des dépendances, voir requirements.txt) |
 | Ren'Py SDK | Empaquetage, compilation des scripts de remappage APK | En général détecté automatiquement ; si ce n'est pas le cas, indique-le dans « Paramètres » de l'interface |
 | FFmpeg | Optimisation audio/vidéo | Installé dans le PATH ou dans le dossier bin à côté du programme, les deux fonctionnent |
 | Java/JDK | Empaquetage Android, re-signature d'APK | Le premier empaquetage Android nécessite de terminer d'abord la configuration Android dans le lanceur Ren'Py |

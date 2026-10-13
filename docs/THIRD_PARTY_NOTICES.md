@@ -19,6 +19,12 @@ These libraries are bundled inside the distributed executable
 | [pystray](https://github.com/moses-palmer/pystray) | 0.19.x | **LGPL-3.0** | System tray icon / 系统托盘图标 |
 | pydantic, starlette, anyio, h11, click, etc. | — | MIT / BSD-3-Clause | Transitive deps of FastAPI/uvicorn / 传递依赖 |
 
+Exact pinned versions — every transitive dependency and the PyInstaller build
+tool included — live in
+[`requirements-lock.txt`](../requirements-lock.txt); the released exe is built
+against that frozen set (`release.yml` installs with `-c`). 逐条精确版本以仓库
+根目录的 `requirements-lock.txt` 为准（exe 即按该冻结清单构建），本表只记大版本。
+
 **pystray (LGPL-3.0) compliance / 合规说明**: pystray is a separately
 importable library; its source is available from the project above, and
 this repository provides the complete corresponding source and build
