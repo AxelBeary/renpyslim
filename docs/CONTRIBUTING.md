@@ -46,7 +46,8 @@ Dependabot 看不见（它只评估实际解析出的版本）。分工：
 2. 重生成 lock：`python -m pip freeze` 覆盖 body，**保留文件头部的 `#` 注释行**
    （具体命令见 requirements-lock.txt 头部；别用 `-Encoding ascii`，中文注释会被压成问号）
 3. 复跑 `python -m pytest tests -q`，确认 `tests/test_deps_lock.py` 四道守卫绿
-4. 同步 `docs/THIRD_PARTY_NOTICES.md` 的版本列与 `docs/STATUS.md`
+4. 同步 `docs/THIRD_PARTY_NOTICES.md` 的对应表（运行时依赖表填“使用版本”列；
+   构建/测试工具表只有协议与用途两栏，不填版本）与 `docs/STATUS.md`
 
 ## 提交要求 / PR checklist
 

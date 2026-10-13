@@ -23,6 +23,8 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）
    新口径：下限 = 首个无已知 CVE 且本机实测通过的版本。六运行依赖 + 三开发依赖
    全部抬到当时最新版（pillow 12.3.0 / fonttools 4.66.1 / fastapi 0.143.0 /
    uvicorn 0.54.0 / py7zr 1.1.4 / pystray 0.19.5；pytest 9.1.1 / ruff 0.17.0 / httpx 0.28.1）。
+   评审加固批（62af70f）另新增第四条开发依赖 packaging 26.3：守卫改用 PEP 440
+   版本比较后显式申报，不靠 pytest 的传递依赖偷用。
    兼容代价核实：`fonttools>=4.66` 本身就要求 **Python 3.11+**（10-01 已入库），
    所以抬下限不新增任何限制——只是把从没写进文档的事实补进 README/CONTRIBUTING/AGENTS。
 2. **新增 `requirements-lock.txt`**：逐条精确 pin（含传递依赖与 PyInstaller）。

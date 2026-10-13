@@ -79,7 +79,7 @@ def _lock_map() -> dict:
         if "==" not in line:
             continue
         name, _, ver = line.partition("==")
-        key = _canon(name)
+        key = _canon(name.strip())   # 去空格：防 `pkg ==1.0` 与 `pkg==1.0` 归一化后并存
         assert key not in out, (
             f"requirements-lock.txt 里 {name.strip()} 出现多次"
             f"（{out.get(key)} 与 {ver.strip()}），请重生成而不是手改"
@@ -129,17 +129,20 @@ def test_manifest_direct_deps_are_pinned_not_below_floor():
 def test_security_baseline_not_regressed():
     """清单下限与 lock 都不得跌回已知有洞的版本（防手抖改小、防 lock 用旧环境重生成）。"""
     locked = _lock_map()
+    # 同一包可能在两份清单里各写一个下限：逐条参与对账（后写不得掩盖前写），
+    # 取到的是“哪份清单写了多低”的全量清单，而不是 last-wins。
     floors: dict = {}
     for filename in MANIFESTS:
         for line in _read_lines(filename):
             m = _REQ_RE.match(line)
             if m:
-                floors[_canon(m.group("name"))] = m.group("ver")
+                floors.setdefault(_canon(m.group("name")), []).append(m.group("ver"))
     for name, baseline in SECURITY_BASELINE.items():
         assert name in floors, f"{name} 已从清单里消失，安全底线无人看守"
-        assert _ver(floors[name]) >= _ver(baseline), (
-            f"{name} 清单下限 {floors[name]} 低于安全底线 {baseline}"
-        )
+        for got in floors[name]:
+            assert _ver(got) >= _ver(baseline), (
+                f"{name} 清单下限 {got} 低于安全底线 {baseline}"
+            )
         assert name in locked, f"{name} 不在 lock 里，构建可能装到未审计版本"
         assert _ver(locked[name]) >= _ver(baseline), (
             f"{name} 冻结版本 {locked[name]} 低于安全底线 {baseline}"

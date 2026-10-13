@@ -120,7 +120,8 @@ build_exe.bat                                # 产出 dist\RenPySlim.exe
 ```
 
 - 构建配方**只有 `RenPySlim.spec` 一份**（旧名遗留的 RenPyToolbox.spec 已于 2026-10-13
-  删除）；build_exe.bat 与 release.yml 都走 `python -m PyInstaller --noconfirm RenPySlim.spec`，
+  删除）；build_exe.bat 与 release.yml 都走 `-m PyInstaller --noconfirm RenPySlim.spec`
+  （bat 用 `.venv\Scripts\python.exe` 同一条命令，CI 用流水线解释器），
   不得在任何一方内联重复参数（防配方分叉）。
 - 依赖双口径：`ci.yml` 按下限装最新（上游破坏性发布的 canary）+ `pip check`；
   `release.yml` 额外以 `-c requirements-lock.txt` 冻结构建。改依赖的四步仪式与
