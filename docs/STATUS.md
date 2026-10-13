@@ -8,7 +8,7 @@
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
 Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.16.2（自更新检查靶子，
 附 exe；发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
-v0.12.0 曾遭 GitHub 503 静默缺失，本次已验证）
+v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
 含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
 
@@ -39,7 +39,8 @@ v0.12.0 曾遭 GitHub 503 静默缺失，本次已验证）
    unrpyc 不同步 v2.0.4（代价是新增 corrupy 依赖，收益只覆盖我们不用的 un.rpyc 路径）；
    starlette TestClient 的 httpx 弃用告警记入 BACKLOG D2。两笔研判均落 BACKLOG。
 
-实测：升级后全量 `233 passed, 2 skipped`；ruff 0.17.0 按 CI 口径全绿；`pip check` 无冲突；
+实测：升级后全量测试全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，
+不在文档写死）；ruff 0.17.0 按 CI 口径全绿；`pip check` 无冲突；
 `cli.py env` 与 `cli.py analyze <真实工程>` 行为不变（518 资源/字符集 6734/10 语言）；
 守卫自证能报错（把 py7zr 下限改回 0.21 立刻红，还原即绿）。
 
@@ -115,8 +116,8 @@ RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同）�
    且更省）；unrpyc 反编译解锁无源码成品的格式转换，转换后按原样
    包回 RPA 封包（--decompile，实验性）
 - 第三方署名：unrpyc（MIT）内嵌于 rtools/vendor/unrpyc/，
-  THIRD_PARTY_NOTICES 已增节；exe 打包配方（build_exe.bat/两个 spec/
-  release.yml）均已把 vendor 数据纳入
+  THIRD_PARTY_NOTICES 已增节；exe 打包配方（build_exe.bat/当时的两个 spec/
+  release.yml）均已把 vendor 数据纳入（RenPyToolbox.spec 已于 2026-10-13 删除）
 - Cadaver/CSE 双样本实测：电脑成品省 303.8MB（中文名 zip 全链路正确）；
   CSE 开 --decompile --videos 省 635.7MB（封包内 29 张图包回 webp）
 - 待办：无（审核报告"待确认 8 项"需真实样本实测，留待有样本时处理）
@@ -248,7 +249,8 @@ RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同）�
 - 回归测试 109 项全绿（新增 rebuild 改名替换 + 反编译往返 2 条）
 - 待办提醒：~~exe 打包需把 rtools/vendor/ 纳入 PyInstaller 数据
   （RenPySlim.spec / build_exe.bat，下次发版前处理）~~ 已销账（2026-09-29
-  核实：两个 spec/build_exe.bat/release.yml 均已纳入 vendor；发版配方
+  核实：当时的两个 spec/build_exe.bat/release.yml 均已纳入 vendor（RenPyToolbox.spec
+  已于 2026-10-13 删除）；发版配方
   已收敛为以 RenPySlim.spec 为唯一事实源，见页首 2026-09-29 节）
 
 ## 2026-08-17 多语言四语上线（用户四步计划）
@@ -286,8 +288,10 @@ RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同）�
 
 ## GitHub 自动化配置（2026-08-17 就位，用户拍板全套）
 
-- **CI**（.github/workflows/ci.yml）：每次提交/PR 自动跑 ruff 真错误检查
-  （--select F,E9，风格类不拦）+ 全量 pytest；windows-latest + Python 3.13。
+- **CI**（.github/workflows/ci.yml）：每次提交/PR 自动跑 `python -m pip check`（依赖图自洽）
+  + ruff 真错误检查（--select F,E9，风格类不拦）+ 全量 pytest；windows-latest + Python 3.13。
+  CI 故意不锁版本（装最新解析版当上游破坏性发布的预警），exe 构建才按
+  `requirements-lock.txt` 冻结（口径见页首 v0.16.2 节）。
   已踩坑记录：①CI 机无 FFmpeg/SDK，依赖它们的测试必须带 skip 保护；
   ②本地 ruff --fix 的改动要确认全部加进提交（曾漏两个测试文件导致 CI 红）
 - **后端本地防护**（用户拍板加）：web/app.py 中间件 guard_local_only

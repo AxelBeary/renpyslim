@@ -163,14 +163,14 @@ Abgedeckt werden: Lesen/Schreiben von RPA-Archiven (inklusive beider Formate –
 Sicherheit des Verweis-Umschreibens, dass Schrift-/Bildoptimierung die Originaldateien nicht beschädigt, rpyc-Parsing,
 APK-Abspeckung (Engine-Schutz/Signaturentfernung/x-Präfix-Pfadumsetzung/Schlüsselerzeugung), Abbruch und Crash-Dumps,
 sichere Standardwerte, Regressionstests für Audit-Reparaturen, lokale Schutzmechanismen des Backends und die Vollständigkeit
-der acht Sprachwörterbücher der Oberfläche. Die Anzahl der Tests wird hier bewusst nicht
+der acht Sprachwörterbücher der Oberfläche, sowie die Abhängigkeits- und Freeze-Listen-Selbstkonsistenz (requirements.txt und lock: Untergrenzen driften nicht auseinander, exakte Pins im lock, keine Rückfälle auf Versionen mit bekannten CVEs). Die Anzahl der Tests wird hier bewusst nicht
 festgeschrieben – maßgeblich ist das Ergebnis von `python -m pytest tests -q`.
 
 ## Entwicklung
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt pyinstaller
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
 python main.py            # 启动图形界面
 build_exe.bat             # 重新打包 exe
 ```

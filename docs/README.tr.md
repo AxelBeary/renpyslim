@@ -167,14 +167,14 @@ engelleme dahil), referans yeniden yazma güvenliği, yazı tipi/görsel optimiz
 asıl dosyaları bozmaması, rpyc çözümleme, APK inceltme (motor koruması / imza kaldırma /
 x- önekli yol dönüşümü / anahtar üretimi), iptal ve çökme dökümleri, güvenli varsayılanlar,
 denetim düzeltmelerinin gerileme testleri, arka uç yerel koruması ve arayüzün sekiz dil
-sözlük bütünlüğü. Test sayısı burada bilerek sabit tutulmaz — esas alınan,
+sözlük bütünlüğü, ayrıca bağımlılık listesiyle dondurulmuş listenin birbirleriyle tutarlılığı (requirements.txt ve lock: alt sınırlar şaşmaz, lock sürümleri tam pinler, bilinen CVE'li sürümlere geri düşülmez). Test sayısı burada bilerek sabit tutulmaz — esas alınan,
 `python -m pytest tests -q` komutunun topladığı sonuçtur.
 
 ## Geliştirme
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt pyinstaller
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
 python main.py            # 启动图形界面
 build_exe.bat             # 重新打包 exe
 ```

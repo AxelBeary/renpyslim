@@ -8,11 +8,18 @@ lockfile，于是出现两个只有跑起来才会发现的洞——
 
 本文件把这两件事变成机械核对：lock 必须是精确 pin、必须覆盖两份清单的每个
 直接依赖且不低于其下限、安全底线版本不许回落。顺序不影响判定（排序只是美观）。
+
+版本比较一律用 packaging.version.Version，不用自写的元组切分：后者会把
+预发布/dev/post 标记归零（12.3.0rc1 被当成等于 12.3.0），而 CVE 修复版
+往往先以 rc 形式流出——那正是守卫唯一该拦住的情形。packaging 是 pytest
+的依赖，已显式写进 requirements-dev.txt，不靠传递依赖偷用。
 """
 from __future__ import annotations
 
 import re
 from pathlib import Path
+
+from packaging.version import InvalidVersion, Version
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -31,8 +38,11 @@ SECURITY_BASELINE = {
 # 而内联 `pip install pyinstaller` 不在任何清单里、Dependabot 看不见它。
 BUILD_TOOLS = ("pyinstaller",)
 
+# 清单行只接受“name>=X.Y.Z”与“name==X.Y.Z”两种写法：extras（name[extra]）、
+# 环境标记（; python_version>=...）、裸包名、<= / != / 区间限定一律当场拒收，
+# 不静默当成“没有下限”放过（那会让守卫失去牙）。
 _REQ_RE = re.compile(
-    r"^\s*(?P<name>[A-Za-z0-9._-]+)\s*(?P<op>>=|==|~=|>)?\s*(?P<ver>[0-9][A-Za-z0-9._-]*)?"
+    r"^(?P<name>[A-Za-z0-9._-]+)\s*(?P<op>>=|==)\s*(?P<ver>\d[^\s;#\[]*)$"
 )
 
 
@@ -41,30 +51,41 @@ def _canon(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _vtuple(text: str) -> tuple:
-    """版本串转元组，够用于同格式比较（12.3.0 / 0.143.0 / 2026.8）。"""
-    parts = re.split(r"[.\-+]", text.strip())
-    out = []
-    for p in parts:
-        m = re.match(r"(\d+)", p)
-        out.append(int(m.group(1)) if m else 0)
-    return tuple(out or [0])
+def _ver(text: str) -> Version:
+    """PEP 440 版本比较入口：非标准版本串直接报错，不当 0 处理。"""
+    try:
+        return Version(text.strip())
+    except InvalidVersion as exc:
+        raise AssertionError(f"无法解析的版本号：{text!r}") from exc
 
 
 def _read_lines(filename: str) -> list:
+    """读清单有效行。只剔行首或空白前的 # 注释（pip 规则），
+    因此本守卫假定清单不用 URL/片段依赖（name @ https://...#egg=...）。"""
     path = ROOT / filename
     assert path.is_file(), f"缺少 {filename}"
     lines = []
     for raw in path.read_text(encoding="utf-8").splitlines():
-        line = raw.split("#", 1)[0].strip()
+        line = re.sub(r"(^|\s)#.*$", "", raw).strip()
         if line:
             lines.append(line)
     return lines
 
 
 def _lock_map() -> dict:
-    return {_canon(l.split("==", 1)[0]): l.split("==", 1)[1]
-            for l in _read_lines("requirements-lock.txt")}
+    """lock 的 name->version 表；同名重复直接报错（静默后写覆盖前写会藏住洞）。"""
+    out: dict = {}
+    for line in _read_lines("requirements-lock.txt"):
+        if "==" not in line:
+            continue
+        name, _, ver = line.partition("==")
+        key = _canon(name)
+        assert key not in out, (
+            f"requirements-lock.txt 里 {name.strip()} 出现多次"
+            f"（{out.get(key)} 与 {ver.strip()}），请重生成而不是手改"
+        )
+        out[key] = ver.strip()
+    return out
 
 
 def test_lock_entries_are_exact_pins():
@@ -76,7 +97,8 @@ def test_lock_entries_are_exact_pins():
         assert not line.startswith(("-", "http://", "https://", "file:")), (
             f"lock 混入非常规条目：{line!r}"
         )
-        assert ver.count("==") == 0, f"lock 行重复拆分：{line!r}"
+        assert "==" not in ver, f"lock 行重复拆分：{line!r}"
+        _ver(ver)  # 版本号本身必须合 PEP 440
 
 
 def test_manifest_direct_deps_are_pinned_not_below_floor():
@@ -85,16 +107,23 @@ def test_manifest_direct_deps_are_pinned_not_below_floor():
     for filename in MANIFESTS:
         for line in _read_lines(filename):
             m = _REQ_RE.match(line)
-            assert m, f"{filename} 中无法解析的依赖行：{line!r}"
-            name, floor = _canon(m.group("name")), m.group("ver")
+            assert m, (
+                f"{filename} 的依赖行必须写成 name>=X.Y.Z 或 name==X.Y.Z；"
+                f"extras / 环境标记 / 裸包名 / <= 本守卫不支持：{line!r}"
+            )
+            name, op, floor = m.group("name"), m.group("op"), m.group("ver")
+            assert op == ">=", (
+                f"{filename} 里的 {name} 用了 {op}；两份清单只写 >= 下限，"
+                "精确 pin 一律交给 requirements-lock.txt"
+            )
+            name = _canon(name)
             assert name in locked, (
                 f"{name} 在 {filename} 里有下限但 lock 里没有对应 pin，"
                 "说明 lock 过期，请按 requirements-lock.txt 头部口径重生成"
             )
-            if floor:
-                assert _vtuple(locked[name]) >= _vtuple(floor), (
-                    f"lock 中 {name}=={locked[name]} 低于 {filename} 的下限 >={floor}"
-                )
+            assert _ver(locked[name]) >= _ver(floor), (
+                f"lock 中 {name}=={locked[name]} 低于 {filename} 的下限 >={floor}"
+            )
 
 
 def test_security_baseline_not_regressed():
@@ -104,15 +133,15 @@ def test_security_baseline_not_regressed():
     for filename in MANIFESTS:
         for line in _read_lines(filename):
             m = _REQ_RE.match(line)
-            if m and m.group("ver"):
+            if m:
                 floors[_canon(m.group("name"))] = m.group("ver")
     for name, baseline in SECURITY_BASELINE.items():
         assert name in floors, f"{name} 已从清单里消失，安全底线无人看守"
-        assert _vtuple(floors[name]) >= _vtuple(baseline), (
+        assert _ver(floors[name]) >= _ver(baseline), (
             f"{name} 清单下限 {floors[name]} 低于安全底线 {baseline}"
         )
         assert name in locked, f"{name} 不在 lock 里，构建可能装到未审计版本"
-        assert _vtuple(locked[name]) >= _vtuple(baseline), (
+        assert _ver(locked[name]) >= _ver(baseline), (
             f"{name} 冻结版本 {locked[name]} 低于安全底线 {baseline}"
         )
 

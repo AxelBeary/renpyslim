@@ -50,6 +50,9 @@ optional experimental "decompile scripts" feature. Ren'Py 脚本反编译器，
 generated executable under any license, including AGPL here. 其 bootloader
 例外条款明确允许以任意协议分发生成的 exe。 |
 | [pytest](https://pytest.org) | MIT | Tests only / 仅测试用 |
+| [ruff](https://github.com/astral-sh/ruff) | MIT | 静态检查（只查 F/E9 真错误），不在 exe 内 |
+| [httpx](https://github.com/encode/httpx) | BSD-3-Clause | fastapi TestClient 的底层依赖，仅测试用，不随产品分发 |
+| [packaging](https://github.com/pypa/packaging) | Apache-2.0 OR BSD-2-Clause | 仅测试用（test_deps_lock 做 PEP 440 版本比较） |
 
 ## 4. External programs invoked at runtime / 运行时调用的外部程序（不打包、不分发）
 

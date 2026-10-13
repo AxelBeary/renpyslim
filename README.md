@@ -159,7 +159,7 @@ lock 精确 pin、已知 CVE 版本不得回落）。测试数量不写死在文
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt pyinstaller
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
 python main.py            # 启动图形界面
 build_exe.bat             # 重新打包 exe
 ```

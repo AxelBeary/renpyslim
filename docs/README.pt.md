@@ -156,7 +156,7 @@ usa automaticamente uma porta livre atribuída pelo sistema. Use a variável de 
 Cobre leitura/escrita de pacotes RPA (incluindo os dois formatos, antigo e novo, e bloqueio de pacotes maliciosos), segurança da reescrita de referências,
 otimização de fontes/imagens sem corromper os arquivos originais, análise de rpyc, redução de APK (proteção do motor / remoção de assinatura /
 conversão de caminhos com prefixo x- / geração de chaves), cancelamento e despejos de erro, padrões seguros, regressões de correções de auditoria,
-proteção local do backend e integridade dos dicionários dos oito idiomas. O número de
+proteção local do backend e integridade dos dicionários dos oito idiomas, além da consistência entre a lista de dependências e a lista congelada (requirements.txt e lock: os limites mínimos não se descolam, o lock fixa versões exatas e não se pode regredir para versões com CVE conhecidas). O número de
 testes não é fixado aqui de propósito — o que vale é o resultado da coleta de
 `python -m pytest tests -q`.
 
@@ -164,7 +164,7 @@ testes não é fixado aqui de propósito — o que vale é o resultado da coleta
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt pyinstaller
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
 python main.py            # 启动图形界面
 build_exe.bat             # 重新打包 exe
 ```

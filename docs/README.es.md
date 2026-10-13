@@ -153,7 +153,7 @@ optimizadores de fuentes/imágenes no dañen originales, análisis de rpyc, adel
 de APK (protección del motor / eliminación de firma / conversión de rutas x- /
 generación de claves), cancelación y volcados de fallos, valores por defecto
 seguros, regresiones de correcciones, protección local del backend e integridad de
-los diccionarios de localización de los ocho idiomas. El número de pruebas no se fija
+los diccionarios de localización de los ocho idiomas, junto con la coherencia entre la lista de dependencias y la lista congelada (requirements.txt y lock: los límites inferiores no se desacompasan, el lock fija versiones exactas y no se permite retroceder a versiones con CVE conocidas). El número de pruebas no se fija
 aquí a propósito — lo que cuenta es el resultado de recolección de
 `python -m pytest tests -q`.
 
@@ -161,7 +161,7 @@ aquí a propósito — lo que cuenta es el resultado de recolección de
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt pyinstaller
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
 python main.py            # iniciar la interfaz gráfica
 build_exe.bat             # recompilar el exe
 ```

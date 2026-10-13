@@ -150,7 +150,7 @@ Covers RPA archive read/write (both format generations plus malicious-archive
 blocking), reference-rewrite safety, font/image optimizers not corrupting originals,
 rpyc parsing, APK slimming (engine protection / signature removal / x- prefix path
 translation / key generation), cancellation and crash dumps, safe defaults, review-fix
-regressions, backend local-only guard, and eight-language i18n dictionary completeness.
+regressions, backend local-only guard, and eight-language i18n dictionary completeness, plus the requirements.txt and lock lists being self-consistent (dependency floors don't drift apart, the lock pins exact versions, and known-CVE versions must not regress).
 The test count is deliberately not hard-coded here — trust the collection result of
 `python -m pytest tests -q`.
 
@@ -158,7 +158,7 @@ The test count is deliberately not hard-coded here — trust the collection resu
 
 ```
 python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt pyinstaller
+.venv\Scripts\pip install -r requirements.txt -r requirements-dev.txt pyinstaller
 python main.py            # launch the GUI
 build_exe.bat             # rebuild the exe
 ```

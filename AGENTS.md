@@ -79,11 +79,14 @@ python cli.py env [--sdk SDK路径]
 
 以下是改 RenPySlim 自身源码（非处理游戏资源）时的路由指引，与 `.github/workflows/ci.yml` 口径逐字一致：
 
+- 依赖图自检：`python -m pip check`
 - 回归测试：`python -m pytest tests -q`
 - 静态检查（只查真错误，vendor 不查）：`ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`
-- 动依赖（`requirements*.txt`）＝三处同步：抬下限 → 按 `requirements-lock.txt` 头部口径重生成冻结清单
-  → 跑 `python -m pytest tests -q`。下限＝首个无已知 CVE 且实测通过的版本（理由写在
-  requirements.txt 头注释）；exe 构建按 lock 冻结（release.yml 用 `-c`），CI 装最新当预警。
+- 动依赖（`requirements*.txt`）＝按 docs/CONTRIBUTING.md「依赖更新」四步走完：抬下限
+  → 按 `requirements-lock.txt` 头部口径重生成冻结清单 → 跑 `python -m pytest tests -q`
+  （含 test_deps_lock 守卫）→ 同步 THIRD_PARTY_NOTICES 与 STATUS。下限＝首个无已知 CVE
+  且实测通过的版本（理由写在 requirements.txt 头注释）；exe 构建按 lock 冻结
+  （release.yml 用 `-c`），CI 装最新当预警。
 - 安全红线与架构约束：见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - PR 提交清单：见 [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 
@@ -194,14 +197,17 @@ Notes:
 Routing guide for changing RenPySlim's own source (not game assets);
 commands mirror `.github/workflows/ci.yml` verbatim:
 
+- Dependency graph check: `python -m pip check`
 - Regression tests: `python -m pytest tests -q`
 - Static check (real errors only, vendor excluded):
   `ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`
-- Touching dependencies (`requirements*.txt`) means three places in sync: raise the
-  floor → regenerate `requirements-lock.txt` per the recipe in its header → rerun
-  `python -m pytest tests -q`. A floor is "the lowest version free of known CVEs and
-  verified locally" (rationale in the requirements.txt header); exe builds are frozen
-  against the lock (`-c` in release.yml) while CI installs latest as an early warning.
+- Touching dependencies (`requirements*.txt`) means completing the four steps in
+  docs/CONTRIBUTING.md: raise the floor → regenerate `requirements-lock.txt` per the
+  recipe in its header → rerun `python -m pytest tests -q` (incl. the test_deps_lock
+  guards) → sync THIRD_PARTY_NOTICES and STATUS. A floor is "the lowest version free
+  of known CVEs and verified locally" (rationale in the requirements.txt header);
+  exe builds are frozen against the lock (`-c` in release.yml) while CI installs
+  latest as an early warning.
 - Security red lines & architecture constraints: see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - PR checklist: see [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md)
 

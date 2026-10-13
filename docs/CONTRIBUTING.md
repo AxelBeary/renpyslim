@@ -24,7 +24,7 @@ python main.py            # 启动图形界面（开发模式）
 2. 新需求先落进 [docs/BACKLOG.md](BACKLOG.md) 再动代码。
 3. 界面改动遵守 [web/static/index.html](../web/static/index.html) 的
    单文件零依赖架构：不引外部 CSS/JS、不加载网络资源；新增文案必须
-   四语齐全（I18N 的 zh/en/ru/es 字典，缺一会被测试拦下）。
+   八语齐全（I18N 的 zh/en/ru/es/pt/tr/de/fr 字典，缺一会被测试拦下）。
 
 ## 依赖更新 / Dependency updates
 
@@ -40,7 +40,9 @@ Dependabot 看不见（它只评估实际解析出的版本）。分工：
 
 改依赖后四步（缺一不算改完）：
 
-1. 升到目标版本并跑门禁：`python -m pytest tests -q` + 上面的 ruff 命令 + `python -m pip check`
+1. 升到目标版本并跑门禁（三条逐字同 ci.yml）：`python -m pytest tests -q` +
+   `ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`
+   + `python -m pip check`
 2. 重生成 lock：`python -m pip freeze` 覆盖 body，**保留文件头部的 `#` 注释行**
    （具体命令见 requirements-lock.txt 头部；别用 `-Encoding ascii`，中文注释会被压成问号）
 3. 复跑 `python -m pytest tests -q`，确认 `tests/test_deps_lock.py` 四道守卫绿

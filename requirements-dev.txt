@@ -6,3 +6,4 @@
 pytest>=9.1.1
 ruff>=0.17.0
 httpx>=0.28.1        # fastapi TestClient 依赖 httpx，缺了测试会静默跳过
+packaging>=26.3      # test_deps_lock 用它做 PEP 440 版本比较（不靠传递依赖偷用）
