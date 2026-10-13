@@ -1,5 +1,8 @@
 # 开发依赖（测试 + 静态检查），运行本工具本身不需要
 # 与 CI 口径一致：ci.yml / release.yml 装 requirements.txt + 本清单
-pytest>=8.0
-ruff>=0.4
-httpx>=0.27         # fastapi TestClient 依赖 httpx，缺了测试会静默跳过
+# 下限口径同 requirements.txt（首个无已知 CVE 且实测通过的版本）
+# PyInstaller 按既定口径仍为内联安装（见 release.yml / CONTRIBUTING），
+# 但它的版本已被 requirements-lock.txt 精确冻结，因此也在 Dependabot 视野内。
+pytest>=9.1.1
+ruff>=0.17.0
+httpx>=0.28.1        # fastapi TestClient 依赖 httpx，缺了测试会静默跳过

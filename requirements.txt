@@ -1,6 +1,14 @@
-pillow>=10.0
-fonttools>=4.66.0
-fastapi>=0.110
-uvicorn>=0.29
-py7zr>=0.21
-pystray>=0.19
+# 运行时依赖。
+# 下限口径（2026-10-13 改，取代旧的“越宽容越好”）：下限 = 首个无已知 CVE
+# 且本机实测通过的版本。理由：仓库没有 lockfile 时，Dependabot 只看得见
+# “实际解析出来的版本”，看不见“清单允许但带洞”的老版本——宽容下限等于
+# 给旧 Python 环境留了一条“pip 装得到有洞版本”的暗道，且从没被任何门禁验证过。
+# 分工：ci.yml 装最新（当上游破坏性发布的 canary）；release.yml 按
+# requirements-lock.txt 冻结（exe 构建可复现）；抬下限由人工在发版周期统一做，
+# Dependabot 只推安全更新（原因见 .github/dependabot.yml 注释）。
+pillow>=12.3.0      # CVE-2026-59205/59204/59200/59199（high）仅 12.3.0 修复
+fonttools>=4.66.1   # 4.66 起要求 Python 3.11+，即源码运行的下限由它定
+fastapi>=0.143.0
+uvicorn>=0.54.0
+py7zr>=1.1.4        # CVE-2026-23879（high）/55206/55195 仅 1.1.3 修复；0.x 另有 CVE-2022-44900（critical）
+pystray>=0.19.5
