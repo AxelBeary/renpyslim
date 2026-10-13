@@ -5,9 +5,9 @@ __pycache__/
 build/
 dist/
 *.spec
-# 根目录两个 PyInstaller 构建配方是构建输入，须入库（2026-09-29 用户拍板）
+# 根目录的 PyInstaller 构建配方是构建输入，须入库（2026-09-29 用户拍板）。
+# 旧名遗留配方 RenPyToolbox.spec 已于 2026-10-13 删除（发版不用它），不预留反选。
 !RenPySlim.spec
-!RenPyToolbox.spec
 .pytest_cache/
 .ruff_cache/
 .qoder/

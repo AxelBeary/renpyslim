@@ -1,21 +1,23 @@
 # 依赖安全与更新监控：每周检查 Python 依赖与 Actions 版本。
-# pip 只收安全更新，不收纯版本 bump（requirements.txt 用的是
-# 宽容下限，Dependabot 抬下限只收紧兼容性无收益）。
+# pip 只收安全更新：版本 bump PR 用官方硬开关直接停用（见下）。
 version: 2
 updates:
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
-    ignore:
-      # 注意：update-types 合法值只有下面三个 semver 粒度（旧写法
-      # "version-update" 不被识别，2026-10-01 实测失效放过纯 bump PR）。
-      # 安全更新不属于 version-update，不受此 ignore 影响，照常推送。
-      - dependency-name: "*"
-        update-types:
-          - "version-update:semver-major"
-          - "version-update:semver-minor"
-          - "version-update:semver-patch"
+    # 为什么不用 ignore + update-types：2026-10-01 已按官方合法粒度
+    # （semver-major/minor/patch 三档全列）配过 ignore，10-11 的周检照样送来
+    # fastapi/ruff 两份 bump PR（PR 历史 #1~#21 里 19 份靠手动关）。结论：
+    # 语法合法不等于生效，对 pip 的 `>=` 抬下限类更新它压不住，别再加回去。
+    # 下面这个是文档写死的停用开关：
+    #   "You can temporarily disable version updates for a package manager by
+    #    setting this option to zero"
+    #   "Security update pull requests are not subject to this limit"
+    # 即：版本 bump PR 归零，安全更新 PR 照推（仓库级 security updates 已确认 enabled）。
+    # 抬下限改为人工在发版周期统一做，口径见 requirements.txt 头注释；
+    # 传递依赖与 PyInstaller 的安全监控由 requirements-lock.txt 的精确 pin 兜底。
+    open-pull-requests-limit: 0
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

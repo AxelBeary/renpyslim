@@ -21,7 +21,13 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
+        # 故意不加 -c requirements-lock.txt：CI 装最新解析版，当上游
+        # 破坏性发布/依赖图冲突的预警；exe 构建才走冻结口径（release.yml）。
         run: pip install -r requirements.txt -r requirements-dev.txt
+
+      # 依赖图本身也算被测项：报告“装上了但互相不对付”（版本冲突、重复包）
+      - name: Dependency graph check
+        run: python -m pip check
 
       # 只查真错误（未定义变量/未用导入/语法错等 F 类与 E9）；
       # 风格类意见不拦：项目刻意使用宽容异常捕获等安全风格

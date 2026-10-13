@@ -20,7 +20,9 @@ jobs:
           python-version: "3.13"
 
       - name: Install dependencies
-        run: pip install -r requirements.txt -r requirements-dev.txt pyinstaller
+        # -c requirements-lock.txt：exe 构建的依赖版本（含 PyInstaller 与传递依赖）
+        # 逐字冻结、可复现；ci.yml 不锁版本，继续当上游破坏性发布的 canary。
+        run: pip install -c requirements-lock.txt -r requirements.txt -r requirements-dev.txt pyinstaller
 
       # 发布前先跑一遍回归，红了就不发版
       - name: Sanity tests
