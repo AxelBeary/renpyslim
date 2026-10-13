@@ -119,6 +119,12 @@ index.html 是单文件原生 JS：卡片（card）+ switchMode 控制显隐，
 build_exe.bat                                # 产出 dist\RenPySlim.exe
 ```
 
+- 构建配方**只有 `RenPySlim.spec` 一份**（旧名遗留的 RenPyToolbox.spec 已于 2026-10-13
+  删除）；build_exe.bat 与 release.yml 都走 `python -m PyInstaller --noconfirm RenPySlim.spec`，
+  不得在任何一方内联重复参数（防配方分叉）。
+- 依赖双口径：`ci.yml` 按下限装最新（上游破坏性发布的 canary）+ `pip check`；
+  `release.yml` 额外以 `-c requirements-lock.txt` 冻结构建。改依赖的四步仪式与
+  下限口径见 `docs/CONTRIBUTING.md`「依赖更新」，由 `tests/test_deps_lock.py` 机械对账。
 - 测试文件按功能命名：test_core（RPA/引用/字体/图片）、test_features（第二批功能）、
   test_archives、test_font_tool、test_progress、test_empty_shell、test_rpy_dist
 - 真实样本 E2E 惯例：优化 → lint/启动验证 → 对比体积，产物路径在 _sample/
