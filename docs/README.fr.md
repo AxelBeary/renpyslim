@@ -18,8 +18,12 @@ RenPySlim aide les créateurs de jeux Ren'Py à **réduire la taille** de leurs 
 - **Compresser** — allégement complet des images, de l'audio, de la vidéo et des polices, avec réécriture automatique des références dans les scripts ;
   le réglage par défaut privilégie la qualité (q95, quasi sans perte) et l'optimisation parallèle exploite automatiquement tous les cœurs du processeur
 - **Empaqueter** — génère des paquets de publication PC / Mac / Android via le SDK officiel
+- **Optimiser sans packager** — si tu veux seulement alléger pour l'instant, sans créer d'installeur, l'empaquetage via le SDK est sauté ; tu pourras packager plus tard quand tu veux
 - **Alléger un jeu déjà prêt** — allège en toute sécurité un jeu déjà empaqueté (dossier ou zip/7z/rar), entrée directe, sortie directe
 - **Alléger un APK** — les paquets Android aussi peuvent être allégés : images converties en WebP, audio converti en OGG (remappage à l'exécution, sans toucher aux références), re-signature automatique
+- **Pré-analyse d'APK** — choisis un paquet et obtiens aussitôt un bilan en lecture seule : nombre d'assets optimisables,
+  deux économies estimées (réglage par défaut et allègement maximal), état de la signature et reconnaissance de la structure Ren'Py ;
+  consulte d'abord le rapport, puis décide comment lancer — sans modifier un seul octet du paquet d'origine
 - **Déverrouillage par décompilation** (expérimental) — pour un jeu sans code source, l'outil intégré unrpyc permet de retrouver les scripts ;
   les images et l'audio à l'intérieur des archives peuvent aussi être convertis, puis tout est reconditionné à l'identique dans les archives RPA
 
@@ -59,6 +63,10 @@ Quatre points d'entrée : **Super empaqueteur / Allègement de jeu prêt / Allè
 3. Clique sur « Lancer l'exécution » → suis en direct la barre de progression et les journaux
 4. À la fin, récupère le résultat optimisé / les paquets de publication officiels
 
+Sur la page APK aussi, tu peux d'abord cliquer sur « Scanner et analyser » : un tableau des entrées en lecture seule
+indique les assets optimisables et les deux économies estimées ; tu ne lances l'allègement qu'après confirmation.
+L'analyse elle-même n'extrait rien et ne touche pas au paquet d'origine.
+
 ### Opérations qui simplifient la vie
 
 - **Glisse-dépose directement un zip / 7z / rar / APK / dossier sur l'icône de l'outil** : le champ se remplit tout seul et la fonction correspondante s'ouvre
@@ -68,13 +76,15 @@ Quatre points d'entrée : **Super empaqueteur / Allègement de jeu prêt / Allè
 ### Les quatre points d'entrée
 
 - **Super empaqueteur** : indique le dossier du projet ; après optimisation, l'empaquetage se fait automatiquement via le SDK officiel (PC/Mac/Android).
-  Tu peux cocher « Empaqueter les ressources dans une archive RPA » (canal officiel)
+  Tu peux cocher « Empaqueter les ressources dans une archive RPA » (canal officiel) ; tu peux aussi cocher « Optimiser seulement, sans packager »
+  pour alléger sans produire d'installeur (pas besoin du SDK) — pour packager plus tard, décoche l'option et relance une exécution
 - **Allègement de jeu prêt** : indique le dossier du jeu fini ou glisse directement une archive zip / 7z / rar
   (extraction automatique, puis ré-empaquetage automatique après allègement pour te livrer le résultat ; les archives protégées par mot de passe sont prises en charge) ; les archives RPA rencontrées sont automatiquement ouvertes, optimisées puis reconstruites ;
   si l'archive contient un APK, il est automatiquement transféré vers l'allègement d'APK sécurisé ; dans les options avancées, le commutateur expérimental
   « Décompiler les scripts pour déverrouiller la conversion de formats » permet même aux jeux sans code source de profiter de la conversion de formats
 - **Allègement d'APK** : choisis un fichier .apk et c'est réglé en trois étapes (niveau / commutateur d'allègement maximal / choix de signature — trois options,
-  par défaut une nouvelle clé est générée automatiquement), avec à la sortie un paquet allégé prêt à installer directement
+  par défaut une nouvelle clé est générée automatiquement), avec à la sortie un paquet allégé prêt à installer directement ;
+  avant de lancer, tu peux d'abord cliquer sur « Scanner et analyser » pour voir le rapport
 - **Allègement de polices** (outil indépendant) : aucun projet de jeu n'est nécessaire, il suffit de choisir une police + des sources de texte pour l'alléger ;
   les collections ttc/otc sont automatiquement découpées et produites séparément selon la graisse ; les originaux ne sont jamais écrasés, et la liste des caractères utilisés est fournie
 
@@ -92,6 +102,16 @@ soient plus noyés sous les fausses alertes.
 ### Garanties à l'exécution
 
 - Tu peux cliquer à tout moment sur « Arrêter la tâche » pendant une exécution (ce qui est déjà terminé est conservé) ; en cas d'échec d'une tâche, un vidage de crash est automatiquement enregistré
+- **Historique des tâches** : les tâches de l'interface et du CLI sont conservées sur disque (50 au maximum, la page de réglages en affiche 20 par défaut) ;
+  après un redémarrage, tu sais encore ce qui a été fait, si c'est réussi et où sont les résultats. Les commandes de consultation comme `env` / `history`
+  n'écrivent rien elles-mêmes. Seuls des résumés sont conservés, jamais les journaux complets ; les résumés peuvent contenir des chemins locaux —
+  vérifie-les avant de partager captures d'écran ou fichiers
+- **Actions sur les résultats et export** : la zone de résultats permet d'ouvrir le dossier de sortie, de montrer un fichier dans l'explorateur et de copier le chemin ;
+  le rapport d'analyse s'exporte en JSON / CSV (l'export utilise toutes les données et n'est pas limité aux 300 lignes du tableau ;
+  au-delà, le tableau signale explicitement « tronqué »)
+- **Confirmation des actions risquées** : une fois « Modifier directement les fichiers originaux » coché, une boîte de confirmation s'affiche avant la soumission (focus par défaut sur Annuler)
+- **Accessibilité** : navigation par boutons natifs, libellés aria et annonces d'état, focus clavier visible, respect du réglage système
+  « réduire les animations » ; dans le thème clair, le contraste du texte a été renforcé selon les normes de lisibilité
 - L'interface te signale quand une nouvelle version est disponible (comparaison avec GitHub Releases)
 - Si FFmpeg / 7-Zip manque, l'interface t'indique précisément comment l'installer (commande winget ou adresse de téléchargement)
 - Pour quitter : clic droit sur l'icône de la zone de notification en bas à droite → Quitter l'outil, ou le bouton « Quitter l'outil » en bas à gauche de la barre latérale
@@ -101,11 +121,12 @@ soient plus noyés sous les fausses alertes.
 
 ```
 python cli.py env                                  # bilan de santé de l'environnement
-python cli.py analyze <chemin> --mode project      # analyser
-python cli.py optimize <chemin> --preset balanced  # optimiser
+python cli.py analyze <chemin ou .apk>             # analyser (.apk : pré-analyse en lecture seule automatique)
+python cli.py optimize <chemin> --preset balanced  # optimiser (mode projet = optimiser sans packager)
 python cli.py full <projet> --platforms pc,mac     # optimiser + empaqueter de bout en bout
 python cli.py slimfont <police> <textes...>        # allègement de police autonome
 python cli.py slimapk <apk> --remap --gen-key      # allègement d'APK (images→WebP/audio→OGG + re-signature)
+python cli.py history --limit 20                   # consulter l'historique des tâches (--clear pour l'effacer)
 ```
 
 > Assistants IA / scripts d'automatisation : lisez d'abord [AGENTS.md](../AGENTS.md) (règles de sécurité et dépannage inclus).
@@ -127,6 +148,9 @@ il bascule automatiquement sur un port libre attribué par le système. Tu peux 
 | Mécanisme | Description |
 |---|---|
 | Copie de travail | Par défaut, on copie d'abord vers une copie avant d'opérer ; pas un octet de l'original n'est modifié |
+| Vérification d'espace disque | Avant de copier la copie de travail, d'écrire la sauvegarde forcée et d'extraire/réécrire un APK, l'espace nécessaire est calculé (avec 10 % de marge) ; s'il manque, une erreur claire est renvoyée immédiatement |
+| Validation des plateformes | Avant le pack, la liste des plateformes est validée (non vide et valide) ; en cas d'échec, aucun SDK n'est cherché, aucun dossier de travail n'est créé et aucune optimisation n'est lancée |
+| Pré-analyse en lecture seule | La pré-analyse d'APK ne lit que la table des entrées ZIP : pas d'extraction, pas de dossier de travail, aucune modification du paquet d'origine |
 | Sauvegarde obligatoire | Quand « Modifier directement les fichiers originaux » est coché, une archive de sauvegarde complète (sauvegardes de partie incluses) est créée d'abord |
 | Pas plus petit, pas remplacé | Chaque optimiseur écrit d'abord un fichier temporaire et ne remplace que si la taille a réellement diminué |
 | Verrouillage par référence | Une ressource introuvable par référence littérale dans les scripts est seulement compressée sur place, jamais renommée |
@@ -135,6 +159,8 @@ il bascule automatiquement sur un port libre attribué par le système. Tu peux 
 | Le nettoyage ne supprime que le reproductible | Cache/journaux/bytecode ; en mode modification directe des originaux, ces éléments sont automatiquement sautés pour protéger les sauvegardes de partie |
 | Une image n'est jamais déclarée morte | Ren'Py charge automatiquement les images par nom de fichier : référence introuvable ne veut pas dire inutile |
 | Protection contre les entrées malveillantes | Désérialisation de l'index des archives sur liste blanche ; assainissement des chemins des entrées d'archives (défense contre le zip-slip) |
+| Ouverture/localisation sûres | Seuls des chemins absolus locaux sont acceptés (UNC/partages réseau refusés) ; l'ouverture ou la sélection se fait uniquement dans l'explorateur, jamais par exécution du fichier |
+| Confidentialité de l'historique | L'historique des tâches ne garde que des résumés et les chemins des résultats, jamais les journaux complets, et s'efface en un clic |
 | Réservé au local | Le service n'écoute que sur 127.0.0.1 et vérifie la provenance des requêtes : aucun accès possible depuis l'extérieur |
 | Lint automatique après optimisation | Le vérificateur statique officiel est intégré au parcours ; le résultat est archivé dans validation.txt |
 | Liste des modifications | Chaque exécution produit changelog.json, qui consigne chaque changement |
@@ -158,8 +184,12 @@ il bascule automatiquement sur un port libre attribué par le système. Tu peux 
 Couvrent la lecture/écriture des archives RPA (y compris les deux générations de format et le blocage des archives malveillantes),
 la sécurité de la réécriture des références, la préservation des originaux par les optimiseurs de polices/images,
 l'analyse rpyc, l'allègement d'APK (protection du moteur / retrait de la signature /
-conversion des chemins préfixés par x- / génération de la clé), l'annulation et les vidages de crash, les valeurs sûres par défaut, la non-régression des correctifs d'audit,
-les protections locales du backend et l'intégrité des dictionnaires des huit langues de l'interface, ainsi que la cohérence entre la liste des dépendances et la liste gelée (requirements.txt et lock : les bornes basses ne divergent pas, le lock épingle des versions exactes, et aucune version touchée par une CVE connue ne revient en arrière).
+conversion des chemins préfixés par x- / génération de la clé), la pré-analyse d'APK en lecture seule,
+l'historique des tâches (heartbeat / détection de processus / élagage / tolérance aux fichiers corrompus),
+la validation préalable des plateformes de pack, la pré-vérification de l'espace disque, les journaux structurés code/params,
+l'annulation et les vidages de crash, les valeurs sûres par défaut, la non-régression des correctifs d'audit,
+les protections locales du backend et les actions sécurisées, la syntaxe des trois fichiers frontend
+(avec Node installé, `node --check` s'exécute, sinon c'est sauté), l'intégrité des dictionnaires des huit langues de l'interface, ainsi que la cohérence entre la liste des dépendances et la liste gelée (requirements.txt et lock : les bornes basses ne divergent pas, le lock épingle des versions exactes, et aucune version touchée par une CVE connue ne revient en arrière).
 Le nombre de tests n'est volontairement pas figé ici — seule fait foi le résultat de
 collecte de `python -m pytest tests -q`.
 

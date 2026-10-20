@@ -19,9 +19,13 @@ RenPySlim hilft Ren'Py-Spieleentwicklern, ihre Werke **kleiner und aufgeräumter
   Verweise in den Skripten werden automatisch umgeschrieben;
   die Standardstufe setzt auf Qualität (q95, nahezu verlustfrei), und die parallele Optimierung nutzt automatisch alle CPU-Kerne aus
 - **Verpacken** – ruft das offizielle SDK auf, um PC / Mac / Android-Veröffentlichungspakete zu erstellen
+- **Nur optimieren, nicht verpacken** – wenn du vorerst nur abspecken und noch keinen Installer bauen willst, wird das SDK-Verpacken übersprungen; verpacken kannst du jederzeit später
 - **Fertige Spiele abspecken** – bereits verpackte Spiele (Ordner oder zip/7z/rar) sicher abspecken, rein und raus, ohne Umwege
 - **APK abspecken** – auch Android-Pakete können abspecken: Bilder zu WebP, Audio zu OGG
   (Remapping zur Laufzeit, ohne Verweise anzufassen), automatisches Neusignieren
+- **APK-Voranalyse** – Paket wählen und sofort einen Nur-Lese-Check erhalten: Anzahl optimierbarer Assets,
+  zwei geschätzte Ersparnisse (Standardstufe und maximale Abspeckung), Signaturstatus und Erkennung der Ren'Py-Struktur;
+  erst den Bericht ansehen und dann entscheiden, wie du vorgehst – kein einziges Byte des Originalpakets wird angefasst
 - **Dekompilieren freischalten** (experimentell) – fertige Spiele ohne Quellcode können mit dem eingebauten unrpyc ihren Quellcode zurückgewinnen;
   auch Bilder/Audio innerhalb des Pakets lassen sich konvertieren und danach originalgetreu zurück ins RPA-Archiv packen
 
@@ -60,6 +64,10 @@ deine Auswahl wird gespeichert). Vier Einstiegspunkte: **Super-Packer / Fertiges
 3. Auf "Ausführen" klicken → Fortschrittsbalken und Protokoll live mitverfolgen
 4. Nach Abschluss das Optimierungsergebnis / die offiziellen Veröffentlichungspakete abholen
 
+Auch auf der APK-Seite kannst du zuerst auf "Scannen & Analysieren" klicken: Eine Nur-Lese-Tabelle der Einträge
+zeigt die optimierbaren Assets und beide geschätzten Ersparnisse; erst danach startest du den Lauf.
+Die Analyse selbst entpackt nichts und ändert das Originalpaket nicht.
+
 ### Bequeme Bedienung
 
 - zip / 7z / rar / APK / Ordner **direkt auf das Werkzeug-Symbol ziehen** – wird automatisch eingetragen und öffnet die passende Funktion
@@ -69,7 +77,8 @@ deine Auswahl wird gespeichert). Vier Einstiegspunkte: **Super-Packer / Fertiges
 ### Die vier Funktionseinstiege
 
 - **Super-Packer**: Gib ein Projektverzeichnis an; nach der Optimierung wird automatisch das offizielle SDK zum Verpacken aufgerufen (PC/Mac/Android).
-  Optional kannst du "Beim Verpacken Ressourcen in ein RPA-Archiv packen" ankreuzen (offizieller Weg)
+  Optional kannst du "Beim Verpacken Ressourcen in ein RPA-Archiv packen" ankreuzen (offizieller Weg); alternativ kannst du "Nur optimieren, nicht verpacken" ankreuzen,
+  dann wird nur abgespeckt und kein Installer erzeugt (kein SDK nötig) – willst du später verpacken, Häkchen wieder entfernen und erneut ausführen
 - **Fertiges Spiel abspecken**: Gib einen fertigen Spielordner an oder wirf einfach eine zip / 7z / rar-Datei hinein
   (automatisches Entpacken, Abspecken und danach automatisches Neuverpacken zur Übergabe; passwortgeschützte Archive werden unterstützt);
   RPA-Archive werden automatisch geöffnet, optimiert und wieder aufgebaut;
@@ -77,7 +86,8 @@ deine Auswahl wird gespeichert). Vier Einstiegspunkte: **Super-Packer / Fertiges
   der experimentelle Schalter "Skripte dekompilieren, um Formatkonvertierung freizuschalten" in den erweiterten Optionen
   lässt auch Spiele ohne Quellcode von der Formatkonvertierung profitieren
 - **APK abspecken**: .apk-Datei auswählen, drei Schritte und fertig (Komprimierungsstufe/Schalter für maximale Abspeckung/Signatur – drei Auswahlen,
-  standardmäßig wird automatisch ein neuer Schlüssel erzeugt). Das Ergebnis ist ein direkt installierbares, abgespecktes Paket
+  standardmäßig wird automatisch ein neuer Schlüssel erzeugt). Das Ergebnis ist ein direkt installierbares, abgespecktes Paket;
+  vor dem Start kannst du zuerst "Scannen & Analysieren" für den Bericht nutzen
 - **Schriften abspecken** (eigenständiges Werkzeug): Kein Spielprojekt nötig – einfach Schriftart + Textquelle wählen und abspecken;
   ttc/otc-Sammlungen werden automatisch aufgetrennt und nach Schriftstärke separat ausgegeben; das Original wird nie überschrieben, und eine Liste der verwendeten Zeichen gibt's obendrauf
 
@@ -95,6 +105,16 @@ Spiele mit sprachweise gemischten Schriften nicht mehr in Fehlalarmen ertrinken.
 ### Laufzeit-Absicherung
 
 - Während der Ausführung kannst du jederzeit auf "Aufgabe stoppen" klicken (bereits abgeschlossene Teile bleiben erhalten); schlägt eine Aufgabe fehl, wird automatisch ein Crash-Dump gespeichert
+- **Aufgabenverlauf**: Aufgaben aus Oberfläche und CLI werden dauerhaft gespeichert (maximal 50 Einträge, die Einstellungsseite zeigt standardmäßig 20);
+  auch nach einem Neustart siehst du, was gelaufen ist, ob es geklappt hat und wo die Ergebnisse liegen. Reine Abfragebefehle wie `env` / `history`
+  schreiben selbst nichts mit. Es werden nur Zusammenfassungen gespeichert, keine vollständigen Protokolle; die Zusammenfassungen können lokale Pfade
+  enthalten – prüfe Screenshots oder Dateien vor dem Weitergeben
+- **Ergebnis-Aktionen & Export**: Im Ergebnisbereich kannst du den Ausgabeordner öffnen, Dateien im Explorer zeigen lassen und Pfade kopieren;
+  Analyseberichte lassen sich als JSON / CSV exportieren (der Export nutzt immer alle Daten und hängt nicht am Anzeigelimit von 300 Zeilen;
+  bei Überschreitung weist die Tabelle ausdrücklich auf "gekürzt" hin)
+- **Bestätigung riskanter Aktionen**: Ist "Originaldateien direkt ändern" angekreuzt, erscheint vor dem Absenden ein zweiter Bestätigungsdialog (Fokus standardmäßig auf Abbrechen)
+- **Barrierefreiheit**: native Button-Navigation, aria-Labels und Statusansagen, sichtbarer Tastaturfokus, Respekt für die Systemeinstellung
+  "Animationen reduzieren"; im hellen Design wurde der Textkontrast nach Lesbarkeitsstandard abgedunkelt
 - Gibt es eine neue Version, zeigt die Oberfläche einen Hinweis an (Vergleich mit GitHub Releases)
 - Fehlen FFmpeg / 7-Zip, zeigt die Oberfläche konkrete Installationsanleitungen (winget-Befehl oder Download-Link)
 - Beenden: Rechtsklick auf das Tray-Symbol unten rechts → Werkzeug beenden, oder der Button "Werkzeug beenden" unten links in der Seitenleiste
@@ -104,11 +124,12 @@ Spiele mit sprachweise gemischten Schriften nicht mehr in Fehlalarmen ertrinken.
 
 ```
 python cli.py env                                  # Umgebung prüfen
-python cli.py analyze <Pfad> --mode project        # analysieren
-python cli.py optimize <Pfad> --preset balanced    # optimieren
+python cli.py analyze <Pfad oder .apk>             # analysieren (.apk läuft automatisch als Nur-Lese-Voranalyse)
+python cli.py optimize <Pfad> --preset balanced    # optimieren (Projektmodus = nur optimieren, nicht verpacken)
 python cli.py full <Projekt> --platforms pc,mac    # optimieren + verpacken in einem Schritt
 python cli.py slimfont <Schrift> <Textquelle...>   # eigenständiges Schriften-Abspecken
 python cli.py slimapk <apk> --remap --gen-key      # APK abspecken (Bilder zu WebP, Audio zu OGG + Neusignierung)
+python cli.py history --limit 20                   # Aufgabenverlauf ansehen (--clear leert ihn)
 ```
 
 > KI-Assistenten / Automatisierungsskripte: Bitte lies vor dem Aufruf zuerst [AGENTS.md](../AGENTS.md) (enthält Sicherheitsregeln und Fehlerbehebung).
@@ -130,6 +151,9 @@ wird automatisch ein vom System zugewiesener freier Port verwendet. Mit der Umge
 | Mechanismus | Beschreibung |
 |---|---|
 | Arbeitskopie | Standardmäßig wird erst in eine Kopie kopiert und dann dort gearbeitet – kein einziges Byte des Originals wird angefasst |
+| Speicherplatz-Vorprüfung | Vor dem Kopieren der Arbeitskopie, dem Schreiben der erzwungenen Sicherung und dem Entpacken/Zurückschreiben eines APK wird der benötigte Platz berechnet (plus 10 % Reserve); reicht er nicht, kommt sofort eine verständliche Fehlermeldung |
+| Plattform-Prüfung | Vor dem Verpacken wird die Plattformliste auf "nicht leer und gültig" geprüft; schlägt das fehl, wird kein SDK gesucht, kein Arbeitsordner angelegt und nichts optimiert |
+| Nur-Lese-Voranalyse | Die APK-Voranalyse liest nur die ZIP-Eintragstabelle: kein Entpacken, kein Arbeitsordner, keine Änderung am Originalpaket |
 | Erzwungene Sicherung | Ist "Originaldateien direkt ändern" angekreuzt, wird zuerst ein komplettes Backup-Archiv (inkl. Spielstände) erstellt |
 | Nicht kleiner – nicht ersetzen | Jeder Optimierer schreibt zuerst eine temporäre Datei und ersetzt erst, wenn bestätigt ist, dass die Größe geschrumpft ist |
 | Verweis-Gating | Ressourcen ohne wörtlichen Verweis in den Skripten werden nur an Ort und Stelle komprimiert und niemals umbenannt |
@@ -138,6 +162,8 @@ wird automatisch ein vom System zugewiesener freier Port verwendet. Mit der Umge
 | Müllbeseitigung löscht nur neu erzeugbare Dinge | Caches/Logs/Bytecode; im Modus "Original direkt ändern" werden sie automatisch übersprungen, um Spielstände zu schützen |
 | Bilder werden nie für tot erklärt | Ren'Py lädt Bilder automatisch nach Dateinamen – kein gefundener Verweis heißt nicht automatisch unbenutzt |
 | Schutz vor bösartigen Eingaben | Deserialisierung von Archiv-Indizes per Whitelist; Pfad-Bereinigung bei Archiveinträgen (Schutz vor zip-slip) |
+| Sicheres Öffnen/Zeigen | Es werden nur lokale absolute Pfade angenommen (UNC/Netzwerkfreigaben abgelehnt); geöffnet oder markiert wird ausschließlich im Explorer, Dateien werden niemals ausgeführt |
+| Verlauf und Privatsphäre | Der Aufgabenverlauf speichert nur Zusammenfassungen und Pfade zu Ergebnissen, keine vollständigen Protokolle, und lässt sich mit einem Klick leeren |
 | Nur für den lokalen Rechner | Der Dienst hört nur auf 127.0.0.1 und prüft die Herkunft der Anfragen – aus dem Netz ist er nicht erreichbar |
 | Automatisches lint nach der Optimierung | Der offizielle statische Check ist in den Ablauf eingebaut und speichert validation.txt ins Archiv |
 | Änderungsliste | Jeder Durchlauf schreibt eine changelog.json, die jede einzelne Änderung festhält |
@@ -161,9 +187,12 @@ wird automatisch ein vom System zugewiesener freier Port verwendet. Mit der Umge
 
 Abgedeckt werden: Lesen/Schreiben von RPA-Archiven (inklusive beider Formate – alt und neu – und Abfangen bösartiger Archive),
 Sicherheit des Verweis-Umschreibens, dass Schrift-/Bildoptimierung die Originaldateien nicht beschädigt, rpyc-Parsing,
-APK-Abspeckung (Engine-Schutz/Signaturentfernung/x-Präfix-Pfadumsetzung/Schlüsselerzeugung), Abbruch und Crash-Dumps,
-sichere Standardwerte, Regressionstests für Audit-Reparaturen, lokale Schutzmechanismen des Backends und die Vollständigkeit
-der acht Sprachwörterbücher der Oberfläche, sowie die Abhängigkeits- und Freeze-Listen-Selbstkonsistenz (requirements.txt und lock: Untergrenzen driften nicht auseinander, exakte Pins im lock, keine Rückfälle auf Versionen mit bekannten CVEs). Die Anzahl der Tests wird hier bewusst nicht
+APK-Abspeckung (Engine-Schutz/Signaturentfernung/x-Präfix-Pfadumsetzung/Schlüsselerzeugung), APK-Nur-Lese-Voranalyse,
+Aufgabenverlauf (Heartbeat/Prozessprüfung/Bereinigung/Toleranz bei beschädigter Datei), Vorabprüfung der Verpackungsplattformen,
+Speicherplatz-Vorprüfung, strukturierte Logs mit code/params, Abbruch und Crash-Dumps,
+sichere Standardwerte, Regressionstests für Audit-Reparaturen, lokale Schutzmechanismen und sichere Aktionen des Backends,
+die Syntax der drei Frontend-Dateien (mit installiertem Node läuft `node --check`, ohne Node wird sie übersprungen),
+die Vollständigkeit der acht Sprachwörterbücher der Oberfläche, sowie die Abhängigkeits- und Freeze-Listen-Selbstkonsistenz (requirements.txt und lock: Untergrenzen driften nicht auseinander, exakte Pins im lock, keine Rückfälle auf Versionen mit bekannten CVEs). Die Anzahl der Tests wird hier bewusst nicht
 festgeschrieben – maßgeblich ist das Ergebnis von `python -m pytest tests -q`.
 
 ## Entwicklung
