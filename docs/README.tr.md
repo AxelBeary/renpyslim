@@ -19,8 +19,11 @@ RenPySlim, Ren'Py oyun geliştiricilerinin oyunlarını **küçültmesine, düze
   senaryo (script) referanslarını otomatik olarak yeniden yazar;
   varsayılan ayar kalite önceliklidir (q95, kayıpsıza yakın) ve paralel optimizasyon tüm çekirdeklerden otomatik yararlanır
 - **Paketleme** — resmî SDK'yı kullanarak PC / Mac / Android sürümleri oluşturur
+- **Yalnızca optimize et, paketleme yok** — şimdilik yalnızca küçültmek isteyip kurulum paketi üretmek istemediğinizde SDK paketlemesini atlar; dilediğiniz zaman yeniden paketleyebilirsiniz
 - **Hazır ürünü inceltme** — zaten paketlenmiş bir oyunu (klasör ya da zip/7z/rar) güvenle inceltir; olduğu gibi alır, olduğu gibi teslim eder
 - **APK inceltme** — Android paketleri de inceltilir: görseller WebP'ye, sesler OGG'ye dönüştürülür (çalışma anında yeniden eşleme yapılır, referanslara dokunulmaz), otomatik olarak yeniden imzalanır
+- **APK ön analizi** — paketi seçin, salt okunur bir sağlık kontrolü alın: optimize edilebilecek kaynak sayısı, varsayılan ayar ile en yüksek inceltme için iki ayrı tahmini kazanç,
+  imza durumu ve Ren'Py yapısının tanınması; nasıl çalıştıracağınıza karar vermeden önce raporu görün — asıl paketin tek baytına dokunulmaz
 - **Derleme çözme kilidi** (deneysel) — kaynak kodu olmayan hazır ürünlerde, gömülü unrpyc ile kaynak kodu geri kazanılır;
   paket içindeki görseller/sesler de dönüştürülebilir ve dönüştürme sonrası her şey olduğu gibi RPA paketine geri konur
 
@@ -61,6 +64,10 @@ Dört giriş noktası: **Süper Paketleyici / Hazır Ürün İnceltme / APK İnc
 3. "Çalıştır"a tıklayın → ilerleme çubuğunu ve günlükleri canlı izleyin
 4. İşlem bitince optimizasyon sonucunu / resmî yayın paketlerini alın
 
+APK sayfasında da önce "Tara ve analiz et"e tıklanabilir: salt okunur giriş tablosu optimize
+edilebilecek kaynakları ve iki tahmini kazancı gösterir; ancak onayladıktan sonra çalıştırılır.
+Analiz sırasında arşiv açılmaz, asıl paket değiştirilmez.
+
 ### Kolaylaştırıcı işlemler
 
 - zip / 7z / rar / APK / klasörü **doğrudan araç simgesinin üzerine sürükleyin**; yol otomatik doldurulur ve ilgili özelliğe geçilir
@@ -70,7 +77,8 @@ Dört giriş noktası: **Süper Paketleyici / Hazır Ürün İnceltme / APK İnc
 ### Dört özellik giriş noktası
 
 - **Süper Paketleyici**: proje klasörünü gösterin; optimizasyon sonrası resmî SDK otomatik olarak paketler (PC/Mac/Android);
-  "paketleme sırasında kaynakları RPA paketine koy" seçeneği işaretlenebilir (resmî kanal)
+  "paketleme sırasında kaynakları RPA paketine koy" seçeneği işaretlenebilir (resmî kanal); ayrıca "Yalnızca optimize et, paketleme yok"
+  seçeneğiyle yalnızca inceltip kurulum paketi üretmeden durabilirsiniz (SDK gerekmez) — paketlemek istediğinizde işareti kaldırıp yeniden çalıştırın
 - **Hazır Ürün İnceltme**: hazır ürün klasörünü gösterin ya da doğrudan zip / 7z / rar arşivi bırakın
   (otomatik açılır, inceltme sonrası otomatik yeniden paketlenip teslim edilir; şifreli arşivler desteklenir);
   RPA paketleri otomatik olarak açılıp inceltildikten sonra yeniden oluşturulur;
@@ -78,7 +86,8 @@ Dört giriş noktası: **Süper Paketleyici / Hazır Ürün İnceltme / APK İnc
   gelişmiş seçeneklerdeki deneysel "derleme çözerek biçim dönüştürme kilidi" anahtarı,
   kaynak kodu olmayan ürünlerin de biçim dönüştürme avantajından yararlanmasını sağlar
 - **APK İnceltme**: bir .apk dosyası seçin, üç adımda biter (sıkıştırma ayarı / tam inceltme anahtarı / üç imza seçeneğinden biri;
-  varsayılan olarak otomatik yeni anahtar üretilir); doğrudan kurulabilir inceltilmiş paket teslim edilir
+  varsayılan olarak otomatik yeni anahtar üretilir); doğrudan kurulabilir inceltilmiş paket teslim edilir; başlatmadan önce
+  "Tara ve analiz et" ile rapora bakabilirsiniz
 - **Yazı Tipi İnceltme** (bağımsız araç): oyun projesi gerekmez; yazı tipi + metin kaynağını seçmeniz yeterlidir;
   ttc/otc koleksiyonları otomatik olarak ayrılıp kalınlıklarına göre ayrı ayrı çıktılanır;
   asıl dosyanın üzerine asla yazılmaz, kullanılan karakter listesi de hediye
@@ -96,6 +105,16 @@ denetlenir; böylece dillere göre farklı yazı tipleri kullanan oyunlar artık
 ### Çalışma güvenceleri
 
 - Çalışma sırasında istediğiniz an "Görevi durdur"a tıklayabilirsiniz (tamamlanan kısım korunur); görev başarısız olursa çökme dökümü otomatik kaydedilir
+- **Görev geçmişi**: arayüz ve CLI görevleri diske kaydedilir (en fazla 50 kayıt; ayarlar sayfası varsayılan olarak 20 gösterir);
+  aracı yeniden başlattıktan sonra ne yapıldığı, başarılı olup olmadığı ve çıktıların nerede olduğu görülebilir; `env` / `history` gibi sorgu komutları
+  kaydedilmez. Yalnızca özet saklanır, tam günlük saklanmaz — özet bu makinenin yollarını içerebilir,
+  bu yüzden ekran görüntüsü veya dosya paylaşmadan önce kendiniz kontrol edin
+- **Sonuç işlemleri ve dışa aktarma**: sonuç alanından çıktı klasörü açılabilir, dosya Dosya Gezgini'nde konumlandırılabilir, yol kopyalanabilir;
+  analiz raporu JSON / CSV olarak dışa aktarılabilir (dışa aktarma tam veriyi kullanır, tablonun 300 satırlık gösterim sınırından etkilenmez;
+  sınır aşılırsa tablo verilerin kırpıldığını açıkça belirtir)
+- **Tehlikeli işlem onayı**: "Asıl dosyaları doğrudan değiştir" işaretlendikten sonra gönderimden önce ikinci bir onay penceresi açılır (odak varsayılan olarak iptaldedir)
+- **Erişilebilirlik**: yerel düğmelerle gezinme, aria etiketleri/durum bildirimleri, görünür klavye odağı,
+  sistemin "hareketleri azalt" ayarına saygı; açık temada metin kontrastı okunabilirlik ölçütlerine göre koyulaştırıldı
 - Yeni sürüm çıktığında arayüz sizi uyarır (GitHub Releases ile karşılaştırılır)
 - FFmpeg / 7-Zip eksikse arayüz somut kurulum adımlarını gösterir (winget komutu veya indirme bağlantısı)
 - Çıkış yolu: sağ alttaki tepsi simgesine sağ tıklayın → Araçtan çık, ya da kenar çubuğunun sol altındaki "Araçtan çık" düğmesi
@@ -105,11 +124,12 @@ denetlenir; böylece dillere göre farklı yazı tipleri kullanan oyunlar artık
 
 ```
 python cli.py env                                  # ortam kontrolü
-python cli.py analyze <yol> --mode project         # analiz
-python cli.py optimize <yol> --preset balanced     # optimizasyon
+python cli.py analyze <yol veya .apk>              # analiz (.apk salt okunur ön analize girer)
+python cli.py optimize <yol> --preset balanced     # optimizasyon (proje modu = sadece optimize et, paketleme yok)
 python cli.py full <proje_yolu> --platforms pc,mac # optimizasyon + paketleme tek adımda
 python cli.py slimfont <yazı_tipi> <metin...>      # bağımsız yazı tipi inceltme
 python cli.py slimapk <apk> --remap --gen-key      # APK inceltme (görseller WebP / sesler OGG + yeniden imzalama)
+python cli.py history --limit 20                   # görev geçmişini görüntüle (--clear temizler)
 ```
 
 > Yapay zekâ asistanları / otomasyon betikleri: çağırmadan önce mutlaka [AGENTS.md](../AGENTS.md) dosyasını okuyun (güvenlik kuralları ve hata giderme dahildir).
@@ -132,6 +152,9 @@ bu port doluyken sistem tarafından atanan boş bir porta otomatik geçer;
 | Mekanizma | Açıklama |
 |---|---|
 | Çalışma kopyası | Varsayılan olarak önce kopyaya işlem yapılır, asıl dosyaların tek baytına bile dokunulmaz |
+| Disk ön kontrolü | Çalışma kopyası kopyalanmadan, in_place zorunlu yedeği yazılmadan ve APK açılıp yeniden yazılmadan önce gereken alan hesaplanır (%10 pay dahil); alan yetmezse anlaşılır bir hata hemen verilir |
+| Platform doğrulaması | Paketlemeden önce platform listesinin boş olmadığı ve geçerli olduğu doğrulanır; başarısız olursa SDK aranmaz, çalışma klasörü oluşturulmaz ve optimizasyon çalıştırılmaz |
+| Salt okunur ön analiz | APK ön analizi yalnızca ZIP giriş tablosunu okur: arşiv açılmaz, çalışma klasörü oluşturulmaz, asıl paket değiştirilmez |
 | Zorunlu yedekleme | "Asıl dosyaları doğrudan değiştir" seçiliyse önce tam yedek arşivi oluşturulur (kayıtlar dahil) |
 | Küçülmediyse değiştirilmez | Her optimizasyon aracı önce geçici dosya yazar, boyutun gerçekten küçüldüğü doğrulanınca değiştirir |
 | Referans denetimi | Senaryolarda doğrudan referansı bulunamayan dosyalar yalnızca yerinde sıkıştırılır, adları asla değiştirilmez |
@@ -140,6 +163,8 @@ bu port doluyken sistem tarafından atanan boş bir porta otomatik geçer;
 | Gereksiz dosya temizliği yalnızca yeniden üretilebilirleri siler | Önbellek/günlük/bayt kodu; asıl dosyayı doğrudan değiştirme modunda kayıtları korumak için otomatik atlanır |
 | Görseller hurdaya çıkarılmaz | Ren'Py görselleri dosya adına göre otomatik yükler; referans bulunamaması kullanılmadığı anlamına gelmez |
 | Kötü niyetli girdi koruması | Paket dizinleri beyaz listeyle çözümlenir; arşiv giriş yolları temizlenir (zip-slip savunması) |
+| Güvenli açma/konumlandırma | Yalnızca bu makinenin mutlak yolları kabul edilir (UNC/ağ paylaşımları reddedilir); yalnızca Dosya Gezgini'nde açılır veya seçilir, dosyalar asla çalıştırılmaz |
+| Geçmiş gizliliği | Görev geçmişi yalnızca özeti ve çıktı yollarını saklar, tam günlüğü saklamaz; tek tıkla temizlenebilir |
 | Yalnızca yerel kullanım | Hizmet yalnızca 127.0.0.1'i dinler, istek kaynağını doğrular; dış ağdan erişim mümkün değildir |
 | Optimizasyon sonrası otomatik lint | Resmî statik denetim akışa gömülüdür, çıktı validation.txt olarak saklanır |
 | Değişiklik listesi | Her çalıştırmada changelog.json yazılır, her değişiklik kaydedilir |
@@ -165,8 +190,12 @@ bu port doluyken sistem tarafından atanan boş bir porta otomatik geçer;
 Kapsam: RPA paketi okuma/yazma (eski ve yeni iki biçim ile kötü niyetli paket
 engelleme dahil), referans yeniden yazma güvenliği, yazı tipi/görsel optimizasyonunun
 asıl dosyaları bozmaması, rpyc çözümleme, APK inceltme (motor koruması / imza kaldırma /
-x- önekli yol dönüşümü / anahtar üretimi), iptal ve çökme dökümleri, güvenli varsayılanlar,
-denetim düzeltmelerinin gerileme testleri, arka uç yerel koruması ve arayüzün sekiz dil
+x- önekli yol dönüşümü / anahtar üretimi), APK salt okunur ön analizi, görev geçmişi
+(kalp atışı / süreç canlılık denetimi / budama / bozuk kayıt toleransı), paketleme
+platformlarının ön doğrulaması, disk alanı ön kontrolü, yapılandırılmış günlük code/params,
+iptal ve çökme dökümleri, güvenli varsayılanlar, denetim düzeltmelerinin gerileme testleri,
+arka uç yerel koruması ve güvenlik eylemleri, ön uç üçlüsünün sözdizimi (Node kuruluysa
+`node --check` çalıştırılır, kurulu değilse otomatik atlanır), arayüzün sekiz dil
 sözlük bütünlüğü, ayrıca bağımlılık listesiyle dondurulmuş listenin birbirleriyle tutarlılığı (requirements.txt ve lock: alt sınırlar şaşmaz, lock sürümleri tam pinler, bilinen CVE'li sürümlere geri düşülmez). Test sayısı burada bilerek sabit tutulmaz — esas alınan,
 `python -m pytest tests -q` komutunun topladığı sonuçtur.
 

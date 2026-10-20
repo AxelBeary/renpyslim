@@ -18,8 +18,11 @@ O RenPySlim ajuda desenvolvedores de jogos Ren'Py a deixar suas obras **menores,
 - **Compressão** — redução completa de imagens, áudio, vídeo e fontes, reescrevendo automaticamente as referências nos scripts;
   o padrão prioriza a qualidade (q95, quase sem perdas), e a otimização em paralelo aproveita todos os núcleos do processador
 - **Empacotamento** — usa o SDK oficial para gerar pacotes de lançamento para PC / Mac / Android
+- **Apenas otimizar, sem empacotar** — quando você só quer reduzir o tamanho por enquanto e não gerar instalador, pule o empacotamento pelo SDK; dá para empacotar depois, quando quiser
 - **Redução de obra pronta** — reduz com segurança um jogo já empacotado (pasta ou zip/7z/rar), entra e sai direto
 - **Redução de APK** — o pacote Android também pode ser reduzido: imagens viram WebP, áudio vira OGG (remapeamento em tempo de execução, sem alterar as referências), com reassinatura automática
+- **Pré-análise de APK** — escolha o pacote e receba um check-up somente leitura: quantos recursos podem ser otimizados, duas estimativas de economia (nível padrão e redução máxima),
+  situação da assinatura e reconhecimento da estrutura Ren'Py; veja o relatório antes de decidir como executar, sem alterar um único byte do pacote original
 - **Desbloqueio por descompilação** (experimental) — para obras sem código-fonte, o unrpyc embutido recupera os scripts;
   imagens/áudio dentro dos pacotes também podem ser convertidos de formato e, depois, empacotados de volta nos pacotes RPA exatamente como antes
 
@@ -57,6 +60,10 @@ Quatro portas de entrada: **Super Empacotador / Redução de Obra Pronta / Redu�
 3. Clique em "Iniciar execução" → acompanhe a barra de progresso e os logs em tempo real
 4. Ao final, receba o resultado otimizado / os pacotes oficiais de lançamento
 
+Na página de APK também é possível clicar em "Escanear e analisar" primeiro: a tabela de entradas somente
+leitura mostra os recursos otimizáveis e as duas estimativas de economia; só depois de confirmar você inicia
+a execução. A análise em si não descompacta nem altera o pacote original.
+
 ### Operações práticas
 
 - **Arraste um zip / 7z / rar / APK / pasta direto para o ícone da ferramenta**: o caminho é preenchido automaticamente e abre a função correspondente
@@ -66,13 +73,15 @@ Quatro portas de entrada: **Super Empacotador / Redução de Obra Pronta / Redu�
 ### As quatro portas de entrada
 
 - **Super Empacotador**: aponte para a pasta do projeto; após a otimização, o SDK oficial é chamado para empacotar (PC/Mac/Android);
-  é possível marcar "Empacotar recursos dentro de um pacote RPA" (canal oficial)
+  é possível marcar "Empacotar recursos dentro de um pacote RPA" (canal oficial); também é possível marcar "Apenas otimizar, sem empacotar"
+  para apenas reduzir o tamanho, sem gerar instalador (não precisa do SDK) — quando quiser empacotar, basta desmarcar e executar de novo
 - **Redução de Obra Pronta**: aponte para a pasta da obra pronta ou simplesmente entregue um arquivo zip / 7z / rar (descompactação automática,
   redução e reempacotamento automático para entrega, com suporte a arquivos protegidos por senha); pacotes RPA encontrados são abertos, otimizados e reconstruídos automaticamente;
   se dentro do arquivo compactado houver um APK, ele é transferido automaticamente para a redução segura de APK; a opção experimental
   "Descompilar scripts para desbloquear conversão de formato", nas opções avançadas, permite que até obras sem código-fonte aproveitem a conversão de formato
 - **Redução de APK**: escolha um arquivo .apk e resolva em três passos (nível / interruptor de redução máxima / assinatura entre três opções,
-  com geração automática de uma nova chave por padrão), gerando um pacote reduzido pronto para instalar
+  com geração automática de uma nova chave por padrão), gerando um pacote reduzido pronto para instalar; antes de iniciar, você pode
+  clicar em "Escanear e analisar" para ver o relatório
 - **Redução de Fonte** (ferramenta independente): não precisa de um projeto de jogo — basta escolher a fonte + a origem do texto para reduzir;
   coleções ttc/otc são separadas automaticamente e geradas por peso de fonte; nunca sobrescreve o original e inclui a lista de caracteres usados
 
@@ -89,6 +98,16 @@ efetivo de cada fonte, para que jogos que misturam fontes por idioma não sejam 
 ### Garantias durante a execução
 
 - Durante a execução você pode clicar em "Parar tarefa" a qualquer momento (o que já foi concluído é mantido); se a tarefa falhar, um despejo de erro é salvo automaticamente
+- **Histórico de tarefas**: tarefas da interface e da CLI são gravadas em disco (no máximo 50, e a página de configurações lista 20 por padrão);
+  depois de reiniciar a ferramenta ainda dá para consultar o que foi feito, se deu certo e onde estão os artefatos; comandos de consulta como `env` / `history`
+  não são registrados. Apenas o resumo é guardado, nunca o log completo — e o resumo pode conter caminhos desta máquina,
+  então confira antes de compartilhar capturas de tela ou arquivos
+- **Ações no resultado e exportação**: na área de resultados dá para abrir a pasta de saída, localizar o arquivo no Explorador de Arquivos e copiar o caminho;
+  o relatório de análise pode ser exportado em JSON / CSV (a exportação usa os dados completos, sem o limite de 300 linhas da tabela;
+  acima disso a tabela avisa claramente que os dados foram "truncados")
+- **Confirmação de operações perigosas**: ao marcar "Modificar os arquivos originais diretamente", uma caixa de confirmação aparece antes de enviar (com o foco em cancelar por padrão)
+- **Acessibilidade**: navegação com botões nativos, rótulos e avisos de estado aria, foco de teclado visível,
+  respeito à configuração do sistema de "reduzir animações"; no tema claro, o contraste do texto foi escurecido conforme critérios de legibilidade
 - Quando houver versão nova, a interface avisa (comparando com o GitHub Releases)
 - Se faltarem FFmpeg / 7-Zip, a interface mostra o método exato de instalação (comando winget ou endereço para download)
 - Para sair: clique com o botão direito no ícone da bandeja (canto inferior direito) → Sair da ferramenta, ou use o botão "Sair da ferramenta" no canto inferior esquerdo da barra lateral
@@ -98,11 +117,12 @@ efetivo de cada fonte, para que jogos que misturam fontes por idioma não sejam 
 
 ```
 python cli.py env                                  # checagem do ambiente
-python cli.py analyze <caminho> --mode project     # análise
-python cli.py optimize <caminho> --preset balanced # otimização
+python cli.py analyze <caminho ou .apk>            # análise (.apk entra na pré-análise somente leitura)
+python cli.py optimize <caminho> --preset balanced # otimização (modo projeto = só otimizar, sem empacotar)
 python cli.py full <projeto> --platforms pc,mac    # otimização + empacotamento
 python cli.py slimfont <fonte> <textos...>         # redução de fonte independente
 python cli.py slimapk <apk> --remap --gen-key      # redução de APK (imagens WebP / áudio OGG + reassinatura)
+python cli.py history --limit 20                   # ver o histórico de tarefas (--clear limpa)
 ```
 
 > Assistentes de IA / scripts de automação: leia primeiro o [AGENTS.md](../AGENTS.md) (inclui regras de segurança e solução de erros).
@@ -124,6 +144,9 @@ usa automaticamente uma porta livre atribuída pelo sistema. Use a variável de 
 | Mecanismo | Descrição |
 |---|---|
 | Cópia de trabalho | Por padrão copia para uma cópia antes de mexer; nem um byte do original é alterado |
+| Pré-checagem de disco | Antes de copiar a cópia de trabalho, gravar o backup forçado e descompactar/regravar o APK, o espaço necessário é calculado (com 10% de folga); se faltar, o erro já vem em linguagem clara |
+| Validação de plataformas | Antes de empacotar, a lista de plataformas é validada como não vazia e válida; se falhar, o SDK nem é procurado, o diretório de trabalho não é criado e a otimização não roda |
+| Pré-análise somente leitura | A pré-análise de APK lê apenas a tabela de entradas do ZIP: não descompacta, não cria diretório de trabalho e não altera o pacote original |
 | Backup obrigatório | Ao marcar "Modificar os arquivos originais diretamente", primeiro é gerado um arquivo de backup completo (incluindo os saves) |
 | Sem redução, sem substituição | Cada otimizador grava primeiro em arquivo temporário e só substitui quando o tamanho realmente diminui |
 | Bloqueio por referência | Recursos sem referência literal nos scripts são comprimidos no lugar, nunca renomeados |
@@ -132,6 +155,8 @@ usa automaticamente uma porta livre atribuída pelo sistema. Use a variável de 
 | Limpeza de lixo só exclui itens regeneráveis | Cache/logs/bytecode; no modo de modificar os originais diretamente, são ignorados automaticamente para proteger os saves |
 | Imagens nunca são condenadas | O Ren'Py carrega imagens automaticamente pelo nome do arquivo; não achar a referência não significa que não é usada |
 | Proteção contra entrada maliciosa | Desserialização com lista branca dos índices de pacotes; higienização dos caminhos das entradas de arquivos compactados (defesa contra zip-slip) |
+| Abertura/localização segura | Só aceita caminhos absolutos desta máquina (recusa UNC/compartilhamentos de rede); abre ou seleciona apenas no Explorador de Arquivos, nunca executa arquivos |
+| Privacidade do histórico | O histórico de tarefas guarda apenas o resumo e os caminhos dos artefatos, não o log completo, e pode ser limpo com um clique |
 | Somente local | O serviço escuta apenas em 127.0.0.1 e verifica a origem das requisições; inacessível pela internet |
 | Lint automático após a otimização | A verificação estática oficial faz parte do fluxo, com saída arquivada em validation.txt |
 | Lista de alterações | Cada execução gera o changelog.json, registrando todas as modificações |
@@ -155,8 +180,11 @@ usa automaticamente uma porta livre atribuída pelo sistema. Use a variável de 
 
 Cobre leitura/escrita de pacotes RPA (incluindo os dois formatos, antigo e novo, e bloqueio de pacotes maliciosos), segurança da reescrita de referências,
 otimização de fontes/imagens sem corromper os arquivos originais, análise de rpyc, redução de APK (proteção do motor / remoção de assinatura /
-conversão de caminhos com prefixo x- / geração de chaves), cancelamento e despejos de erro, padrões seguros, regressões de correções de auditoria,
-proteção local do backend e integridade dos dicionários dos oito idiomas, além da consistência entre a lista de dependências e a lista congelada (requirements.txt e lock: os limites mínimos não se descolam, o lock fixa versões exatas e não se pode regredir para versões com CVE conhecidas). O número de
+conversão de caminhos com prefixo x- / geração de chaves), pré-análise somente leitura de APK, histórico de tarefas (batimento cardíaco / detecção de
+processo vivo / poda / tolerância a registros corrompidos), validação prévia das plataformas de empacotamento, pré-checagem de espaço em disco,
+logs estruturados code/params, cancelamento e despejos de erro, padrões seguros, regressões de correções de auditoria, proteção local do backend e
+ações de segurança, sintaxe do trio de front-end (executa `node --check` quando o Node está instalado e pula quando não está),
+integridade dos dicionários de interface nos oito idiomas, além da consistência entre a lista de dependências e a lista congelada (requirements.txt e lock: os limites mínimos não se descolam, o lock fixa versões exatas e não se pode regredir para versões com CVE conhecidas). O número de
 testes não é fixado aqui de propósito — o que vale é o resultado da coleta de
 `python -m pytest tests -q`.
 
