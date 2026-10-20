@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: 版本 / Version
-      description: 界面左下角或右上角的版本号，如 v0.16.2
+      description: 界面左下角或右上角的版本号，如 v0.17.0
     validations:
       required: true
   - type: dropdown

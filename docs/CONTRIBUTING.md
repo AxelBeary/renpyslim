@@ -18,13 +18,14 @@ python main.py            # 启动图形界面（开发模式）
 
 ## 动手之前 / Before you code
 
-1. 先读 [docs/ARCHITECTURE.md](ARCHITECTURE.md)——里面有 9 条
-   **安全红线**（工作副本、没变小不替换、引用门控、引擎目录保护等），
+1. 先读 [docs/ARCHITECTURE.md](ARCHITECTURE.md)——里面有**安全红线**
+   （工作副本、没变小不替换、引用门控、引擎目录保护、磁盘预检等），
    任何改动不得违反。
 2. 新需求先落进 [docs/BACKLOG.md](BACKLOG.md) 再动代码。
-3. 界面改动遵守 [web/static/index.html](../web/static/index.html) 的
-   单文件零依赖架构：不引外部 CSS/JS、不加载网络资源；新增文案必须
-   八语齐全（I18N 的 zh/en/ru/es/pt/tr/de/fr 字典，缺一会被测试拦下）。
+3. 界面改动遵守 [web/static](../web/static) 的零构建三件套：
+   `index.html`（结构）/ `styles.css`（样式）/ `i18n.js`（八语字典与日志句式）/
+   `app.js`（业务逻辑）。不引外部 CSS/JS、不加载网络资源、不引入打包器；
+   新增文案必须八语齐全（I18N 的 zh/en/ru/es/pt/tr/de/fr 字典，缺一会被测试拦下）。
 
 ## 依赖更新 / Dependency updates
 
@@ -52,23 +53,30 @@ Dependabot 看不见（它只评估实际解析出的版本）。分工：
 ## 提交要求 / PR checklist
 
 - [ ] `python -m pytest tests -q` 全绿（测试数量以收集结果为准，不在文档写死），新功能须补回归测试
+- [ ] 新增 API：用 fastapi `TestClient` 并以 127.0.0.1 作为 base_url 过本地防护；
+      涉及任务历史的测试用 `RENPYSLIM_HOME` 夹具隔离，绝不写用户真实 `~/.renpyslim`
+- [ ] 新增 CLI 命令/参数：补 stdout JSON 契约测试（成功 `ok: true`；
+      参数错误同样是 `ok: false` JSON + 退出码 1）
+- [ ] 新增进度日志：给 `p.emit` 补稳定 snake_case `code` 与 `params`，
+      同步 `tests/test_log_codes.py` 的核心清单；前端翻译层未覆盖时允许回退原文
 - [ ] 动过依赖（requirements*.txt）：按上面「依赖更新」四步走完，lock 与清单同步提交
 - [ ] 涉及文件读写的新代码：路径来自压缩包/封包条目时必须过 `utils.safe_join`
-- [ ] 破坏性操作：先备份/副本、可反悔、产出修改清单
-- [ ] 界面改动：中/英 × 亮/暗四组合自查
+- [ ] 破坏性操作：先备份/副本、可反悔、产出修改清单；空间预检不许绕过
+- [ ] 界面改动：中/英 × 亮/暗四组合自查；装了 Node 时跑
+      `node --check web/static/i18n.js` 与 `node --check web/static/app.js`（未装可跳过）
 - [ ] 提交信息风格参照现有历史（`feat(模块): 摘要; N tests green`）
 
 ## 翻译指南 / Translation guide
 
 想添加新语言（比如 ja/ko），四步：
 
-1. **界面字典**：在 [web/static/index.html](../web/static/index.html) 的 `I18N`
+1. **界面字典**：在 [web/static/i18n.js](../web/static/i18n.js) 的 `I18N`
    里新增一本字典（照 zh 的键集逐键翻译；`tests/test_i18n.py` 会强制
    八本字典键集一致，缺键立刻红）。
 2. **登记语言**：同文件的 `LANGS` 注册表加一行（语言选择器选项由它生成），
    并把新语言码加进 `tests/test_i18n.py` 的 `LANGS` 常量。
-3. **日志模板**：`LOG_PATTERNS` 里每条模式补该语言的模板
-   （缺省会回退英文，不影响运行）。
+3. **日志模板**：`i18n.js` 的 `LOG_PATTERNS` 里每条模式补该语言的模板
+   （缺省会回退英文/原文，不影响运行）；新增结构化日志 code 时同步前端翻译层。
 4. **文档**：新增 `docs/README.<语言码>.md`（参照 docs/README.en.md 结构），并把
    各 README 顶部的语言行与 README.md 的「多语言支持」表格补上新条目。
 

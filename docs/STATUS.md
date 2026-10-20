@@ -1,16 +1,76 @@
-# RenPySlim 交接状态（截至 2026-10-13 v0.16.2 发版日）
+# RenPySlim 交接状态（截至 2026-10-21 v0.17.0 功能批次收口）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.16.2（依赖治理发版：下限抬到实测通过版 + 冻结清单 + 停版本 bump PR；v0.10.0 起 AGPL-3.0）
+## 当前版本：v0.17.0（功能批次：APK 预分析、只优化不打包、任务历史、结果动作/导出、磁盘预检、结构化日志；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.16.2（自更新检查靶子，
-附 exe；发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
-v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.16.2（最近一个已发布版本，
+自更新检查靶子，附 exe；发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
+v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。v0.17.0 本次只做代码与
+文档收口，**未打 tag、未发 Release**。
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
 含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
+
+## 2026-10-21 v0.17.0 功能批次（用户拍板“值得加入的全部加入”）
+
+用户愿景：RenPySlim 要同时服务两种人——**开发者在发布前会用**（优化 + 打包一条龙），
+**普通用户自己也会用**（拖入成品/APK 就能瘦身）；CLI 与 GUI 两条能力面都要做完整，
+新增能力必须两头都有入口、口径一致。
+
+已交付：
+
+1. **工程“只优化不打包”**：CLI `optimize` 的工程模式即此用途（不需要 SDK）；
+   GUI 项目页 `opt_only` 走 `/api/optimize`，勾选后平台区置灰（本次不打包、不要求
+   SDK），平台清单也不参与提交。
+2. **APK 只读预分析**：CLI `analyze <apk>` 自动识别（或 `--mode apk`），Web
+   `/api/analyze` 按后缀路由；`report.mode=apk`，顶层 `apk` 给出 apk_size /
+   total_entries / optimizable / size / script_count / signed / est_saving /
+   est_saving_remap / remap_gain / has_renpy_layout；只读 ZIP 条目表，不解包、
+   不建工作目录、不改原包。GUI APK 页新增“扫描分析”卡。
+3. **任务历史**：`rtools/jobstore.py` 落盘 `~/.renpyslim/jobs.json`
+   （`RENPYSLIM_HOME` 可改目录），最多 50 条、默认列 20 条；界面任务自动写入，
+   CLI 的 `history` 读取/清空同一份记录（CLI 执行的命令本身不自动入史）。
+   心跳（超过 180 秒判陈旧）+ 进程判活识别遗留任务；CLI 新增
+   `history [--limit 1..50] [--clear]`，Web `/api/history` GET/DELETE，
+   设置页任务历史卡。
+4. **结果动作与导出**：结果区/报告区可打开输出目录、在资源管理器中定位文件、
+   复制路径；`/api/reveal` 只接受绝对存在的本机路径，拒绝 UNC/网络共享，只用
+   资源管理器打开或选中，绝不执行文件。分析报告可导出 JSON/CSV（全量，不受表格
+   300 行截断影响），APK 预分析同样可导出。
+5. **平台与安全校验**：`packager.validate_platforms` 是 CLI/Web 唯一口径，空/未知
+   平台在查 SDK、建工作目录、跑优化之前报错；`in_place` 提交前弹危险确认框。
+6. **磁盘预检**：`backup.ensure_free_space` 覆盖工作副本复制、in_place 强制备份、
+   APK 解包/回写（另加 10% 余量），不足时直接给人话错误；读不到磁盘信息只告警
+   不阻断。
+7. **前端三件套**：`index.html` / `styles.css` / `i18n.js` / `app.js` 零构建拆分；
+   报告 300 行截断提示、结果动作、APK 预分析卡、任务历史卡、危险确认弹窗；
+   可访问性（原生按钮 + aria、焦点可见、减少动态效果、亮色主题对比度修正）。
+8. **结构化日志**：`Progress.emit` 与 Web 任务日志带 `code` + `params`（稳定
+   snake_case）；Web 日志按结构化 code 做八语翻译，未覆盖项回退原文/旧句式。
+
+验收：`python -m pytest tests -q` 全绿——本机最近实测 321 passed / 2 skipped
+（2026-10-21；数量以 pytest 实际收集为准）；`ruff check --select F,E9 ...` 全绿；
+`python -m pip check` 无冲突；前端三件套在装 Node 的环境跑 `node --check` 通过
+（无 Node 时测试自动跳过）。
+
+安全语义（与实现一致）：
+
+- APK 预分析只读条目表，不解包、不建工作目录、不改原包；CLI 对非 APK 路径传
+  `--mode apk` 直接失败。
+- `optimize` 工程模式只优化不打包；`full` / `package` 平台空或未知在动手前失败。
+- `/api/reveal` 只接受绝对存在的本机路径，拒绝 UNC/网络共享；目录用 explorer
+  打开，文件用 `/select,` 定位，绝不执行文件。
+- 任务历史只记摘要（任务类型/状态/时间/标题/少量结果字段与产物路径），不记完整
+  日志；摘要可能含本机路径，对外分享前需自行检查。
+- 工作副本/备份/APK 解包回写前有磁盘预检，空间不足不动手。
+
+已知边界：
+
+- 警告与未被翻译层覆盖的日志仍可能显示中文原文；八语翻译层按 code 增量覆盖。
+- 运行态任务表（JOBS）仍在内存，重启后只能查历史摘要；要做断点续跑需另立工包。
+- 视频 / AV1 / PNG 量化 / 重映射 / 反编译等实验项默认关闭，行为未变。
 
 ## 2026-10-13 v0.16.2 依赖警报治本（用户拍板：该升级升级，尽可能治本）
 

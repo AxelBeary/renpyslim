@@ -38,19 +38,29 @@ python cli.py env [--sdk SDK路径]
 | 命令 | 用途 | 示例 |
 |---|---|---|
 | `env` | 环境体检 | `python cli.py env` |
-| `analyze` | 只读分析，出报告 | `python cli.py analyze <路径> --mode project` |
+| `analyze` | 只读分析，出报告（.apk 自动预分析） | `python cli.py analyze <路径或.apk>` |
 | `optimize` | 瘦身优化 | `python cli.py optimize <路径> --preset balanced` |
 | `full` | 优化 + SDK 打包一条龙 | `python cli.py full <工程路径> --platforms pc,mac` |
 | `package` | 只打包（需 SDK） | `python cli.py package <工程路径> --platforms pc` |
 | `slimapk` | APK 瘦身 + 重签名 | `python cli.py slimapk <apk> --remap --gen-key` |
 | `slimfont` | 独立字体瘦身 | `python cli.py slimfont <字体> <文本来源...>` |
+| `history` | 查看 / 清空本机任务历史 | `python cli.py history --limit 20` |
 
 要点：
 
 - `--mode` 可省略：有 `game/*.rpy` 源码自动判 `project`，否则 `dist`（成品）。
-  `--mode` 仅 `analyze` / `optimize` 有；`full` 无此参数（工程专用，不吃压缩包）。
+  `--mode` 仅 `analyze` / `optimize` 有；`analyze` 额外接受 `apk`；`full` 无此参数
+  （工程专用，不吃压缩包）。`optimize --mode project` 的含义是**只优化、不打包**
+  （不需要 SDK）；要打包请用 `full` 或 `package`。
+- `analyze` 自动识别 `.apk`（也可显式 `--mode apk`）：只读预分析，只读 ZIP 条目表，
+  不解包、不建工作目录、不改原包。结果的 `report.mode` 为 `apk`，顶层另有 `apk`
+  汇总：`apk_size` / `total_entries` / `optimizable` / `size` / `script_count` /
+  `signed` / `est_saving` / `est_saving_remap` / `remap_gain` / `has_renpy_layout`。
+  对非 APK 路径传 `--mode apk` 会直接失败。
 - 直接输入 zip/7z/RAR 压缩包也可以（成品瘦身直进直出）；压缩包一律按成品（`dist`）处理，
   显式传 `--mode project` 会打警告但仍走 `dist`。有密码就加 `--password`。
+- `--platforms` 非空校验：`full` / `package` 的平台列表为空或含未知平台时，在查找 SDK、
+  建工作目录、跑优化之前就报错（合法值：`pc` / `win` / `linux` / `mac` / `android`）。
 - `--preset` 三档：`conservative`（默认，画质优先）/ `balanced`（均衡）/ `aggressive`（体积优先）。
 - 字体瘦身按“多语言大包”口径自动优化（无需参数）：文本按翻译语言分桶，
   行内标签字体精确到实际显示过的字；只被部分语言引用的字体收窄到它服务的语言；
@@ -63,6 +73,21 @@ python cli.py env [--sdk SDK路径]
   （报告 analysis.json、改动清单 changelog.json、校验 validation.txt、成品包）。
   可用 `--work-root` / `--output` 改位置（仅适用于 `optimize` / `full`；
   `analyze` 不支持这两个参数）。
+- 磁盘空间预检：复制工作副本、写 in_place 强制备份、APK 解包/回写之前都会先算所需
+  空间（另加 10% 余量），不足时直接给出“需要多少 / 可用多少 / 怎么办”的错误，
+  不会跑到一半写满磁盘；读不到磁盘信息时不阻断，只记警告。`optimize` / `full`
+  可用 `--work-root` / `--output` 把工作目录指到空间充足的磁盘；`analyze` /
+  `slimapk` 没有这两个参数，请清理空间或换目标盘。
+- 任务历史：图形界面（Web）跑过的任务会记到 `~/.renpyslim/jobs.json`
+  （可用环境变量 `RENPYSLIM_HOME` 改目录），最多保留 50 条，`history` 默认列
+  最近 20 条。`python cli.py history [--limit 1..50] [--clear]` 读取/清空同一份
+  记录；CLI 执行的命令本身不自动写入历史。只记摘要（任务类型、状态、时间、标题、
+  少量结果字段与产物路径），**不记完整日志**；但摘要里可能含本机路径，把文件/截图
+  发给他人前请自行检查。运行态靠心跳（超过 180 秒未刷新判陈旧）+ 进程判活，
+  工具异常退出后遗留的任务会显示为“中断”。
+- 结构化日志：Web 任务日志条目除 `stage` / `message` 外，还带可选的 `code`（稳定
+  snake_case 键）与 `params`（数值/名称等上下文）；前端按 code 做八语翻译，未覆盖的
+  code 或警告回退原文/旧句式。CLI 的 stdout 结果 JSON 契约不变，stderr 仍是人话中文日志。
 
 ## Agent 必须遵守的安全规则
 
@@ -98,6 +123,7 @@ python cli.py env [--sdk SDK路径]
 | `找不到 Ren'Py SDK` | 用 `--sdk` 指定 SDK 目录，或先 `env` 体检 |
 | 压缩包解不开 | 确认是否需要 `--password`；RAR 需要系统装有 unrar 类工具时看报错提示 |
 | 音频没变小 | 检查 FFmpeg 是否在 PATH（`env` 可见） |
+| `磁盘空间不足` 报错 | 预检已给出所需/可用空间；清理目标磁盘，或用 `--work-root` / `--output` 指到空间充足的磁盘后重试（仅 `optimize` / `full` 支持这两个参数；`analyze` / `slimapk` 请清理空间或换盘） |
 | JSON 里中文乱码 | 是终端编码问题，不是工具问题；stdout 本身是 UTF-8 |
 | `test_deps_lock` 报红 | 冻结清单 requirements-lock.txt 与两份清单脱节、或版本跌回已知有洞的版本；先把依赖升到实测通过版再按该文件头部口径重生成 lock |
 | `意外错误` 开头的失败 JSON | 完整堆栈已自动落盘转储（家目录 `.renpyslim/crashes/`，stderr 的 `[crash]` 行与 error 文案会给出转储文件路径），读那个文件定位 |
@@ -145,21 +171,36 @@ python cli.py env [--sdk PATH_TO_SDK]
 | Command | Purpose | Example |
 |---|---|---|
 | `env` | Environment check | `python cli.py env` |
-| `analyze` | Read-only analysis report | `python cli.py analyze <path> --mode project` |
+| `analyze` | Read-only analysis report (.apk auto pre-analysis) | `python cli.py analyze <path or .apk>` |
 | `optimize` | Slim/optimize assets | `python cli.py optimize <path> --preset balanced` |
 | `full` | Optimize + SDK packaging | `python cli.py full <project> --platforms pc,mac` |
 | `package` | Package only (needs SDK) | `python cli.py package <project> --platforms pc` |
 | `slimapk` | APK slim + re-sign | `python cli.py slimapk <apk> --remap --gen-key` |
 | `slimfont` | Standalone font subsetting | `python cli.py slimfont <font> <text sources...>` |
+| `history` | View / clear local task history | `python cli.py history --limit 20` |
 
 Notes:
 
 - `--mode` is optional: auto-detected as `project` when `game/*.rpy` sources
   exist, otherwise `dist` (built game). `--mode` exists only on `analyze` /
-  `optimize`; `full` has no such flag (project-only, no archive input).
+  `optimize`; `analyze` additionally accepts `apk`; `full` has no such flag
+  (project-only, no archive input). `optimize --mode project` means
+  **optimize only, no packaging** (no SDK needed); use `full` or `package`
+  when you want build output.
+- `analyze` auto-detects `.apk` (or pass `--mode apk` explicitly): read-only
+  pre-analysis that only reads the ZIP entry table — no unpacking, no work
+  directory, no changes to the original package. `report.mode` is `apk` and a
+  top-level `apk` summary carries `apk_size` / `total_entries` /
+  `optimizable` / `size` / `script_count` / `signed` / `est_saving` /
+  `est_saving_remap` / `remap_gain` / `has_renpy_layout`. Passing
+  `--mode apk` for a non-APK path fails immediately.
 - zip/7z/RAR archives are accepted directly and are always treated as a built
   game (`dist`); passing `--mode project` explicitly only triggers a warning
   while the run still uses `dist`. Add `--password` if protected.
+- `--platforms` is validated as non-empty: `full` / `package` fail before SDK
+  lookup, work-directory creation or optimization when the platform list is
+  empty or contains unknown names (valid: `pc` / `win` / `linux` / `mac` /
+  `android`).
 - Presets: `conservative` (default, quality-first) / `balanced` / `aggressive`.
 - Font slimming runs automatically in "multilingual bundle" mode (no flag needed):
   text is bucketed by translation language; inline-tag fonts keep exactly the characters
@@ -176,6 +217,28 @@ Notes:
   (analysis.json, changelog.json, validation.txt, final packages) next to the
   input; override with `--work-root` / `--output` (only `optimize` / `full`
   accept them; `analyze` does not).
+- Disk-space pre-check: before copying the working copy, writing the in_place
+  forced backup, and unpacking/rewriting an APK, the tool reserves the needed
+  space plus a 10% margin. If space is insufficient it fails with a human
+  message stating required vs available and what to do; if disk info cannot be
+  read it only logs a warning and continues. `optimize` / `full` accept
+  `--work-root` / `--output` to move work dirs to a roomier disk; `analyze` /
+  `slimapk` do not, so clean up space or switch the target drive instead.
+- Task history: tasks run in the web GUI are recorded in
+  `~/.renpyslim/jobs.json` (override the directory with the `RENPYSLIM_HOME`
+  environment variable), capped at 50 entries; `history` lists the latest 20
+  by default. `python cli.py history [--limit 1..50] [--clear]` reads/clears
+  the same store; commands run via the CLI are not written to history
+  automatically. Only summaries are kept (kind, status, timestamps, title, a
+  few result fields and artifact paths), **never full logs** — but summaries
+  can contain local paths, so review them before sharing files or screenshots.
+  Liveness uses heartbeats (stale after 180 seconds) plus process checks; tasks
+  left behind by a crashed tool are reported as "interrupted".
+- Structured logs: Web job log entries carry optional `code` (stable
+  snake_case key) and `params` (numbers/names) in addition to `stage` /
+  `message`. The frontend translates by code into the eight UI languages;
+  uncovered codes or warnings fall back to the original/legacy wording. The
+  CLI stdout JSON contract is unchanged; stderr remains human-readable Chinese.
 
 ## Safety rules for agents
 
@@ -219,6 +282,7 @@ commands mirror `.github/workflows/ci.yml` verbatim:
 | `找不到 Ren'Py SDK` | Pass `--sdk <dir>` or run `env` first |
 | Archive won't extract | Check whether `--password` is needed; for RAR, ensure an unrar-compatible tool is installed and follow the error prompt |
 | Audio unchanged | Ensure FFmpeg is on PATH (visible in `env`) |
+| `磁盘空间不足` / "not enough disk space" | The pre-check reports required vs available; clean that disk, or pass `--work-root` / `--output` pointing at a roomier disk and retry (only `optimize` / `full` accept them; for `analyze` / `slimapk`, clean up or switch drives) |
 | Garbled Chinese in JSON | Terminal encoding issue only; stdout is UTF-8 |
 | `test_deps_lock` failures | requirements-lock.txt drifted from the two manifests, or a version fell back to one with known CVEs; upgrade to verified versions, then regenerate the lock per its header recipe |
 | Failure JSON whose error starts with `意外错误` ("unexpected error") | The full stack trace is auto-dumped to `.renpyslim/crashes/` in the home directory; the `[crash]` stderr line and the error text name the dump file — open it to diagnose |

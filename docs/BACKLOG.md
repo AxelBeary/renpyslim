@@ -75,7 +75,8 @@
 - 新需求先落到本文件，注明状态，再动代码
 - 每批完成后把 📅 改为 ✅ 并补一行结果记录
 - 红线变更必须由用户拍板，拍板结论记录在"明确不做"或移回待办
-- 已知残余债：无（工程/成品全线并行；字体瘦身已于 2026-08-25 并行化）
+- 已知残余债：工程/成品全线并行与字体瘦身并行已清零；v0.17 批次遗留的
+  “运行态任务表仍内存”“日志翻译覆盖度”边界见第六节
 
 ## 五、维护研判存档（防下次重复研判）
 
@@ -86,3 +87,27 @@
 | D1 | 内嵌 unrpyc 从 v2.0.3 同步到上游 v2.0.4 | 上游 2.0.4 只做了两件事：把 corrupy 从内嵌子模块改成外部 PyPI 依赖 + 修 `un.rpyc` 构建路径的回归。本工具只程序化调用反编译内核、不用 un.rpyc 那条路径；同步的代价是新增运行时依赖 corrupy 并扩大 exe 体积。已查清后判为“价值低、代价真实”，不同步 | 💡 待评估（下次上游有反编译内核修正时一并抬） |
 | D2 | starlette TestClient 提示“用 httpx 已弃用，请装 httpx2” | 先实测再采纳：本机**卸掉 httpx、只留 httpx2** 后全量测试依旧绿，且仓里没有任何代码直接 `import httpx`（只有 starlette 的 TestClient 在用）——说明 httpx 已可直接汰。换后 StarletteDeprecationWarning 消失，测试仅余一条由用例故意造的 zipfile 重名告警 | ✅ v0.16.2 后续补债已修：dev 清单 httpx → httpx2（实测无 httpx 环境跑绿后才换） |
 | D3 | 要不要给 CI 加“按下限装最旧依赖”的第二路矩阵 | 能暴露“下限写了但从没测过”的问题，但本仓已把下限抬到实测通过版、又有 lock 冻结与 test_deps_lock 对账，收益下降；个人项目一台 windows runner 的开销不便宜 | 💡 待评估（出现“用户装不到可用依赖”的真实反馈再开） |
+
+## 六、2026-10-21 v0.17.0 全量功能批次（已完成）
+
+用户拍板“值得加入的全部加入”：项目要同时服务**开发者**（发布前优化 + 打包）与
+**普通用户**（拖入成品/APK 即可瘦身），CLI 与 GUI 两条能力面都要做完整；新增能力
+两头都要有入口、口径一致。本批次按“底层先合、前端后叠、最后统一验收”三波施工，
+每个工包独立 worktree、分支与文件所有权不重叠。
+
+| # | 能力 | CLI 口径 | GUI 口径 | 结果记录 | 状态 |
+|---|---|---|---|---|---|
+| G1 | 工程“只优化不打包” | `optimize` 工程模式即此用途（不需要 SDK）；`full` / `package` 空平台与未知平台在查 SDK、建目录、跑优化之前报错 | 项目页 `opt_only` 走 `/api/optimize`；平台全空前端拦一次、后端 `/api/package`、`/api/full` 再拦一次（400） | `packager.validate_platforms` 为 CLI/Web 唯一口径；`cli._validated_platforms` 前置调用；回归 test_cli_v017 / test_packager_platforms / test_web_v017 | ✅ |
+| G2 | 结果与报告动作 | 现有 JSON / 清单文件格式不变 | 结果区与报告区可打开输出目录、资源管理器定位文件、复制路径；分析报告导出 JSON / CSV（全量，不受表格 300 行截断影响）；超 300 行显示截断提示；APK 预分析同样可导出 | `/api/reveal` + `revealPath` / `copyPath` / `exportReport` / `reportToCSV`；导出遍历全量 `entries`，表格只渲染前 300 行；test_frontend_v017 锁住 | ✅ |
+| G3 | APK 只读预分析 | `analyze <apk>` 自动识别（或 `--mode apk`）；`report.mode=apk`，顶层 `apk` 含 apk_size / total_entries / optimizable / size / script_count / signed / est_saving / est_saving_remap / remap_gain / has_renpy_layout；非 APK 传 `--mode apk` 直接失败 | APK 页新增“扫描分析”卡，先看可优化资源与两套预计节省再开跑 | `apk.analyze_apk` 只读 ZIP 条目表，不解包、不建工作目录、不改原包；Web `/api/analyze` 按后缀路由；test_apk_analysis / test_cli_v017 / test_web_v017。数字是估算，实际节省以瘦身结果为准 | ✅ |
+| G4 | 危险操作与磁盘安全 | 复制工作副本、in_place 备份、APK 解包/回写前统一空间预检，不足抛人话错误 | `in_place` 执行前二次确认弹窗（默认焦点在取消） | `backup.ensure_free_space`（另加 10% 余量，读不到磁盘信息只告警）；`apk.slim_apk` 解包/写回前调用；`confirmDanger` 模态；test_backup_space / test_frontend_v017 | ✅ |
+| G5 | 任务历史持久化 | 新增 `history [--limit 1..50] [--clear]`（读取/清空界面任务记录；CLI 命令本身不自动入史） | 设置页任务历史卡（默认 20 条、刷新、清空、定位产物）；重启后可查已完成/中断任务 | `rtools/jobstore.py` 落盘 `~/.renpyslim/jobs.json`（`RENPYSLIM_HOME` 可改目录），最多 50 条；心跳 >180 秒判陈旧 + 进程判活改判 interrupted；Web `/api/history` GET/DELETE；test_jobstore / test_cli_history / test_web_v017 | ✅ |
+| G6 | 结构化日志翻译 | 保持人话中文日志；`Progress.emit` 宽签名回调兼容，旧两参回调行为不变 | Web 日志携带 `code` + `params`，前端按结构化 code 做八语翻译；未覆盖项回退原文/旧句式 | pipeline / apk / font_tool 核心 code 清单由 test_log_codes 锁定（snake_case、不跨模块/跨 stage 重复）；test_progress_events、test_web_v017 覆盖；**边界：警告与未被翻译层覆盖的日志仍可能显示中文原文** | ✅ |
+| G7 | 可访问性 | — | 导航改原生按钮 + `aria-current`、焦点可见、读屏标签与 `aria-live` 状态播报、尊重 reduced-motion、亮色主题对比度修正 | index.html / styles.css / app.js 落地；test_frontend_v017 校验关键 aria 钩子；styles.css 提供 `:focus-visible`、`prefers-reduced-motion` 与亮色对比度令牌 | ✅ |
+| G8 | 前端完成度 | — | 三件套拆分、首屏三步引导条、主区宽度放宽（max-width 1120px）、窄窗口侧边栏图标化、版本/i18n 文案细节统一 | index.html 只留结构与 `data-i18n`；styles.css 负责响应式与引导条；test_frontend_syntax 校验拆分引用与加载顺序 | ✅ |
+| G9 | 代码优雅度 | — | 前端拆成零构建 styles.css / i18n.js / app.js，不引入打包器 | 三件套拆分完成；`node --check` 通过（无 Node 时 test_frontend_syntax 自动跳过）；拆分后缺键/语法漂移有测试兜底 | ✅ |
+| G10 | 验收与文档 | 新命令进 AGENTS / README（中英同步） | 八语界面键齐全 | AGENTS 中英双节同步 `history` / APK 预分析 / 只优化 / 平台校验 / 磁盘预检 / 历史隐私 / 结构化日志；README、ARCHITECTURE、STATUS、CONTRIBUTING 收口；版本号 0.17.0；issue 模板版本示例同步。**边界：七份翻译 README 本轮不动**（中文事实源先行，翻译批次后续跟进） | ✅ |
+
+批次验收线：`python -m pytest tests -q` 全绿（数量以实际收集为准）；ruff F/E9 全绿；
+`python -m pip check` 无冲突；前端三件套 `node --check` 通过（无 Node 环境自动跳过）；
+文档中的命令、路径与参数逐条对照实现。
