@@ -136,6 +136,23 @@ def cmd_analyze(args) -> int:
     if not path.exists():
         return _fail(f"路径不存在：{args.path}")
 
+    # APK 自动识别：只读预分析，不解包、不生成工作目录、不改原包。
+    # 显式传 project/dist 时按“apk 优先”纠正并警告（与压缩包输入口径一致）。
+    if path.suffix.lower() == ".apk":
+        mode_arg = getattr(args, "mode", None)
+        if mode_arg in ("project", "dist"):
+            print(f"警告：{path.name} 是 APK，--mode {mode_arg} 不适用，"
+                  "已自动改用 apk 只读预分析。", file=sys.stderr, flush=True)
+        from rtools import apk
+        try:
+            result = apk.analyze_apk(str(path), progress=Progress(_log))
+        except apk.ApkError as e:
+            return _fail(str(e))
+        return _ok({"report": result["report"].to_dict(),
+                    "apk": result["apk"]})
+    elif getattr(args, "mode", None) == "apk":
+        return _fail(f"--mode apk 只适用于 .apk 文件：{args.path}")
+
     # 压缩包直接进：解压到临时目录，分析完清理
     cleanup_dir = None
     if archives.is_archive(str(path)):
@@ -255,11 +272,25 @@ def cmd_optimize(args) -> int:
     return _ok({"result": result})
 
 
+def _parse_platforms(value) -> list[str]:
+    """逗号分隔的平台参数 → 列表（空串得空列表，交给统一校验报错）。"""
+    return [p.strip() for p in (value or "").split(",") if p.strip()]
+
+
+def _validated_platforms(value) -> list[str]:
+    """平台校验（与 Web 同一口径）；非法时抛 ValueError 由调用方转 JSON。"""
+    return packager.validate_platforms(_parse_platforms(value))
+
+
 def cmd_package(args) -> int:
+    # 平台校验先于 SDK 查找与任何目录创建：空/未知平台直接 JSON 失败
+    try:
+        platforms = _validated_platforms(args.platforms)
+    except ValueError as e:
+        return _fail(str(e))
     sdk = packager.find_sdk(args.sdk)
     if not sdk:
         return _fail("找不到 Ren'Py SDK，请用 --sdk 指定 SDK 目录。")
-    platforms = [p.strip() for p in (args.platforms or "pc").split(",") if p.strip()]
     try:
         result = packager.package_project(sdk, args.path, platforms,
                                           args.destination, log=_log_wrapper,
@@ -280,6 +311,11 @@ def cmd_full(args) -> int:
     path = Path(args.path)
     if not (path / "game").is_dir():
         return _fail(f"{args.path} 不是有效的 Ren'Py 工程（缺少 game 目录）")
+    # 平台校验必须在优化开跑之前：非法平台不进入流水线、不建 _rtools_work
+    try:
+        platforms = _validated_platforms(args.platforms)
+    except ValueError as e:
+        return _fail(str(e))
     opts = _build_options(args)
     work_root = args.work_root or str(path.parent / "_rtools_work")
     output_dir = args.output or str(path.parent / "_rtools_output")
@@ -295,7 +331,6 @@ def cmd_full(args) -> int:
     sdk = packager.find_sdk(args.sdk)
     if not sdk:
         return _fail("优化完成，但找不到 Ren'Py SDK，无法打包。请用 --sdk 指定。")
-    platforms = [p.strip() for p in (args.platforms or "pc").split(",") if p.strip()]
     try:
         # 审核修复（中-32）：打包段以前完全无异常捕获，
         # PermissionError/OSError/TimeoutExpired 裸 traceback 退出，
@@ -376,9 +411,9 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_env)
 
     # 子解析器默认继承主解析器类（_JsonArgumentParser），无需逐个指定。
-    p = sub.add_parser("analyze", help="扫描分析资源")
+    p = sub.add_parser("analyze", help="扫描分析资源（.apk 自动走只读预分析）")
     p.add_argument("path")
-    p.add_argument("--mode", choices=["project", "dist"], default=None)
+    p.add_argument("--mode", choices=["project", "dist", "apk"], default=None)
     # 审核修复：--work-root 从未被 analyze 使用，死参数移除。
     p.add_argument("--password", default=None, help="压缩包密码（如有）")
     p.set_defaults(func=cmd_analyze)

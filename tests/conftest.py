@@ -12,6 +12,19 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
+@pytest.fixture(autouse=True)
+def isolated_renpyslim_home(tmp_path, monkeypatch):
+    """每个用例把 RENPYSLIM_HOME 指到自己的临时目录。
+
+    任务历史（jobstore）等按该环境变量决定落盘位置；不隔离的话
+    Web/CLI 测试会读写真实家目录 ~/.renpyslim，污染用户数据且互相串味。
+    取 tmp_path 本身（而不是子目录）：与测试里已有的临时 HOME 口径一致，
+    不会覆盖同名的其它夹具。
+    """
+    monkeypatch.setenv("RENPYSLIM_HOME", str(tmp_path))
+    return tmp_path
+
+
 def _build_minimal_ttf(path, chars):
     """用 fontTools 程序化生成含指定码位的最小 TrueType 字体。
 

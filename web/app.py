@@ -5,6 +5,8 @@
 from __future__ import annotations
 
 import logging
+import os
+import subprocess
 import threading
 import time
 import traceback
@@ -18,7 +20,8 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from rtools import analyzer, apk, archives, charset, font_tool, packager, pipeline, scanner
+from rtools import (analyzer, apk, archives, charset, font_tool, jobstore,
+                    packager, pipeline, scanner)
 from rtools.config import (CharsetOptions, OptimizeOptions, PRESETS,
                            DEFAULT_PRESET, default_options)
 from rtools.models import Progress
@@ -71,8 +74,55 @@ _QUEUE: deque[str] = deque()           # 排队任务编号，先进先出
 _QUEUE_LOCK = threading.Lock()
 _RUNNING = {"id": None}                # 当前正在跑的重任务编号
 
+# 任务历史心跳：jobstore 靠“心跳时间 + 进程判活”识别遗留任务，
+# 运行态默认 180 秒无心跳即判中断。服务端每 30 秒给所有 running/queued
+# 任务刷一次心跳；测试可改间隔，也可直接调 _heartbeat_once 不启线程。
+_HEARTBEAT_INTERVAL = 30.0
+_HEARTBEAT_LOCK = threading.Lock()
+_HEARTBEAT_STATE = {"thread": None}
 
-def _new_job(kind: str) -> str:
+
+def _heartbeat_once() -> list[str]:
+    """给 JOBS 中所有运行/排队任务刷一次心跳；返回被刷新的任务编号。
+
+    失败只记警告：历史心跳是旁路，绝不能影响任务本身。
+    """
+    with JOBS_LOCK:
+        ids = [job["id"] for job in JOBS.values()
+               if job["status"] in ("running", "queued")]
+    for job_id in ids:
+        try:
+            jobstore.heartbeat(job_id)
+        except Exception:
+            _LOG.warning("任务心跳写入失败（%s），不影响任务执行",
+                         job_id, exc_info=True)
+    return ids
+
+
+def _heartbeat_loop() -> None:
+    while True:
+        # 每轮重新读间隔，测试注入短间隔后无需重启线程
+        time.sleep(max(0.01, float(_HEARTBEAT_INTERVAL)))
+        try:
+            _heartbeat_once()
+        except Exception:
+            _LOG.warning("任务心跳循环异常，已跳过本轮", exc_info=True)
+
+
+def _ensure_heartbeat_thread() -> threading.Thread:
+    """单例后台心跳线程：首次建任务时启动，之后复用。"""
+    with _HEARTBEAT_LOCK:
+        thread = _HEARTBEAT_STATE["thread"]
+        if thread is None or not thread.is_alive():
+            thread = threading.Thread(target=_heartbeat_loop,
+                                      name="renpyslim-heartbeat", daemon=True)
+            _HEARTBEAT_STATE["thread"] = thread
+            thread.start()
+        return thread
+
+
+def _new_job(kind: str, title: str = "") -> str:
+    """创建内存任务并登记到磁盘历史；title 供“任务历史”列表展示。"""
     job_id = uuid.uuid4().hex[:8]
     with JOBS_LOCK:
         # 清理旧任务，防止长期运行时内存无限增长：
@@ -96,6 +146,13 @@ def _new_job(kind: str) -> str:
             "cancel": False,
             "created": time.time(),
         }
+    # 磁盘写入放在 JOBS_LOCK 外：历史登记失败不影响任务本身
+    try:
+        jobstore.record_start(job_id, kind, title=title, pid=os.getpid())
+    except Exception:
+        _LOG.warning("登记任务历史失败（%s %s），任务继续执行",
+                     kind, job_id, exc_info=True)
+    _ensure_heartbeat_thread()
     return job_id
 
 
@@ -105,12 +162,25 @@ def _job_cancelled(job_id: str) -> bool:
         return bool(job and job["cancel"])
 
 
-def _job_log(job_id: str, stage: str, message: str) -> None:
+def _job_log(job_id: str, stage: str, message: str,
+             code: Optional[str] = None,
+             params: Optional[dict] = None) -> None:
+    """记录一条任务日志；code/params 是给前端结构化翻译用的上下文。"""
+    entry = {"t": time.time(), "stage": stage, "message": message}
+    if code is not None:
+        entry["code"] = code
+    if params is not None:
+        entry["params"] = params
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if job:
-            job["logs"].append({"t": time.time(), "stage": stage,
-                                "message": message})
+            job["logs"].append(entry)
+
+
+def _job_progress(job_id: str) -> Progress:
+    """任务进度回调：宽签名，把 code/params 一并下发给前端。"""
+    return Progress(lambda s, m, code=None, params=None:
+                    _job_log(job_id, s, m, code, params))
 
 
 def _dispatch_job(job_id: str, fn) -> None:
@@ -217,6 +287,16 @@ def _run_in_thread(job_id: str, fn) -> None:
                                  "message": final["traceback"]})
                 if _RUNNING["id"] == job_id:
                     _RUNNING["id"] = None
+            # 历史收尾放在 JOBS/_QUEUE 锁外：写盘失败只记警告，
+            # 不影响任务终态与队列推进
+            try:
+                jobstore.record_finish(
+                    job_id, final["status"],
+                    summary=_history_summary(kind, final["result"]),
+                    error=final["error"])
+            except Exception:
+                _LOG.warning("写入任务历史失败（%s），不影响任务结果",
+                             job_id, exc_info=True)
             _notify_job_done(job_id)
 
     threading.Thread(target=wrapper, daemon=True).start()
@@ -256,6 +336,60 @@ def _clean_result(result: dict) -> dict:
         if k in result:
             result[k] = str(result[k])
     return result
+
+
+# 任务历史只留小字段：完整 report/changelog 可能几十 MB，绝不进历史。
+_HISTORY_FIELDS = ("mode", "saved_bytes", "working_dir", "archive_output",
+                   "output", "destination", "changelog", "charlist", "signed")
+_HISTORY_APK_FIELDS = ("apk_size", "optimizable", "est_saving",
+                       "est_saving_remap", "signed")
+
+
+def _absorb_history(summary: dict, data: dict) -> None:
+    """把一层结果里的摘要字段并进 summary（只收标量与小列表）。"""
+    for key in _HISTORY_FIELDS:
+        value = data.get(key)
+        if isinstance(value, Path):
+            value = str(value)
+        if isinstance(value, str):
+            # 只留路径/短文案；分析结果的 charlist 可能是超长字符集，不塞历史
+            if not value or len(value) > 512:
+                continue
+            summary[key] = value
+        elif isinstance(value, (bool, int, float)):
+            summary[key] = value
+    changes = data.get("changes")
+    if isinstance(changes, (list, tuple, set, frozenset)):
+        summary["changes"] = len(changes)
+    elif isinstance(changes, int) and not isinstance(changes, bool):
+        summary["changes"] = changes
+    built = data.get("built")
+    if isinstance(built, (list, tuple)):
+        summary["built"] = [str(item) for item in built]
+    errors = data.get("errors")
+    if isinstance(errors, (list, tuple)):
+        summary["errors"] = len(errors)
+
+
+def _history_summary(kind: str, result) -> dict:
+    """从任务结果提取可 JSON 序列化的历史摘要（失败/取消返回空 dict）。"""
+    del kind   # 目前所有任务共用同一套字段，保留参数便于将来分类型裁剪
+    if not isinstance(result, dict):
+        return {}
+    summary: dict = {}
+    _absorb_history(summary, result)
+    # full 的结果是 {"optimize": ..., "package": ...}，摊平后取摘要
+    for nested in ("optimize", "package"):
+        child = result.get(nested)
+        if isinstance(child, dict):
+            _absorb_history(summary, child)
+    apk_stats = result.get("apk")
+    if isinstance(apk_stats, dict):
+        for key in _HISTORY_APK_FIELDS:
+            value = apk_stats.get(key)
+            if isinstance(value, (bool, int, float)):
+                summary[key] = value
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -300,6 +434,11 @@ class FontSlimReq(BaseModel):
     charset: dict = {}
 
 
+class RevealReq(BaseModel):
+    path: str
+    reveal: bool = False    # True：在资源管理器里选中该文件；False：打开所在目录
+
+
 class SlimApkReq(BaseModel):
     path: str
     preset: str = DEFAULT_PRESET
@@ -338,8 +477,24 @@ def api_analyze(req: AnalyzeReq):
     if not path.exists():
         return JSONResponse({"ok": False, "error": f"路径不存在：{req.path}"})
 
+    # APK 走只读预分析：只读 ZIP 条目表，不解包、不建工作目录、不改原包
+    if path.suffix.lower() == ".apk":
+        job_id = _new_job("analyze", title=path.name)
+
+        def apk_task():
+            _job_log(job_id, "analyze",
+                     f"正在分析 APK（只读，不会修改原包）：{path.name}")
+            result = apk.analyze_apk(str(path),
+                                     progress=_job_progress(job_id))
+            return {"mode": "apk",
+                    "report": result["report"].to_dict(),
+                    "apk": result["apk"]}
+
+        _run_in_thread(job_id, apk_task)
+        return {"ok": True, "job": job_id}
+
     # 分析改后台任务跑：扫描大项目耗时不短，前端轮询实时进度
-    job_id = _new_job("analyze")
+    job_id = _new_job("analyze", title=path.name)
 
     def task():
         import shutil
@@ -449,8 +604,8 @@ def api_optimize(req: OptimizeReq):
     output_dir = req.output or str(path.parent / "_rtools_output")
     Path(work_root).mkdir(parents=True, exist_ok=True)
 
-    job_id = _new_job("optimize")
-    progress = Progress(lambda s, m: _job_log(job_id, s, m))
+    job_id = _new_job("optimize", title=path.name)
+    progress = _job_progress(job_id)
 
     def task():
         if mode == "project":
@@ -469,13 +624,27 @@ def api_optimize(req: OptimizeReq):
     return {"ok": True, "job": job_id}
 
 
+def _platform_error(platforms: list[str]) -> Optional[JSONResponse]:
+    """打包平台统一校验（与 CLI 同一口径）；合法返回 None。"""
+    try:
+        packager.validate_platforms(platforms)
+    except ValueError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
+    return None
+
+
 @app.post("/api/package")
 def api_package(req: PackageReq):
+    # 平台校验先于 SDK 查找与建任务：空/未知平台直接 400，不留任何作业
+    error = _platform_error(req.platforms)
+    if error is not None:
+        return error
     sdk = packager.find_sdk(req.sdk)
     if not sdk:
         return JSONResponse({"ok": False,
                              "error": "找不到 Ren'Py SDK，请在设置里指定 SDK 目录"})
-    job_id = _new_job("package")
+    path = Path(req.path)
+    job_id = _new_job("package", title=path.name)
 
     def task():
         return packager.package_project(sdk, req.path, req.platforms,
@@ -489,6 +658,10 @@ def api_package(req: PackageReq):
 
 @app.post("/api/full")
 def api_full(req: FullReq):
+    # 平台校验最先做：空/未知平台 400，不建工作目录、不查 SDK、不建任务
+    error = _platform_error(req.platforms)
+    if error is not None:
+        return error
     path = Path(req.path)
     if not (path / "game").is_dir():
         return JSONResponse({"ok": False,
@@ -502,8 +675,8 @@ def api_full(req: FullReq):
     output_dir = str(path.parent / "_rtools_output")
     Path(work_root).mkdir(parents=True, exist_ok=True)
 
-    job_id = _new_job("full")
-    progress = Progress(lambda s, m: _job_log(job_id, s, m))
+    job_id = _new_job("full", title=path.name)
+    progress = _job_progress(job_id)
 
     def task():
         opt = pipeline.run_project(str(path), opts, work_root, output_dir,
@@ -546,6 +719,7 @@ def api_job(job_id: str, since: int = 0):
 
 @app.post("/api/job/{job_id}/cancel")
 def api_job_cancel(job_id: str):
+    queued_error: Optional[str] = None
     with JOBS_LOCK:
         job = JOBS.get(job_id)
         if not job:
@@ -554,9 +728,29 @@ def api_job_cancel(job_id: str):
             # 还在排队：直接退队，调度器见到非 queued 状态会自动跳过
             job["status"] = "canceled"
             job["error"] = "用户已取消（任务尚未开始）。"
+            queued_error = job["error"]
         else:
             job["cancel"] = True
+    # 排队任务不会进 _run_in_thread，历史收尾要在这里补；
+    # 写盘放在 JOBS_LOCK 外，失败只记警告
+    if queued_error is not None:
+        try:
+            jobstore.record_finish(job_id, "canceled", error=queued_error)
+        except Exception:
+            _LOG.warning("写入排队取消记录失败（%s）", job_id, exc_info=True)
     return {"ok": True}
+
+
+@app.get("/api/history")
+def api_history(limit: int = jobstore.DEFAULT_LIMIT):
+    """跨重启的任务历史（磁盘）。运行态靠心跳与进程判活识别中断。"""
+    return {"ok": True, "jobs": jobstore.list_jobs(limit=limit)}
+
+
+@app.delete("/api/history")
+def api_history_clear():
+    """清空本机任务历史，返回清掉的条数。"""
+    return {"ok": True, "cleared": jobstore.clear()}
 
 
 @app.get("/api/update")
@@ -649,6 +843,54 @@ def _browse_open_dialog(kind: str) -> str:
     return p or ""
 
 
+def _is_network_path(p: Path, raw: str) -> bool:
+    """UNC / 网络路径判定：\\\\server\\share、//server/share 一律拒绝。
+
+    只允许本机盘符路径（如 E:\\games\\foo）；设备命名空间（\\\\?\\）
+    也因以 \\\\ 开头被拒。绝不把网络资源交给资源管理器。
+    """
+    if raw.startswith("\\\\") or raw.startswith("//"):
+        return True
+    drive = str(p.drive or "")
+    return drive.startswith("\\\\") or drive.startswith("//")
+
+
+@app.post("/api/reveal")
+def api_reveal(req: RevealReq):
+    """在资源管理器里打开目录 / 定位文件。
+
+    安全语义：只接受“绝对 + 存在”的本机路径；网络/UNC 路径拒绝；
+    只用 explorer.exe 打开或选中，绝不执行文件本身（不用 os.startfile）。
+    """
+    raw = (req.path or "").strip()
+    if not raw:
+        return JSONResponse({"ok": False, "error": "路径为空"})
+    p = Path(raw)
+    if not p.is_absolute():
+        return JSONResponse({"ok": False,
+                             "error": f"只接受绝对路径：{req.path}"})
+    if _is_network_path(p, raw):
+        return JSONResponse({"ok": False,
+                             "error": "不支持网络/共享路径，只允许本机路径"})
+    if not p.exists():
+        return JSONResponse({"ok": False, "error": f"路径不存在：{req.path}"})
+    if p.is_dir():
+        args = ["explorer.exe", str(p)]
+    elif p.is_file():
+        # 未要求定位时打开所在目录；定位用 /select, 选中文件，绝不执行文件
+        args = (["explorer.exe", "/select,", str(p)] if req.reveal
+                else ["explorer.exe", str(p.parent)])
+    else:
+        return JSONResponse({"ok": False,
+                             "error": "该路径不是文件夹或普通文件"})
+    try:
+        subprocess.Popen(args)
+    except Exception as exc:
+        _LOG.warning("打开资源管理器失败（%s）：%s", args, exc)
+        return JSONResponse({"ok": False, "error": f"无法打开资源管理器：{exc}"})
+    return {"ok": True}
+
+
 @app.get("/api/browse")
 def api_browse(kind: str = "file"):
     """在服务端弹出原生文件/文件夹选择框（本机工具的特权，网页做不到）。"""
@@ -731,8 +973,8 @@ def api_slimfont(req: FontSlimReq):
     cs.kana = csd.get("kana", False)
     cs.extra_chars = csd.get("extra_chars", "")
 
-    job_id = _new_job("slimfont")
-    progress = Progress(lambda s, m: _job_log(job_id, s, m))
+    job_id = _new_job("slimfont", title=Path(req.font).name)
+    progress = _job_progress(job_id)
 
     def task():
         return font_tool.run_font_slim(req.font, req.sources, cs,
@@ -747,8 +989,8 @@ def api_slimapk(req: SlimApkReq):
     """APK 瘦身（图形界面入口，与 CLI slimapk 同一引擎）。"""
     if not Path(req.path).exists():
         return JSONResponse({"ok": False, "error": f"APK 不存在：{req.path}"})
-    job_id = _new_job("slimapk")
-    progress = Progress(lambda s, m: _job_log(job_id, s, m))
+    job_id = _new_job("slimapk", title=Path(req.path).name)
+    progress = _job_progress(job_id)
 
     def task():
         r = apk.slim_apk(req.path, req.preset,

@@ -26,6 +26,28 @@ PLATFORM_PACKAGES = {
     "mac": "mac",
 }
 
+# 全部合法打包平台（GUI 与 CLI 共用同一口径）。android 走另一条官方
+# 命令（android_build），所以不在 PLATFORM_PACKAGES 里，但同样是合法平台。
+KNOWN_PLATFORMS = tuple(PLATFORM_PACKAGES) + ("android",)
+
+
+def validate_platforms(platforms: list[str]) -> list[str]:
+    """校验打包平台列表：空列表或未知平台直接报错，绝不静默过滤。
+
+    CLI 与 Web 单一口径——凡是调用 package_project 的入口都先过这里，
+    避免“选了平台却没打出来”的静默失败。返回去掉首尾空白的平台名。
+    """
+    if not isinstance(platforms, (list, tuple)) or not platforms:
+        raise ValueError("至少选择一个打包平台，不能全不选。")
+    normalized: list[str] = []
+    for item in platforms:
+        name = str(item).strip()
+        if not name or name not in KNOWN_PLATFORMS:
+            raise ValueError(
+                f"未知的打包平台：{item}；可选：{', '.join(KNOWN_PLATFORMS)}")
+        normalized.append(name)
+    return normalized
+
 # A 模式"打包时把资源封进 RPA"：写入一份构建配置，剩下的交给官方 SDK，
 # 不自制封包逻辑（官方 launcher/game/archiver.rpy 同款写法）
 ARCHIVE_CONFIG_NAME = "rtools_archive.rpy"
@@ -173,6 +195,9 @@ def package_project(sdk: str, project_dir: str, platforms: list[str],
 
     archive_rpa=True 时先注入官方归档配置，让打包产物里的资源封入 main.rpa。
     """
+    # 平台校验必须最先做：空/未知平台在此抛 ValueError，不产生任何
+    # 目录或文件副作用（测试与调用方据此保证“失败不建工作目录”）。
+    platforms = validate_platforms(platforms)
     sdk = str(Path(sdk).resolve())
     project_dir = str(Path(project_dir).resolve())
     renpy_exe = str(Path(sdk) / "renpy.exe")
