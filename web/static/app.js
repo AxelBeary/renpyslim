@@ -17,7 +17,7 @@ let JOB = null, LOGIDX = 0, JOB_GEN = 0, JOB_RUNNING = false;
 let ANALYZE_JOB = null, ANALYZE_IDX = 0, ANALYZE_START = 0,
     ANALYZE_GEN = 0, ANALYZE_BUSY = false;
 let APK_ANALYZE_JOB = null, APK_ANALYZE_IDX = 0, APK_ANALYZE_START = 0,
-    APK_ANALYZE_GEN = 0, APK_ANALYZE_BUSY = false;
+    APK_ANALYZE_GEN = 0, APK_ANALYZE_BUSY = false, APK_LOG_LINES = [];
 let FS_JOB = null, FS_IDX = 0, FS_RESULT = null, FS_GEN = 0;
 let HISTORY = null;            // null = 还没加载过；[] = 加载过且为空
 let MODAL = { resolve: null, lastFocus: null };
@@ -1089,6 +1089,7 @@ async function analyzeApk() {
   const btn = document.getElementById("apkanalyze");
   btn.disabled = true;
   APK_ANALYZE_BUSY = true;
+  APK_LOG_LINES = [];
 
   const d = await api("/api/analyze", { path, mode: "apk" });
   if (!d || d.ok !== true) {
@@ -1119,15 +1120,19 @@ async function pollApkAnalyze(path, gen) {
   }
   const logEl = document.getElementById("apklog");
   const stateEl = document.getElementById("apkstate");
-  const lines = [];
   for (const l of d.logs) {
     APK_ANALYZE_IDX++;
-    lines.push(`[${t("stages")[l.stage] || l.stage}] ${trLog(l)}`);
+    const line = `[${t("stages")[l.stage] || l.stage}] ${trLog(l)}`;
+    /* 后端阶段消息可能在相邻轮询里重复；去重后用数组整体重绘，
+       避免 textContent 拼接把两条日志粘成同一行 */
+    if (APK_LOG_LINES[APK_LOG_LINES.length - 1] !== line) {
+      APK_LOG_LINES.push(line);
+    }
     if (stateEl) stateEl.textContent = trLog(l);
   }
-  if (logEl && lines.length) {
-    logEl.textContent = (logEl.textContent + lines.join("\n") + "\n")
-      .split("\n").filter(Boolean).slice(-6).join("\n");
+  if (logEl && d.logs.length) {
+    APK_LOG_LINES = APK_LOG_LINES.slice(-6);
+    logEl.textContent = APK_LOG_LINES.join("\n");
     logEl.scrollTop = logEl.scrollHeight;
   }
   if (d.status === "running" || d.status === "queued") {
