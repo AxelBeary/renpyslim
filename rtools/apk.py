@@ -32,7 +32,7 @@ from .font_optimizer import subset_font
 from .image_optimizer import optimize_image
 from .models import AssetInfo, AssetKind, Progress, kind_of
 from .procutil import run_quiet
-from .utils import find_suffix_clashes, safe_join
+from .utils import find_suffix_clashes, fmt_size as _fmt, safe_join
 
 logger = logging.getLogger(__name__)
 
@@ -636,6 +636,7 @@ def slim_apk(apk_path: str, preset_name: str,
         zipalign, apksigner = find_build_tools(sdk) if sdk else (None, None)
         aligned = work / "slim-aligned.apk"
         if zipalign:
+            p.emit("apk", "正在对齐 APK（zipalign）……", code="apk_align")
             # 审核修复（中-15）：超时/异常捕获后走"未对齐+警告"回退，
             # 不再让整个瘦身失败；returncode 也查（旧版只看文件存在）
             try:
@@ -666,6 +667,10 @@ def slim_apk(apk_path: str, preset_name: str,
             p.emit("apk", "正在生成新的签名钥匙……", code="apk_keygen")
             keystore_info = generate_keystore(str(apk.parent),
                                               password=new_key_password)
+            p.emit("apk",
+                   f"签名钥匙已生成：{Path(keystore_info['keystore']).name}",
+                   code="apk_keygen_done",
+                   params={"name": Path(keystore_info["keystore"]).name})
             use_ks = keystore_info["keystore"]
             use_pass = keystore_info["password"]
             use_alias = use_alias or keystore_info["alias"]
@@ -728,6 +733,10 @@ def slim_apk(apk_path: str, preset_name: str,
                 "产出为未签名 APK（未提供 keystore/密码，或签名失败）。"
                 "未签名的 APK 无法直接安装；可加 --gen-key 自动生成新钥匙重跑。")
 
+        p.emit("apk", f"APK 瘦身完成，共节省约 {_fmt(saved)}",
+               code="apk_done",
+               params={"saved": _fmt(saved), "changes": changes,
+                       "signed": signed})
         return {
             "output": str(final_real),
             "saved_bytes": saved,

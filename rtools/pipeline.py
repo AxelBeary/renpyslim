@@ -200,14 +200,19 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
                         state["done"] += 1
                         if state["done"] % 5 == 0 or state["done"] == len(futures):
                             p.emit(stage, f"处理中 {state['done']}/{len(futures)}"
-                                          f" · 累计已省 {_fmt(state['saved'])}")
+                                          f" · 累计已省 {_fmt(state['saved'])}",
+                                   code="optimize_progress",
+                                   params={"done": state["done"],
+                                           "total": len(futures),
+                                           "saved": _fmt(state["saved"])})
                     try:
                         r = fut.result()
                     except Exception as e:
                         # 审核修复（中-2）：吞异常可以，但至少要留条日志；
                         # 第二波修复：异常也计入失败（此前丢弃导致失败数虚低），
                         # 归因由 _safe_job 包装层完成，这里是最后兜底。
-                        p.emit(stage, f"任务执行异常，已跳过：{e}")
+                        p.emit(stage, f"任务执行异常，已跳过：{e}",
+                               code="job_error", params={"error": str(e)})
                         # 收口修复：兜底归因用字符串 "internal"——旧版写布尔
                         # True，在成品模式 isinstance(fk, str) 过滤下不计数，
                         # 失败数虚低。
@@ -288,28 +293,34 @@ def run_project(project_dir: str, options: OptimizeOptions,
 
     # --- 第 1 步：工作副本 / 直接改原件（C 选项） ---
     if options.in_place:
-        p.emit("backup", "直接修改原工程模式：正在生成强制备份压缩包……")
+        p.emit("backup", "直接修改原工程模式：正在生成强制备份压缩包……",
+               code="backup_start")
         zip_path = str(Path(project_dir).parent /
                        f"{Path(project_dir).name}-备份-{time.strftime('%Y%m%d-%H%M%S')}.zip")
         backup.make_backup_zip(project_dir, zip_path)
         records.append(ChangeRecord(action="backup", src=project_dir, dst=zip_path,
                                     detail="直接修改原工程前的强制完整备份"))
         working = project_dir
-        p.emit("backup", f"备份完成：{zip_path}")
+        p.emit("backup", f"备份完成：{zip_path}",
+               code="backup_done", params={"path": zip_path})
     else:
-        p.emit("copy", "正在复制工程到工作副本（原件保持不动）……")
+        p.emit("copy", "正在复制工程到工作副本（原件保持不动）……",
+               code="copy_start")
         working = backup.make_working_copy(project_dir, work_root)
         records.append(ChangeRecord(action="copy", src=project_dir, dst=working,
                                     detail="在副本上操作，原件未改动"))
-        p.emit("copy", f"工作副本就绪：{working}")
+        p.emit("copy", f"工作副本就绪：{working}",
+               code="copy_done", params={"path": working})
 
     game_dir = str(_find_game_dir(working))
 
     # --- 第 2 步：扫描 + 分析 ---
-    p.emit("analyze", "正在扫描资源文件……")
+    p.emit("analyze", "正在扫描资源文件……", code="scan_start")
     assets = scanner.scan_assets(
         game_dir, probe=True,
-        progress=lambda i, t, n: p.emit("scan", f"扫描资源 {i}/{t}：{n}"),
+        progress=lambda i, t, n: p.emit(
+            "scan", f"扫描资源 {i}/{t}：{n}", code="scan_progress",
+            params={"i": i, "total": t, "name": n}),
         cancel=cancel)
     report = analyzer.analyze(assets, root=game_dir, mode="project")
 
@@ -323,7 +334,9 @@ def run_project(project_dir: str, options: OptimizeOptions,
     report.languages = charset.detect_languages(game_dir)
     charlist_path = font_tool.write_charlist(
         chars, str(Path(output_dir) / "charlist.txt"))
-    p.emit("analyze", f"扫描到 {len(assets)} 个资源文件，实际使用字符 {len(chars)} 个")
+    p.emit("analyze", f"扫描到 {len(assets)} 个资源文件，实际使用字符 {len(chars)} 个",
+           code="scan_done",
+           params={"files": len(assets), "chars": len(chars)})
 
     # --- 第 4 步：优化 ---
     ref_index = RefIndex(game_dir)
@@ -722,7 +735,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
         # except 落部分清单，不再拖到下一步才发现。
         _check_cancel(cancel)
         if rename_map:
-            p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……")
+            p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……",
+                   code="rewrite_refs", params={"n": len(rename_map)})
             records.extend(ref_index.rewrite(rename_map))
 
         _check_cancel(cancel)
@@ -732,7 +746,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
             report.warnings.append(
                 "直接修改原件模式下跳过了垃圾清理（为保护你的存档和缓存）。")
         else:
-            p.emit("clean", "正在清理缓存、日志等可再生垃圾……")
+            p.emit("clean", "正在清理缓存、日志等可再生垃圾……",
+                   code="clean_junk")
             junk = cleanup.clean_junk(working)
             if junk["removed"]:
                 saved += junk["freed_bytes"]
@@ -743,7 +758,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
 
         quarantined: list[str] = []
         if options.quarantine_unused and unused:
-            p.emit("clean", f"正在把 {len(unused)} 个无引用资源移入隔离区……")
+            p.emit("clean", f"正在把 {len(unused)} 个无引用资源移入隔离区……",
+                   code="quarantine", params={"n": len(unused)})
             # 审核修复：unused 的相对路径以 game/ 为基准，隔离路径也得按
             # game/ 拼——以前按工程根拼，路径对不上，隔离静默失效
             quarantined = cleanup.quarantine_files(game_dir, unused)
@@ -758,12 +774,16 @@ def run_project(project_dir: str, options: OptimizeOptions,
         validation = {"ran": False, "ok": False, "summary": "未执行", "suspects": []}
         sdk = packager.find_sdk()
         if sdk:
-            p.emit("verify", "正在用官方 lint 验证优化后的工程……")
+            p.emit("verify", "正在用官方 lint 验证优化后的工程……",
+                   code="lint_start")
             validation = verifier.lint_project(sdk, working)
             Path(output_dir).mkdir(parents=True, exist_ok=True)
             (Path(output_dir) / "validation.txt").write_text(
                 validation.get("output", ""), encoding="utf-8")
-            p.emit("verify", f"lint 结果：{validation['summary']}")
+            p.emit("verify", f"lint 结果：{validation['summary']}",
+                   code="lint_result",
+                   params={"ok": validation["ok"],
+                           "summary": validation["summary"]})
             if not validation["ok"]:
                 report.warnings.append(
                     f"官方 lint 验证未完全通过：{validation['summary']}。"
@@ -780,7 +800,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
     except BaseException:
         _flush_partial_changelog(output_dir, records, saved)
         raise
-    p.emit("done", f"工程优化完成，共节省约 {_fmt(saved)}")
+    p.emit("done", f"工程优化完成，共节省约 {_fmt(saved)}",
+           code="project_done", params={"saved": _fmt(saved)})
 
     return {
         "mode": "project",
@@ -823,7 +844,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
 
     # --- 第 1 步：工作副本 ---
     if options.in_place:
-        p.emit("backup", "直接修改原成品模式：正在生成强制备份压缩包……")
+        p.emit("backup", "直接修改原成品模式：正在生成强制备份压缩包……",
+               code="backup_start")
         zip_path = str(dist_p.parent /
                        f"{dist_p.name}-备份-{time.strftime('%Y%m%d-%H%M%S')}.zip")
         backup.make_backup_zip(dist_dir, zip_path)
@@ -831,16 +853,19 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                                     detail="直接修改原成品前的强制完整备份"))
         working = dist_dir
     else:
-        p.emit("copy", "正在复制成品到工作副本（原件保持不动）……")
+        p.emit("copy", "正在复制成品到工作副本（原件保持不动）……",
+               code="copy_start")
         working = backup.make_working_copy(dist_dir, work_root)
         records.append(ChangeRecord(action="copy", src=dist_dir, dst=working,
                                     detail="在副本上操作，原件未改动"))
     working_p = Path(working)
 
     # --- 第 2 步：扫描（散落文件 + RPA 封包） ---
-    p.emit("analyze", "正在扫描成品资源……")
+    p.emit("analyze", "正在扫描成品资源……", code="scan_start")
     extract_dir = working_p / "_rtools_extract"
-    scan_log = lambda i, t, n: p.emit("scan", f"扫描资源 {i}/{t}：{n}")
+    scan_log = lambda i, t, n: p.emit(
+        "scan", f"扫描资源 {i}/{t}：{n}", code="scan_progress",
+        params={"i": i, "total": t, "name": n})
     loose = scanner.scan_assets(working, probe=True, progress=scan_log,
                                 cancel=cancel)
     # extract_scripts=True（审核修复）：一并解出封包内脚本，供字符集
@@ -857,7 +882,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     report.charset_size = len(chars)
     report.languages = charset.detect_languages(working)
     p.emit("analyze", f"扫描到 {len(loose)} 个散落资源、{len(packed)} 个封包内资源，"
-                      f"实际使用字符 {len(chars)} 个")
+                      f"实际使用字符 {len(chars)} 个",
+           code="dist_scan",
+           params={"loose": len(loose), "packed": len(packed),
+                   "chars": len(chars)})
 
     # --- 第 3.4 步：反编译解锁（实验性，用户拍板 2026-08-17） ---
     # 无源码成品的引用被焊死在 rpyc 里；用 vendored unrpyc（MIT）
@@ -868,7 +896,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     if options.experimental_decompile and game_dir_p.is_dir():
         from . import decompile as _decompile
         import shutil as _sh_dec
-        p.emit("decompile", "正在反编译编译脚本（解锁格式转换能力）……")
+        p.emit("decompile", "正在反编译编译脚本（解锁格式转换能力）……",
+               code="decompile_start")
         dec_stats = _decompile.decompile_scripts(str(game_dir_p))
         # 封包内脚本：解出的 rpyc 也反编译，产物拷回 game/ 对应位置，
         # 让引用索引扫得到，且引擎加载时优先于封包内同名 rpyc
@@ -885,7 +914,11 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     _sh_dec.move(str(f), str(dst))
         p.emit("decompile", f"反编译完成：{dec_stats['decompiled']} 个成功，"
                             f"{len(dec_stats['failed'])} 个失败，"
-                            f"{dec_stats['skipped']} 个已有源码跳过")
+                            f"{dec_stats['skipped']} 个已有源码跳过",
+               code="decompile_done",
+               params={"ok": dec_stats["decompiled"],
+                       "failed": len(dec_stats["failed"]),
+                       "skipped": dec_stats["skipped"]})
 
     # --- 第 3.5 步：rpy 源码检测（带源码发布，或刚反编译出来） ---
     # 有源码 = 可以安全地改引用、换格式；引擎下次启动会自动重编译
@@ -1327,7 +1360,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         # --- 第 4.5 步：带源码的成品，改写脚本引用 ---
         _check_cancel(cancel)
         if rename_map and ref_index is not None:
-            p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……")
+            p.emit("rewrite", f"正在改写 {len(rename_map)} 个资源的脚本引用……",
+                   code="rewrite_refs", params={"n": len(rename_map)})
             records.extend(ref_index.rewrite(rename_map))
 
         # --- 第 5 步：重建含优化内容的 RPA 封包 ---
@@ -1345,7 +1379,9 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     "优化后的文件已按散落副本保留，游戏仍可加载。")
                 continue
             src_rpa = rpa_files[0]
-            p.emit("rpa", f"正在重建封包 {rpa_name}（替换 {len(repl)} 个文件）……")
+            p.emit("rpa", f"正在重建封包 {rpa_name}（替换 {len(repl)} 个文件）……",
+                   code="rpa_rebuild",
+                   params={"rpa": rpa_name, "n": len(repl)})
             tmp_rpa = src_rpa.with_name(src_rpa.name + ".rtools.tmp")
             try:
                 replaced, total = rpa.rebuild_archive(str(src_rpa), str(tmp_rpa), repl)
@@ -1423,7 +1459,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         if extract_dir.exists():
             _sh.rmtree(extract_dir, ignore_errors=True)
 
-    p.emit("done", f"成品瘦身完成，共节省约 {_fmt(saved)}")
+    p.emit("done", f"成品瘦身完成，共节省约 {_fmt(saved)}",
+           code="dist_done", params={"saved": _fmt(saved)})
     return {
         "mode": "dist",
         "working_dir": working,
@@ -1475,7 +1512,8 @@ def run_dist_smart(path: str, options: OptimizeOptions,
                    "（可能被其他程序占用），已改用新临时目录继续。")
             extract_dir = str(Path(work_root)
                               / f"{src_name}-解压-{uuid.uuid4().hex[:8]}")
-    p.emit("unpack", f"正在解压压缩包 {Path(path).name}……")
+    p.emit("unpack", f"正在解压压缩包 {Path(path).name}……",
+           code="unpack_start", params={"name": Path(path).name})
     archives.extract_archive(path, extract_dir, password)
     try:
         # 审核修复（高-4）：取全部候选成品根——旧版只拿第一个，
@@ -1490,7 +1528,8 @@ def run_dist_smart(path: str, options: OptimizeOptions,
         if not apk_files:
             raise
         src_apk = sorted(apk_files, key=lambda f: len(f.parts))[0]
-        p.emit("apk", f"压缩包里装的是 APK，自动转入 APK 瘦身：{src_apk.name}")
+        p.emit("apk", f"压缩包里装的是 APK，自动转入 APK 瘦身：{src_apk.name}",
+               code="apk_forward", params={"name": src_apk.name})
         # F8 设计：走保守的同名压缩档（不换格式不签名）——与注释名实相符
         r = apk.slim_apk(str(src_apk), "conservative", progress=p)
         r = dict(r)
@@ -1519,7 +1558,8 @@ def run_dist_smart(path: str, options: OptimizeOptions,
             "本工具一次只处理一个成品，请把各平台拆开分别瘦身——"
             "否则只会输出其中一个平台，其余内容会丢失。")
     dist_root = dist_roots[0]
-    p.emit("unpack", f"已定位成品目录：{Path(dist_root).name}")
+    p.emit("unpack", f"已定位成品目录：{Path(dist_root).name}",
+           code="unpack_done", params={"name": Path(dist_root).name})
 
     result = run_dist(dist_root, options, work_root, output_dir, p,
                       cancel=cancel)
@@ -1551,7 +1591,7 @@ def run_dist_smart(path: str, options: OptimizeOptions,
 
     # 瘦身后的成品重新打包；输出 zip 用原始压缩包名，好认
     _check_cancel(cancel)
-    p.emit("repack", "正在把瘦身成品重新打包成 zip……")
+    p.emit("repack", "正在把瘦身成品重新打包成 zip……", code="repack_start")
     out_zip = str(Path(output_dir) / f"{src_name}-瘦身版.zip")
     archives.create_zip(result["working_dir"], out_zip)
     result["archive_output"] = out_zip
@@ -1559,7 +1599,8 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     # 审核修复（中-6）：回包成功后解压目录不再需要——不清理的话
     # _rtools_work 每次运行都会累积一份全量解压拷贝
     _shutil.rmtree(extract_dir, ignore_errors=True)
-    p.emit("done", f"交付包已生成：{out_zip}")
+    p.emit("done", f"交付包已生成：{out_zip}",
+           code="repack_done", params={"path": out_zip})
     return result
 
 

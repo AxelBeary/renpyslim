@@ -74,15 +74,18 @@ def run_font_slim(font_path: str, text_sources: list[str],
     out_dir = Path(output_dir) if output_dir else fp.parent
 
     # 第 1 步：提取字符集
-    p.emit("charset", "正在从文本来源提取字符集……")
+    p.emit("charset", "正在从文本来源提取字符集……",
+           code="font_charset_start")
     chars, warnings = charset.extract_charset_sources(text_sources, opts)
-    p.emit("charset", f"字符集就绪：{len(chars)} 个字符（含保底字符）")
+    p.emit("charset", f"字符集就绪：{len(chars)} 个字符（含保底字符）",
+           code="font_charset_ready", params={"n": len(chars)})
 
     # 第 2 步：瘦身
     outputs = []
     if ext in SINGLE_EXTS:
         out = _unique_path(out_dir / f"{fp.stem}-slim{ext}")
-        p.emit("slim", f"正在瘦身 {fp.name}……")
+        p.emit("slim", f"正在瘦身 {fp.name}……",
+               code="font_slim_start", params={"name": fp.name})
         try:
             res = subset_font(str(fp), str(out), chars)
             outputs.append({
@@ -105,10 +108,13 @@ def run_font_slim(font_path: str, text_sources: list[str],
     else:
         # TTC/OTC：拆开后逐个字重瘦身
         from fontTools.ttLib import TTCollection
-        p.emit("slim", f"检测到字体集合 {fp.name}，正在拆分字重……")
+        p.emit("slim", f"检测到字体集合 {fp.name}，正在拆分字重……",
+               code="font_slim_start", params={"name": fp.name})
         try:
             col = TTCollection(str(fp), lazy=True)
         except Exception as e:
+            p.emit("slim", f"字体瘦身失败：{e}", code="font_error",
+                   params={"error": str(e)})
             raise FontSlimError(f"字体集合打不开：{e}")
         # 审核修复（中-24）：TTCollection 句柄正常/异常路径都要关，
         # Windows 上被占句柄会让后续原地替换 PermissionError
@@ -117,7 +123,9 @@ def run_font_slim(font_path: str, text_sources: list[str],
             for i, font in enumerate(fonts, start=1):
                 face_ext = _face_ext(font)
                 out = _unique_path(out_dir / f"{fp.stem}-{i}-slim{face_ext}")
-                p.emit("slim", f"正在瘦身第 {i}/{len(fonts)} 个字重……")
+                p.emit("slim", f"正在瘦身第 {i}/{len(fonts)} 个字重……",
+                       code="font_slim_progress",
+                       params={"i": i, "total": len(fonts)})
                 try:
                     res = subset_font_object(font, str(out), chars)
                     outputs.append({
@@ -135,11 +143,14 @@ def run_font_slim(font_path: str, text_sources: list[str],
                 pass
 
     if not outputs:
+        p.emit("slim", "字体瘦身失败：没有任何字重瘦身成功", code="font_error",
+               params={"error": "no_outputs"})
         raise FontSlimError("没有任何字重瘦身成功，请检查字体文件。")
 
     # 第 3 步：导出字符清单
     charlist = write_charlist(chars, str(out_dir / f"{fp.stem}-字符清单.txt"))
-    p.emit("done", f"完成：生成 {len(outputs)} 个瘦身字体 + 字符清单")
+    p.emit("done", f"完成：生成 {len(outputs)} 个瘦身字体 + 字符清单",
+           code="font_done", params={"n": len(outputs)})
 
     return {
         "font": fp.name,
