@@ -19,12 +19,16 @@ def isolated_home(tmp_path, monkeypatch):
 
 @pytest.fixture
 def tick_clock(monkeypatch):
-    now = [100.0]
+    state = [100.0]
 
     def tick():
-        now[0] += 1
-        return now[0]
+        state[0] += 1
+        return state[0]
 
+    def advance(seconds):
+        state[0] += seconds
+
+    tick.advance = advance
     monkeypatch.setattr(jobstore.time, "time", tick)
     return tick
 
@@ -48,6 +52,7 @@ def test_start_finish_and_title_roundtrip(isolated_home):
     assert job["summary"] == {"saved_bytes": 123}
     assert job["error"] is None
     assert job["finished"] is not None
+    assert job["heartbeat"] == job["finished"]
 
     stored = _read_store(isolated_home)
     assert stored["version"] == 1
@@ -108,6 +113,95 @@ def test_stale_running_job_becomes_interrupted(isolated_home):
 
     persisted = {job["id"]: job for job in _read_store(isolated_home)["jobs"]}
     assert persisted["ghost"]["status"] == "interrupted"
+
+
+def test_other_process_with_fresh_heartbeat_stays_running(isolated_home,
+                                                         monkeypatch):
+    monkeypatch.setattr(jobstore, "_pid_alive", lambda pid: True)
+    jobstore.record_start("other", "optimize", pid=12345)
+    before = (isolated_home / "jobs.json").read_bytes()
+
+    jobs = jobstore.list_jobs()
+
+    assert jobs[0]["status"] == "running"
+    assert (isolated_home / "jobs.json").read_bytes() == before
+
+
+def test_stale_heartbeat_becomes_interrupted(isolated_home, tick_clock,
+                                             monkeypatch):
+    monkeypatch.setattr(jobstore, "_pid_alive", lambda pid: True)
+    jobstore.record_start("slow", "optimize", pid=12345)
+    tick_clock.advance(jobstore.STALE_SECONDS + 1)
+
+    job = jobstore.list_jobs()[0]
+
+    assert job["status"] == "interrupted"
+    persisted = _read_store(isolated_home)["jobs"][0]
+    assert persisted["status"] == "interrupted"
+
+
+def test_dead_pid_becomes_interrupted(isolated_home, monkeypatch):
+    monkeypatch.setattr(jobstore, "_pid_alive", lambda pid: False)
+    jobstore.record_start("dead", "optimize", pid=12345)
+
+    job = jobstore.list_jobs()[0]
+
+    assert job["status"] == "interrupted"
+    assert job["error"] == "工具已退出，任务中断"
+
+
+def test_heartbeat_throttles_then_writes_on_force(isolated_home, tick_clock,
+                                                  monkeypatch):
+    jobstore.record_start("j", "optimize")
+    writes = []
+    original_save = jobstore._save_unlocked
+
+    def counting_save(jobs):
+        writes.append([dict(job) for job in jobs])
+        original_save(jobs)
+
+    monkeypatch.setattr(jobstore, "_save_unlocked", counting_save)
+
+    assert jobstore.heartbeat("j") is True
+    assert jobstore.heartbeat("j") is True
+    assert writes == []
+
+    tick_clock.advance(jobstore.HEARTBEAT_MIN_INTERVAL + 1)
+    assert jobstore.heartbeat("j") is True
+    assert len(writes) == 1
+    assert writes[0][0]["heartbeat"] == 110
+
+    assert jobstore.heartbeat("j") is True       # 距上次心跳不足 5 秒
+    assert len(writes) == 1
+    assert jobstore.heartbeat("j", force=True) is True
+    assert len(writes) == 2
+    assert writes[1][0]["heartbeat"] == 112
+    assert jobstore.heartbeat("missing") is False
+    assert len(writes) == 2
+
+
+def test_old_record_without_heartbeat_uses_created(isolated_home):
+    payload = {"version": 1, "jobs": [{
+        "id": "old",
+        "kind": "optimize",
+        "status": "done",
+        "created": 123.0,
+        "finished": 130.0,
+        "title": "",
+        "pid": 1,
+        "summary": {},
+        "error": None,
+    }]}
+    (isolated_home / "jobs.json").write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    assert jobstore.list_jobs()[0]["heartbeat"] == 123.0
+
+
+def test_pid_alive_recognizes_current_process_and_invalid_pid():
+    assert jobstore._pid_alive(os.getpid()) is True
+    assert jobstore._pid_alive(None) is False
+    assert jobstore._pid_alive(0) is False
 
 
 def test_summary_is_json_safe(isolated_home):

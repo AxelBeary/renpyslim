@@ -1,10 +1,12 @@
 """任务历史持久化：任务结束后仍能查到做过什么，重启不丢。
 
 存储位置：环境变量 RENPYSLIM_HOME（若有）否则 ~/.renpyslim 下的 jobs.json。
+运行态靠心跳时间 + 进程判活识别遗留任务，避免把同机其它进程的活动任务误判。
 只记摘要不记日志全文；文件损坏或磁盘写失败都不影响主流程。
 """
 from __future__ import annotations
 
+import ctypes
 import json
 import logging
 import math
@@ -19,7 +21,13 @@ logger = logging.getLogger(__name__)
 
 MAX_JOBS = 50
 DEFAULT_LIMIT = 20
+STALE_SECONDS = 180
+HEARTBEAT_MIN_INTERVAL = 5.0
 _VERSION = 1
+
+_WIN_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_WIN_ERROR_ACCESS_DENIED = 5
+_WIN_STILL_ACTIVE = 259
 
 _LOCK = threading.RLock()
 _DROP = object()
@@ -98,17 +106,57 @@ def _normalize(raw: Any) -> dict | None:
     if not isinstance(raw, dict) or not raw.get("id"):
         return None
     pid = raw.get("pid")
+    created = _as_number(raw.get("created"))
     return {
         "id": str(raw.get("id")),
         "kind": str(raw.get("kind") or "unknown"),
         "status": str(raw.get("status") or "unknown"),
-        "created": _as_number(raw.get("created")),
+        "created": created,
+        "heartbeat": _as_number(raw.get("heartbeat"), default=created),
         "finished": _as_optional_number(raw.get("finished")),
         "title": str(raw.get("title") or ""),
         "pid": pid if isinstance(pid, int) and not isinstance(pid, bool) else None,
         "summary": _clean_summary(raw.get("summary")),
         "error": str(raw["error"]) if raw.get("error") else None,
     }
+
+
+def _pid_alive(pid: Any) -> bool:
+    """进程判活。查询被拒绝（权限不足）时按活着处理，避免误判中断。"""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    if pid == os.getpid():
+        return True
+    if os.name == "nt":
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.OpenProcess.argtypes = (
+            ctypes.c_ulong, ctypes.c_int, ctypes.c_ulong)
+        kernel32.OpenProcess.restype = ctypes.c_void_p
+        kernel32.GetExitCodeProcess.argtypes = (
+            ctypes.c_void_p, ctypes.POINTER(ctypes.c_ulong))
+        kernel32.GetExitCodeProcess.restype = ctypes.c_int
+        kernel32.CloseHandle.argtypes = (ctypes.c_void_p,)
+        kernel32.CloseHandle.restype = ctypes.c_int
+        handle = kernel32.OpenProcess(
+            _WIN_PROCESS_QUERY_LIMITED_INFORMATION, 0, pid)
+        if not handle:
+            return ctypes.get_last_error() == _WIN_ERROR_ACCESS_DENIED
+        try:
+            code = ctypes.c_ulong()
+            if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == _WIN_STILL_ACTIVE
+        finally:
+            kernel32.CloseHandle(handle)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
 
 
 def _load_unlocked() -> list[dict]:
@@ -156,11 +204,13 @@ def record_start(job_id: str, kind: str, title: str = "",
     """登记一个开始运行的任务；返回写入的记录。"""
     if not isinstance(pid, int) or isinstance(pid, bool):
         pid = os.getpid()
+    now = time.time()
     record = {
         "id": str(job_id),
         "kind": str(kind or "unknown"),
         "status": "running",
-        "created": time.time(),
+        "created": now,
+        "heartbeat": now,
         "finished": None,
         "title": str(title or ""),
         "pid": pid,
@@ -186,6 +236,22 @@ def set_title(job_id: str, title: str) -> bool:
     return False
 
 
+def heartbeat(job_id: str, force: bool = False) -> bool:
+    """刷新任务心跳；默认 5 秒内的重复调用不写盘，force=True 强制写。"""
+    now = time.time()
+    with _LOCK:
+        jobs = _load_unlocked()
+        for job in jobs:
+            if job["id"] == str(job_id):
+                if (not force
+                        and now - job["heartbeat"] < HEARTBEAT_MIN_INTERVAL):
+                    return True
+                job["heartbeat"] = now
+                _save_unlocked(jobs)
+                return True
+    return False
+
+
 def record_finish(job_id: str, status: str, summary: Any = None,
                   error: Any = None) -> dict:
     """登记任务结束。找不到开始记录时补一条，保证历史不断档。"""
@@ -193,8 +259,10 @@ def record_finish(job_id: str, status: str, summary: Any = None,
         jobs = _load_unlocked()
         for job in jobs:
             if job["id"] == str(job_id):
+                now = time.time()
                 job["status"] = str(status)
-                job["finished"] = time.time()
+                job["finished"] = now
+                job["heartbeat"] = now
                 job["summary"] = _clean_summary(summary)
                 job["error"] = str(error) if error else None
                 _save_unlocked(jobs)
@@ -205,6 +273,7 @@ def record_finish(job_id: str, status: str, summary: Any = None,
             "kind": "unknown",
             "status": str(status),
             "created": now,
+            "heartbeat": now,
             "finished": now,
             "title": "",
             "pid": os.getpid(),
@@ -217,7 +286,7 @@ def record_finish(job_id: str, status: str, summary: Any = None,
 
 
 def list_jobs(limit: int = DEFAULT_LIMIT) -> list[dict]:
-    """按开始时间倒序返回任务；把上个进程遗留的运行态改判为中断。"""
+    """按开始时间倒序返回任务；遗留运行态按心跳与进程判活改判中断。"""
     try:
         limit = max(0, min(int(limit), MAX_JOBS))
     except (TypeError, ValueError):
@@ -225,13 +294,16 @@ def list_jobs(limit: int = DEFAULT_LIMIT) -> list[dict]:
     with _LOCK:
         jobs = _load_unlocked()
         changed = False
+        now = time.time()
         for job in jobs:
-            if (job["status"] in ("running", "queued")
-                    and job.get("pid") != os.getpid()):
+            if job["status"] not in ("running", "queued"):
+                continue
+            stale = now - job["heartbeat"] > STALE_SECONDS
+            if stale or not _pid_alive(job.get("pid")):
                 job["status"] = "interrupted"
                 job["error"] = "工具已退出，任务中断"
                 if job.get("finished") is None:
-                    job["finished"] = time.time()
+                    job["finished"] = now
                 changed = True
         if changed:
             _save_unlocked(jobs)
