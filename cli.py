@@ -21,8 +21,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import signal
 import sys
+import uuid
 from pathlib import Path
 
 import rtools
@@ -59,15 +61,154 @@ def _log(stage: str, message: str) -> None:
 
 def _ok(data: dict) -> int:
     print(json.dumps({"ok": True, **data}, ensure_ascii=False, indent=2))
+    if _ACTIVE_JOB is not None:
+        _finish_job("done", summary=_summary_from_ok(data))
     return 0
 
 
 def _fail(msg: str) -> int:
     print(json.dumps({"ok": False, "error": msg}, ensure_ascii=False, indent=2))
+    if _ACTIVE_JOB is not None:
+        _finish_job("failed", error=msg)
     return 1
 
 
+# --- 任务历史：CLI 任务与 Web 写同一份 jobs.json ---------------------------
+# 只登记真正的任务命令；env / history 是查询类命令，执行本身不进历史。
+# 收尾统一走 _ok / _fail / main 兜底，任何历史写入失败都只打 stderr 警告，
+# 绝不覆盖结果 JSON 与退出码。
+_TASK_COMMANDS = frozenset({"analyze", "optimize", "full", "package",
+                            "slimapk", "slimfont"})
+_SUMMARY_TEXT_LIMIT = 512     # 路径/短文案留这么多字符，超长截断
+_SUMMARY_LIST_LIMIT = 20      # built 之类小列表最多留这么多项
+_ACTIVE_JOB: dict | None = None
 
+
+def _job_title(args) -> str:
+    """任务标题取输入路径（path/apk/font），都没有就留空。"""
+    for attr in ("path", "apk", "font"):
+        value = getattr(args, attr, None)
+        if value:
+            return str(value)
+    return ""
+
+
+def _start_job(args) -> None:
+    """任务命令开跑前登记一条历史；登记失败不影响任务本身。"""
+    global _ACTIVE_JOB
+    _ACTIVE_JOB = None
+    command = getattr(args, "command", None)
+    if command not in _TASK_COMMANDS:
+        return
+    job = {"id": uuid.uuid4().hex[:8], "finished": False}
+    try:
+        jobstore.record_start(job["id"], command,
+                              title=_job_title(args), pid=os.getpid())
+    except Exception as exc:
+        _log("history", f"登记任务历史失败（任务继续执行）：{exc}")
+        return
+    _ACTIVE_JOB = job
+
+
+def _finish_job(status: str, summary=None, error=None) -> None:
+    """active job 收尾；只写一次，历史写入异常不上抛。"""
+    job = _ACTIVE_JOB
+    if not job or job.get("finished"):
+        return
+    job["finished"] = True
+    try:
+        jobstore.record_finish(job["id"], status,
+                               summary=summary, error=error)
+    except Exception as exc:
+        _log("history", f"任务历史写入失败（不影响本次结果）：{exc}")
+
+
+def _summary_text(value) -> str | None:
+    if isinstance(value, Path):
+        value = str(value)
+    if not isinstance(value, str) or not value:
+        return None
+    return value[:_SUMMARY_TEXT_LIMIT]
+
+
+def _absorb_summary(summary: dict, data) -> None:
+    """把一层结果里的摘要字段并进 summary（只收标量与小列表）。"""
+    if not isinstance(data, dict):
+        return
+    saved = data.get("saved_bytes")
+    if isinstance(saved, (int, float)) and not isinstance(saved, bool):
+        summary["saved_bytes"] = saved
+    signed = data.get("signed")
+    if isinstance(signed, bool):
+        summary["signed"] = signed
+    for key in ("output", "working_dir", "archive_output", "changelog",
+                "destination"):
+        text = _summary_text(data.get(key))
+        if text is not None:
+            summary[key] = text
+    changes = data.get("changes")
+    if isinstance(changes, (list, tuple, set, frozenset)):
+        summary["changes"] = len(changes)
+    elif isinstance(changes, int) and not isinstance(changes, bool):
+        summary["changes"] = changes
+    built = data.get("built")
+    if isinstance(built, (list, tuple)):
+        summary["built"] = [str(item)[:_SUMMARY_TEXT_LIMIT]
+                            for item in built[:_SUMMARY_LIST_LIMIT]]
+
+
+def _first_output(result: dict) -> str | None:
+    """slimfont 结果只有 outputs 列表，抽第一条产出路径。"""
+    outputs = result.get("outputs")
+    if not isinstance(outputs, (list, tuple)) or not outputs:
+        return None
+    first = outputs[0]
+    if isinstance(first, dict):
+        return _summary_text(first.get("out"))
+    return _summary_text(first)
+
+
+def _summary_from_ok(data: dict) -> dict:
+    """从成功结果 JSON 抽小字段做历史摘要；绝不放整份报告/清单/大列表。"""
+    summary: dict = {}
+    if not isinstance(data, dict):
+        return summary
+    # optimize / slimapk / slimfont 走 result 包装；package 的 built 也在里面
+    _absorb_summary(summary, data)
+    result = data.get("result")
+    if isinstance(result, dict):
+        _absorb_summary(summary, result)
+        if "output" not in summary:
+            first = _first_output(result)
+            if first is not None:
+                summary["output"] = first
+    # analyze：报告只取规模类字段与条目数，entries 明细不进历史
+    report = data.get("report")
+    if isinstance(report, dict):
+        mode = _summary_text(report.get("mode"))
+        if mode is not None:
+            summary["mode"] = mode
+        for key in ("total_size", "charset_size"):
+            number = report.get(key)
+            if isinstance(number, (int, float)) and not isinstance(number, bool):
+                summary[key] = number
+        entries = report.get("entries")
+        if isinstance(entries, (list, tuple)):
+            summary["entries"] = len(entries)
+    # APK 只读预分析汇总（analyze .apk 时出现）
+    apk = data.get("apk")
+    if isinstance(apk, dict):
+        for key in ("optimizable", "est_saving", "est_saving_remap",
+                    "signed", "apk_size"):
+            value = apk.get(key)
+            if isinstance(value, bool) or isinstance(value, (int, float)):
+                summary[key] = value
+    # full：optimize 与 package 摊平到同一层
+    for nested in ("optimize", "package"):
+        child = data.get(nested)
+        if isinstance(child, dict):
+            _absorb_summary(summary, child)
+    return summary
 
 
 class _JsonArgumentParser(argparse.ArgumentParser):
@@ -505,6 +646,7 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_package)
 
     args = ap.parse_args(argv)
+    _start_job(args)
     try:
         return args.func(args)
     except Exception as e:
@@ -513,6 +655,8 @@ def main(argv=None) -> int:
         # 兜底时落一份含堆栈的崩溃转储（~/.renpyslim/crashes/），
         # 事后追查有迹可循；堆栈只进转储文件与 stderr 日志，
         # stdout 仍然只有合法结果 JSON。
+        # 历史先按 "error" 收尾：随后的 _fail 见已收尾便不再改写状态。
+        _finish_job("error", error=f"意外错误：{type(e).__name__}: {e}")
         dump = crashdump.write_crash(
             f"cli-{getattr(args, 'command', 'unknown')}")
         if dump:
@@ -520,6 +664,16 @@ def main(argv=None) -> int:
             return _fail(f"意外错误：{type(e).__name__}: {e}"
                          f"（完整堆栈已存：{dump}）")
         return _fail(f"意外错误：{type(e).__name__}: {e}")
+    finally:
+        # 兜底收尾：Ctrl+C 等 BaseException、或命令既没走 _ok 也没走 _fail
+        # 的路径同样落一条 "error"，不留永久 running 的历史幽灵记录。
+        # 已在 _ok / _fail / 上面 except 收尾过的任务不会重复写。
+        pending = sys.exc_info()[1]
+        if isinstance(pending, BaseException):
+            _finish_job("error",
+                        error=f"{type(pending).__name__}: {pending}")
+        else:
+            _finish_job("error", error="任务未正常收尾（提前退出）")
 
 
 if __name__ == "__main__":
