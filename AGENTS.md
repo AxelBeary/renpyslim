@@ -78,10 +78,11 @@ python cli.py env [--sdk SDK路径]
   不会跑到一半写满磁盘；读不到磁盘信息时不阻断，只记警告。`optimize` / `full`
   可用 `--work-root` / `--output` 把工作目录指到空间充足的磁盘；`analyze` /
   `slimapk` 没有这两个参数，请清理空间或换目标盘。
-- 任务历史：图形界面（Web）跑过的任务会记到 `~/.renpyslim/jobs.json`
-  （可用环境变量 `RENPYSLIM_HOME` 改目录），最多保留 50 条，`history` 默认列
-  最近 20 条。`python cli.py history [--limit 1..50] [--clear]` 读取/清空同一份
-  记录；CLI 执行的命令本身不自动写入历史。只记摘要（任务类型、状态、时间、标题、
+- 任务历史：图形界面（Web）与 CLI 任务命令（analyze / optimize / full / package /
+  slimapk / slimfont）都会记到 `~/.renpyslim/jobs.json`（可用环境变量
+  `RENPYSLIM_HOME` 改目录），最多保留 50 条，`history` 默认列最近 20 条。
+  `python cli.py history [--limit 1..50] [--clear]` 读取/清空同一份记录；
+  `env` / `history` 等查询类命令本身不写入历史。只记摘要（任务类型、状态、时间、标题、
   少量结果字段与产物路径），**不记完整日志**；但摘要里可能含本机路径，把文件/截图
   发给他人前请自行检查。运行态靠心跳（超过 180 秒未刷新判陈旧）+ 进程判活，
   工具异常退出后遗留的任务会显示为“中断”。
@@ -224,12 +225,13 @@ Notes:
   read it only logs a warning and continues. `optimize` / `full` accept
   `--work-root` / `--output` to move work dirs to a roomier disk; `analyze` /
   `slimapk` do not, so clean up space or switch the target drive instead.
-- Task history: tasks run in the web GUI are recorded in
+- Task history: tasks run in the web GUI and CLI task commands (analyze /
+  optimize / full / package / slimapk / slimfont) are recorded in
   `~/.renpyslim/jobs.json` (override the directory with the `RENPYSLIM_HOME`
   environment variable), capped at 50 entries; `history` lists the latest 20
   by default. `python cli.py history [--limit 1..50] [--clear]` reads/clears
-  the same store; commands run via the CLI are not written to history
-  automatically. Only summaries are kept (kind, status, timestamps, title, a
+  the same store; query-only commands such as `env` / `history` are not
+  recorded. Only summaries are kept (kind, status, timestamps, title, a
   few result fields and artifact paths), **never full logs** — but summaries
   can contain local paths, so review them before sharing files or screenshots.
   Liveness uses heartbeats (stale after 180 seconds) plus process checks; tasks

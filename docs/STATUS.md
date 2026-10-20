@@ -31,7 +31,8 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
    不建工作目录、不改原包。GUI APK 页新增“扫描分析”卡。
 3. **任务历史**：`rtools/jobstore.py` 落盘 `~/.renpyslim/jobs.json`
    （`RENPYSLIM_HOME` 可改目录），最多 50 条、默认列 20 条；界面任务自动写入，
-   CLI 的 `history` 读取/清空同一份记录（CLI 执行的命令本身不自动入史）。
+   CLI 任务命令（analyze / optimize / full / package / slimapk / slimfont）也写入
+   同一份记录；`history` 读取/清空，`env` / `history` 本身不记录。
    心跳（超过 180 秒判陈旧）+ 进程判活识别遗留任务；CLI 新增
    `history [--limit 1..50] [--clear]`，Web `/api/history` GET/DELETE，
    设置页任务历史卡。
@@ -50,8 +51,7 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
 8. **结构化日志**：`Progress.emit` 与 Web 任务日志带 `code` + `params`（稳定
    snake_case）；Web 日志按结构化 code 做八语翻译，未覆盖项回退原文/旧句式。
 
-验收：`python -m pytest tests -q` 全绿——本机最近实测 321 passed / 2 skipped
-（2026-10-21；数量以 pytest 实际收集为准）；`ruff check --select F,E9 ...` 全绿；
+验收：`python -m pytest tests -q` 全绿（本机最近一次全量运行；数量以 pytest 实际收集为准）；`ruff check --select F,E9 ...` 全绿；
 `python -m pip check` 无冲突；前端三件套在装 Node 的环境跑 `node --check` 通过
 （无 Node 时测试自动跳过）。
 

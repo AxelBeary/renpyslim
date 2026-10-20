@@ -100,9 +100,9 @@ has_renpy_layout）。全程不解包、不建工作目录、不改原包；CLI 
   `/api/job/{id}` 轮询日志，日志条目含 `stage` / `message` 与可选的
   `code` / `params`（稳定 snake_case 键 + 数值/名称上下文，前端按 code 做
   八语翻译，未覆盖项回退原文/旧句式）。`Progress.emit` 对旧两参回调保持兼容。
-- 任务历史：Web 任务由 `jobstore` 落盘 `~/.renpyslim/jobs.json`
+- 任务历史：Web 与 CLI 任务命令由 `jobstore` 落盘 `~/.renpyslim/jobs.json`
   （`RENPYSLIM_HOME` 可改目录），最多 50 条；`GET/DELETE /api/history` 与
-  CLI `history` 读写同一份记录（CLI 执行的命令本身不自动入史）；运行态靠心跳
+  CLI `history` 读写同一份记录；`env` / `history` 等查询命令不记录；运行态靠心跳
   （>180 秒判陈旧）+ 进程判活改判 interrupted；只存摘要字段。
 - 安全动作：`POST /api/reveal` 只接受“绝对 + 存在”的本机路径，拒绝 UNC/
   网络共享；目录用 explorer 打开，文件用 `/select,` 定位，绝不执行文件。
