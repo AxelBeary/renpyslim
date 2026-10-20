@@ -1410,7 +1410,7 @@ fr: {
 };
 
 /* 语言注册表：新增语言的唯一入口——①在 I18N 加字典 ②在这里登记
-   ③给 LOG_PATTERNS 补该语言的日志模板 ④加 README.<码>.md */
+   ③给 LOG_PATTERNS 与 LOG_CODES 补该语言的日志模板 ④加 README.<码>.md */
 const LANGS = { zh: "中文", en: "English", ru: "Русский", es: "Español",
                 pt: "Português (BR)", tr: "Türkçe", de: "Deutsch", fr: "Français" };
 function detectInitialLang() {
@@ -1558,7 +1558,476 @@ const LOG_PATTERNS = [
   [/^正在瘦身：(.+)$/, {
     en: "Slimming: $1", ru: "Сжатие: $1", es: "Adelgazando: $1", pt: "Reduzindo: $1", tr: "Küçültülüyor: $1", de: "Abspecken: $1", fr: "Allègement: $1" }],
 ];
-function trLog(msg) {
+/* ===================== 结构化日志翻译（WP6b） =====================
+后端 p.emit(..., code="...", params={...}) 已经把日志拆成翻译键 +
+占位符参数；这里按 code 给出八语模板。模板里的占位符必须与后端
+params 的键一致（{i}/{total}/{name} 等），缺参数时一律填空串，
+绝不把 {i} 这样的字面量漏到界面。日志本身用 textContent 输出，
+模板不需要（也不该）含 HTML。
+
+键用双引号写成 JSON 兼容形态，tests/test_log_i18n.py 直接
+json.loads 本对象做契约校验；新增 code 时记得同步三份后端源码。 */
+const LOG_CODES = {
+  "optimize_progress": {
+    "zh": "处理中 {done}/{total} · 累计已省 {saved}",
+    "en": "Working {done}/{total} · saved {saved} so far",
+    "ru": "Обработка {done}/{total} · сэкономлено {saved}",
+    "es": "Procesando {done}/{total} · ahorrado {saved} hasta ahora",
+    "pt": "Trabalhando {done}/{total} · economizado {saved} até agora",
+    "tr": "İşleniyor {done}/{total} · şimdiye kadar {saved} kazanıldı",
+    "de": "Arbeite {done}/{total} · bisher {saved} gespart",
+    "fr": "Au travail {done}/{total} · {saved} économisés pour l'instant"
+  },
+  "job_error": {
+    "zh": "任务执行异常，已跳过：{error}",
+    "en": "Task failed and was skipped: {error}",
+    "ru": "Задача завершилась с ошибкой и пропущена: {error}",
+    "es": "La tarea falló y se omitió: {error}",
+    "pt": "A tarefa falhou e foi ignorada: {error}",
+    "tr": "Görev başarısız oldu ve atlandı: {error}",
+    "de": "Aufgabe fehlgeschlagen und übersprungen: {error}",
+    "fr": "Tâche en échec, ignorée : {error}"
+  },
+  "backup_start": {
+    "zh": "直接修改原件模式：正在生成强制备份压缩包……",
+    "en": "In-place mode: making a forced backup zip first…",
+    "ru": "Режим правки на месте: сначала создаётся резервная копия…",
+    "es": "Modo in situ: creando primero una copia de seguridad obligatoria…",
+    "pt": "Modo de modificação direta: criando primeiro um zip de backup obrigatório…",
+    "tr": "Yerinde değiştirme modu: önce zorunlu yedek zip oluşturuluyor…",
+    "de": "Direkt-Modus: erstelle zuerst ein erzwungenes Backup-Archiv…",
+    "fr": "Mode modification sur place: création d'abord d'un zip de sauvegarde forcé…"
+  },
+  "backup_done": {
+    "zh": "备份完成：{path}",
+    "en": "Backup complete: {path}",
+    "ru": "Резервная копия создана: {path}",
+    "es": "Copia de seguridad creada: {path}",
+    "pt": "Backup concluído: {path}",
+    "tr": "Yedekleme tamamlandı: {path}",
+    "de": "Backup abgeschlossen: {path}",
+    "fr": "Sauvegarde terminée : {path}"
+  },
+  "copy_start": {
+    "zh": "正在复制到工作副本（原件保持不动）……",
+    "en": "Copying to a working copy (originals untouched)…",
+    "ru": "Копирование в рабочую копию (оригинал не трогается)…",
+    "es": "Copiando a una copia de trabajo (originales intactos)…",
+    "pt": "Copiando para uma cópia de trabalho (originais intactos)…",
+    "tr": "Çalışma kopyasına kopyalanıyor (orijinallere dokunulmaz)…",
+    "de": "Kopiere in eine Arbeitskopie (Originale bleiben unberührt)…",
+    "fr": "Copie vers une copie de travail (les originaux restent intacts)…"
+  },
+  "copy_done": {
+    "zh": "工作副本就绪：{path}",
+    "en": "Working copy ready: {path}",
+    "ru": "Рабочая копия готова: {path}",
+    "es": "Copia de trabajo lista: {path}",
+    "pt": "Cópia de trabalho pronta: {path}",
+    "tr": "Çalışma kopyası hazır: {path}",
+    "de": "Arbeitskopie bereit: {path}",
+    "fr": "Copie de travail prête : {path}"
+  },
+  "scan_start": {
+    "zh": "正在扫描资源……",
+    "en": "Scanning assets…",
+    "ru": "Сканирование ресурсов…",
+    "es": "Escaneando recursos…",
+    "pt": "Escaneando recursos…",
+    "tr": "Kaynaklar taranıyor…",
+    "de": "Scanne Assets…",
+    "fr": "Scan des assets…"
+  },
+  "scan_progress": {
+    "zh": "扫描资源 {i}/{total}：{name}",
+    "en": "Scanning assets {i}/{total}: {name}",
+    "ru": "Сканирование ресурсов {i}/{total}: {name}",
+    "es": "Escaneando recursos {i}/{total}: {name}",
+    "pt": "Escaneando recursos {i}/{total}: {name}",
+    "tr": "Kaynaklar taranıyor {i}/{total}: {name}",
+    "de": "Scanne Assets {i}/{total}: {name}",
+    "fr": "Scan des assets {i}/{total}: {name}"
+  },
+  "scan_done": {
+    "zh": "扫描到 {files} 个资源文件，实际使用字符 {chars} 个",
+    "en": "Found {files} assets, {chars} characters actually used",
+    "ru": "Найдено ресурсов: {files}, реально используемых символов: {chars}",
+    "es": "Se encontraron {files} recursos y {chars} caracteres en uso real",
+    "pt": "Encontrados {files} recursos, {chars} caracteres realmente usados",
+    "tr": "{files} kaynak bulundu, gerçekte kullanılan karakter: {chars}",
+    "de": "{files} Assets gefunden, {chars} Zeichen tatsächlich genutzt",
+    "fr": "{files} assets trouvés, {chars} caractères réellement utilisés"
+  },
+  "rewrite_refs": {
+    "zh": "正在改写 {n} 个资源的脚本引用……",
+    "en": "Rewriting script references for {n} assets…",
+    "ru": "Переписывание ссылок в скриптах для {n} ресурсов…",
+    "es": "Reescribiendo referencias de {n} recursos en los scripts…",
+    "pt": "Reescrevendo as referências de script de {n} recursos…",
+    "tr": "{n} kaynağın betik başvuruları yeniden yazılıyor…",
+    "de": "Schreibe Skript-Verweise für {n} Assets um…",
+    "fr": "Réécriture des références de script pour {n} assets…"
+  },
+  "clean_junk": {
+    "zh": "正在清理缓存、日志等可再生垃圾……",
+    "en": "Cleaning regenerable junk (cache, logs)…",
+    "ru": "Очистка воспроизводимого мусора (кэш, логи)…",
+    "es": "Limpiando basura regenerable (caché, registros)…",
+    "pt": "Limpando lixo regenerável (cache, logs)…",
+    "tr": "Yeniden üretilebilir gereksizler temizleniyor (önbellek, günlükler)…",
+    "de": "Räume nachwachsenden Müll auf (Cache, Logs)…",
+    "fr": "Nettoyage des déchets régénérables (cache, journaux)…"
+  },
+  "quarantine": {
+    "zh": "正在把 {n} 个无引用资源移入隔离区……",
+    "en": "Moving {n} unreferenced assets to quarantine…",
+    "ru": "Перемещение {n} ресурсов без ссылок в карантин…",
+    "es": "Moviendo {n} recursos sin referencias a la cuarentena…",
+    "pt": "Movendo {n} recursos sem referências para a quarentena…",
+    "tr": "Başvurusu olmayan {n} kaynak karantinaya taşınıyor…",
+    "de": "Verschiebe {n} Assets ohne Verweise in die Quarantäne…",
+    "fr": "Déplacement de {n} assets non référencés vers la quarantaine…"
+  },
+  "lint_start": {
+    "zh": "正在用官方 lint 验证优化后的工程……",
+    "en": "Running official lint on the optimized project…",
+    "ru": "Проверка оптимизированного проекта официальным lint…",
+    "es": "Ejecutando el lint oficial sobre el proyecto optimizado…",
+    "pt": "Executando o lint oficial no projeto otimizado…",
+    "tr": "Optimize edilmiş proje resmî lint ile doğrulanıyor…",
+    "de": "Führe offizielles lint auf dem optimierten Projekt aus…",
+    "fr": "Lint officiel en cours sur le projet optimisé…"
+  },
+  "lint_result": {
+    "zh": "lint 结果：{summary}",
+    "en": "lint result: {summary}",
+    "ru": "Результат lint: {summary}",
+    "es": "Resultado del lint: {summary}",
+    "pt": "resultado do lint: {summary}",
+    "tr": "lint sonucu: {summary}",
+    "de": "lint-Ergebnis: {summary}",
+    "fr": "résultat du lint: {summary}"
+  },
+  "project_done": {
+    "zh": "工程优化完成，共节省约 {saved}",
+    "en": "Project optimization done, saved about {saved}",
+    "ru": "Оптимизация проекта завершена, сэкономлено около {saved}",
+    "es": "Optimización del proyecto completada; ahorro de unos {saved}",
+    "pt": "Otimização do projeto concluída, economia de cerca de {saved}",
+    "tr": "Proje optimizasyonu tamamlandı, yaklaşık {saved} kazanıldı",
+    "de": "Projekt-Optimierung fertig, ca. {saved} gespart",
+    "fr": "Optimisation du projet terminée, environ {saved} économisés"
+  },
+  "dist_scan": {
+    "zh": "扫描到 {loose} 个散落资源、{packed} 个封包内资源，实际使用字符 {chars} 个",
+    "en": "Found {loose} loose + {packed} archived assets, {chars} characters actually used",
+    "ru": "Найдено {loose} отдельных и {packed} архивных ресурсов, символов: {chars}",
+    "es": "Se encontraron {loose} recursos sueltos y {packed} en archivo; {chars} caracteres en uso",
+    "pt": "Encontrados {loose} recursos soltos + {packed} arquivados, {chars} caracteres realmente usados",
+    "tr": "{loose} ayrı + {packed} arşiv içi kaynak bulundu, gerçekte kullanılan karakter: {chars}",
+    "de": "{loose} lose + {packed} Assets im Archiv gefunden, {chars} Zeichen tatsächlich genutzt",
+    "fr": "{loose} assets isolés + {packed} en archive trouvés, {chars} caractères réellement utilisés"
+  },
+  "decompile_start": {
+    "zh": "正在反编译编译脚本（解锁格式转换能力）……",
+    "en": "Decompiling scripts (unlocking format conversion)…",
+    "ru": "Декомпиляция скриптов (открывает преобразование форматов)…",
+    "es": "Descompilando scripts (se habilita la conversión de formatos)…",
+    "pt": "Descompilando scripts (liberando a conversão de formatos)…",
+    "tr": "Betikler kaynak koda çevriliyor (biçim dönüşümü açılıyor)…",
+    "de": "Dekompiliere Skripte (schaltet Formatkonvertierung frei)…",
+    "fr": "Décompilation des scripts (débloque la conversion de formats)…"
+  },
+  "decompile_done": {
+    "zh": "反编译完成：{ok} 个成功，{failed} 个失败，{skipped} 个已有源码跳过",
+    "en": "Decompile complete: {ok} succeeded, {failed} failed, {skipped} skipped (sources already present)",
+    "ru": "Декомпиляция завершена: успешно {ok}, ошибок {failed}, пропущено {skipped} (исходники уже есть)",
+    "es": "Descompilación completada: {ok} con éxito, {failed} fallidos, {skipped} omitidos (ya tenían fuentes)",
+    "pt": "Descompilação concluída: {ok} com sucesso, {failed} com falha, {skipped} ignorados (já tinham fontes)",
+    "tr": "Kaynak koda çevirme tamamlandı: {ok} başarılı, {failed} başarısız, {skipped} atlandı (kaynak zaten var)",
+    "de": "Dekompilierung fertig: {ok} erfolgreich, {failed} fehlgeschlagen, {skipped} übersprungen (Quellen vorhanden)",
+    "fr": "Décompilation terminée : {ok} réussis, {failed} échoués, {skipped} ignorés (sources déjà présentes)"
+  },
+  "rpa_rebuild": {
+    "zh": "正在重建封包 {rpa}（替换 {n} 个文件）……",
+    "en": "Rebuilding archive {rpa} (replacing {n} files)…",
+    "ru": "Пересборка архива {rpa} (замена файлов: {n})…",
+    "es": "Reconstruyendo el archivo {rpa} (reemplazando {n} archivos)…",
+    "pt": "Reconstruindo o arquivo {rpa} (substituindo {n} arquivos)…",
+    "tr": "{rpa} arşivi yeniden oluşturuluyor ({n} dosya değiştiriliyor)…",
+    "de": "Baue Archiv {rpa} neu (ersetze {n} Dateien)…",
+    "fr": "Reconstruction de l'archive {rpa} (remplacement de {n} fichiers)…"
+  },
+  "dist_done": {
+    "zh": "成品瘦身完成，共节省约 {saved}",
+    "en": "Distribution slimming done, saved about {saved}",
+    "ru": "Сжатие сборки завершено, сэкономлено около {saved}",
+    "es": "Adelgazamiento de la distribución completado; ahorro de unos {saved}",
+    "pt": "Redução da distribuição concluída, economia de cerca de {saved}",
+    "tr": "Dağıtım küçültme tamamlandı, yaklaşık {saved} kazanıldı",
+    "de": "Dist-Abspecken fertig, ca. {saved} gespart",
+    "fr": "Allègement de la distribution terminé, environ {saved} économisés"
+  },
+  "unpack_start": {
+    "zh": "正在解压压缩包 {name}……",
+    "en": "Unpacking archive {name}…",
+    "ru": "Распаковка архива {name}…",
+    "es": "Descomprimiendo el archivo {name}…",
+    "pt": "Extraindo o arquivo {name}…",
+    "tr": "{name} arşivi açılıyor…",
+    "de": "Entpacke Archiv {name}…",
+    "fr": "Décompression de l'archive {name}…"
+  },
+  "apk_forward": {
+    "zh": "压缩包里装的是 APK，自动转入 APK 瘦身：{name}",
+    "en": "Archive contains an APK — switching to APK slimming: {name}",
+    "ru": "В архиве найден APK — переключаюсь на его сжатие: {name}",
+    "es": "El archivo contiene un APK: cambiando al adelgazamiento de APK: {name}",
+    "pt": "O arquivo contém um APK — mudando para a redução de APK: {name}",
+    "tr": "Arşiv bir APK içeriyor — APK küçültmeye geçiliyor: {name}",
+    "de": "Das Archiv enthält ein APK — wechsle zum APK-Abspecken: {name}",
+    "fr": "L'archive contient un APK — bascule vers l'allègement d'APK: {name}"
+  },
+  "unpack_done": {
+    "zh": "已定位成品目录：{name}",
+    "en": "Located distribution folder: {name}",
+    "ru": "Найдена папка сборки: {name}",
+    "es": "Carpeta de distribución localizada: {name}",
+    "pt": "Pasta de distribuição localizada: {name}",
+    "tr": "Dağıtım klasörü bulundu: {name}",
+    "de": "Dist-Ordner gefunden: {name}",
+    "fr": "Dossier de distribution localisé: {name}"
+  },
+  "repack_start": {
+    "zh": "正在把瘦身成品重新打包成 zip……",
+    "en": "Repacking the slimmed distribution as a zip…",
+    "ru": "Перепаковка сжатой сборки в zip…",
+    "es": "Reempaquetando la distribución adelgazada como zip…",
+    "pt": "Reempacotando a distribuição reduzida como zip…",
+    "tr": "Küçültülmüş dağıtım zip olarak yeniden paketleniyor…",
+    "de": "Verpacke das abgespeckte Dist neu als Zip…",
+    "fr": "Repack de la distribution allégée en zip…"
+  },
+  "repack_done": {
+    "zh": "交付包已生成：{path}",
+    "en": "Delivery archive created: {path}",
+    "ru": "Итоговый архив создан: {path}",
+    "es": "Archivo de entrega creado: {path}",
+    "pt": "Arquivo de entrega criado: {path}",
+    "tr": "Teslim arşivi oluşturuldu: {path}",
+    "de": "Auslieferungs-Archiv erstellt: {path}",
+    "fr": "Archive de livraison créée : {path}"
+  },
+  "apk_analyze_start": {
+    "zh": "正在分析 APK（只读，不会修改原包）：{name}",
+    "en": "Analyzing APK (read-only, original untouched): {name}",
+    "ru": "Анализ APK (только чтение, оригинал не изменяется): {name}",
+    "es": "Analizando el APK (solo lectura, el original no se toca): {name}",
+    "pt": "Analisando o APK (somente leitura, original intacto): {name}",
+    "tr": "APK analiz ediliyor (salt okunur, orijinal değişmez): {name}",
+    "de": "Analysiere APK (nur lesend, Original unberührt): {name}",
+    "fr": "Analyse de l'APK (lecture seule, original intact) : {name}"
+  },
+  "apk_analyze_done": {
+    "zh": "APK 分析完成：可优化资源 {n} 个",
+    "en": "APK analysis complete: {n} optimizable assets",
+    "ru": "Анализ APK завершён: оптимизируемых ресурсов {n}",
+    "es": "Análisis del APK completado: {n} recursos optimizables",
+    "pt": "Análise do APK concluída: {n} recursos otimizáveis",
+    "tr": "APK analizi tamamlandı: {n} optimize edilebilir kaynak",
+    "de": "APK-Analyse fertig: {n} optimierbare Assets",
+    "fr": "Analyse de l'APK terminée : {n} assets optimisables"
+  },
+  "apk_entries": {
+    "zh": "APK 共 {total} 个条目，可优化资源 {optimizable} 个",
+    "en": "APK: {total} entries total, {optimizable} optimizable",
+    "ru": "APK: всего записей {total}, оптимизируемых {optimizable}",
+    "es": "APK: {total} entradas en total, {optimizable} optimizables",
+    "pt": "APK: {total} entradas no total, {optimizable} otimizáveis",
+    "tr": "APK: toplam {total} girdi, {optimizable} tanesi optimize edilebilir",
+    "de": "APK: {total} Einträge gesamt, {optimizable} optimierbar",
+    "fr": "APK: {total} entrées au total, {optimizable} optimisables"
+  },
+  "apk_charset": {
+    "zh": "从 APK 内脚本提取到 {n} 个字符",
+    "en": "Extracted {n} characters from APK scripts",
+    "ru": "Из скриптов APK извлечено символов: {n}",
+    "es": "Se extrajeron {n} caracteres de los scripts del APK",
+    "pt": "Extraídos {n} caracteres dos scripts do APK",
+    "tr": "APK betiklerinden {n} karakter çıkarıldı",
+    "de": "{n} Zeichen aus APK-Skripten extrahiert",
+    "fr": "{n} caractères extraits des scripts de l'APK"
+  },
+  "apk_progress": {
+    "zh": "瘦身 {i}/{total}：{name}",
+    "en": "Slimming {i}/{total}: {name}",
+    "ru": "Сжатие {i}/{total}: {name}",
+    "es": "Adelgazando {i}/{total}: {name}",
+    "pt": "Reduzindo {i}/{total}: {name}",
+    "tr": "Küçültülüyor {i}/{total}: {name}",
+    "de": "Abspecken {i}/{total}: {name}",
+    "fr": "Allègement {i}/{total}: {name}"
+  },
+  "apk_remap": {
+    "zh": "已注入重映射脚本，{n} 个资源将在运行时透明换格式（实验性）",
+    "en": "Remap script injected: {n} assets will transparently switch format at runtime (experimental)",
+    "ru": "Скрипт переназначения внедрён: {n} ресурсов прозрачно сменят формат при запуске (экспериментально)",
+    "es": "Script de remapeo inyectado: {n} recursos cambiarán de formato en tiempo de ejecución (experimental)",
+    "pt": "Script de remapeamento injetado: {n} recursos trocarão de formato de forma transparente em tempo de execução (experimental)",
+    "tr": "Yeniden eşleme betiği eklendi: {n} kaynak çalışma sırasında şeffafça biçim değiştirecek (deneysel)",
+    "de": "Remap-Skript eingefügt: {n} Assets wechseln zur Laufzeit transparent das Format (experimentell)",
+    "fr": "Script de remappage injecté: {n} assets changeront de format en toute transparence à l'exécution (expérimental)"
+  },
+  "apk_repack": {
+    "zh": "重新打包（替换 {n} 个条目）……",
+    "en": "Repacking (replacing {n} entries)…",
+    "ru": "Перепаковка (замена записей: {n})…",
+    "es": "Reempaquetando (reemplazando {n} entradas)…",
+    "pt": "Reempacotando (substituindo {n} entradas)…",
+    "tr": "Yeniden paketleniyor ({n} girdi değiştiriliyor)…",
+    "de": "Verpacke neu (ersetze {n} Einträge)…",
+    "fr": "Repack (remplacement de {n} entrées)…"
+  },
+  "apk_align": {
+    "zh": "正在对齐 APK（zipalign）……",
+    "en": "Aligning APK (zipalign)…",
+    "ru": "Выравнивание APK (zipalign)…",
+    "es": "Alineando el APK (zipalign)…",
+    "pt": "Alinhando o APK (zipalign)…",
+    "tr": "APK hizalanıyor (zipalign)…",
+    "de": "Richte APK aus (zipalign)…",
+    "fr": "Alignement de l'APK (zipalign)…"
+  },
+  "apk_keygen": {
+    "zh": "正在生成新的签名钥匙……",
+    "en": "Generating a new signing key…",
+    "ru": "Создание нового ключа подписи…",
+    "es": "Generando una nueva clave de firma…",
+    "pt": "Gerando uma nova chave de assinatura…",
+    "tr": "Yeni imzalama anahtarı oluşturuluyor…",
+    "de": "Erzeuge einen neuen Signaturschlüssel…",
+    "fr": "Génération d'une nouvelle clé de signature…"
+  },
+  "apk_keygen_done": {
+    "zh": "签名钥匙已生成：{name}",
+    "en": "Signing key generated: {name}",
+    "ru": "Ключ подписи создан: {name}",
+    "es": "Clave de firma generada: {name}",
+    "pt": "Chave de assinatura gerada: {name}",
+    "tr": "İmzalama anahtarı oluşturuldu: {name}",
+    "de": "Signaturschlüssel erstellt: {name}",
+    "fr": "Clé de signature générée : {name}"
+  },
+  "apk_done": {
+    "zh": "APK 瘦身完成，共节省约 {saved}",
+    "en": "APK slimming done, saved about {saved}",
+    "ru": "Сжатие APK завершено, сэкономлено около {saved}",
+    "es": "Adelgazamiento del APK completado; ahorro de unos {saved}",
+    "pt": "Redução do APK concluída, economia de cerca de {saved}",
+    "tr": "APK küçültme tamamlandı, yaklaşık {saved} kazanıldı",
+    "de": "APK-Abspecken fertig, ca. {saved} gespart",
+    "fr": "Allègement de l'APK terminé, environ {saved} économisés"
+  },
+  "font_charset_start": {
+    "zh": "正在从文本来源提取字符集……",
+    "en": "Extracting charset from text sources…",
+    "ru": "Извлечение набора символов из текстовых источников…",
+    "es": "Extrayendo el juego de caracteres de las fuentes de texto…",
+    "pt": "Extraindo o conjunto de caracteres das fontes de texto…",
+    "tr": "Metin kaynaklarından karakter seti çıkarılıyor…",
+    "de": "Extrahiere Zeichensatz aus Textquellen…",
+    "fr": "Extraction du jeu de caractères depuis les sources de texte…"
+  },
+  "font_charset_ready": {
+    "zh": "字符集就绪：{n} 个字符（含保底字符）",
+    "en": "Charset ready: {n} characters (incl. fallback)",
+    "ru": "Набор символов готов: {n} символов (включая резервные)",
+    "es": "Juego de caracteres listo: {n} caracteres (incl. reserva)",
+    "pt": "Conjunto de caracteres pronto: {n} caracteres (incl. reserva)",
+    "tr": "Karakter seti hazır: {n} karakter (yedekler dahil)",
+    "de": "Zeichensatz bereit: {n} Zeichen (inkl. Reserve)",
+    "fr": "Jeu de caractères prêt : {n} caractères (secours inclus)"
+  },
+  "font_slim_start": {
+    "zh": "正在瘦身 {name}……",
+    "en": "Slimming {name}…",
+    "ru": "Сжатие {name}…",
+    "es": "Adelgazando {name}…",
+    "pt": "Reduzindo {name}…",
+    "tr": "{name} küçültülüyor…",
+    "de": "Specke {name} ab…",
+    "fr": "Allègement de {name}…"
+  },
+  "font_slim_progress": {
+    "zh": "正在瘦身第 {i}/{total} 个字重……",
+    "en": "Slimming weight {i}/{total}…",
+    "ru": "Сжатие начертания {i}/{total}…",
+    "es": "Adelgazando el peso {i}/{total}…",
+    "pt": "Reduzindo o peso {i}/{total}…",
+    "tr": "{i}/{total}. kalınlık küçültülüyor…",
+    "de": "Specke Schnitt {i}/{total} ab…",
+    "fr": "Allègement de la graisse {i}/{total}…"
+  },
+  "font_error": {
+    "zh": "字体瘦身失败：{error}",
+    "en": "Font slimming failed: {error}",
+    "ru": "Ошибка сжатия шрифта: {error}",
+    "es": "Error al adelgazar la fuente: {error}",
+    "pt": "Falha na redução da fonte: {error}",
+    "tr": "Yazı tipi küçültme başarısız: {error}",
+    "de": "Schrift-Abspecken fehlgeschlagen: {error}",
+    "fr": "Échec de l'allègement de la police : {error}"
+  },
+  "font_done": {
+    "zh": "完成：生成 {n} 个瘦身字体 + 字符清单",
+    "en": "Done: {n} slimmed fonts + character list",
+    "ru": "Готово: {n} сжатых шрифтов + список символов",
+    "es": "Hecho: {n} fuentes adelgazadas + lista de caracteres",
+    "pt": "Concluído: {n} fontes reduzidas + lista de caracteres",
+    "tr": "Tamamlandı: {n} küçültülmüş yazı tipi + karakter listesi",
+    "de": "Fertig: {n} abgespeckte Schriften + Zeichenliste",
+    "fr": "Terminé : {n} polices allégées + liste des caractères"
+  }
+};
+
+/* font_tool 在“没有任何字重瘦身成功”时把内部哨兵 no_outputs 塞进
+   error 参数；翻译前先换成可读措辞，避免日志里出现内部标记。 */
+const LOG_PARAM_ALIASES = {
+  "no_outputs": {
+    "zh": "没有任何字重瘦身成功",
+    "en": "no weight was slimmed successfully",
+    "ru": "ни одно начертание не удалось сжать",
+    "es": "no se pudo adelgazar ningún peso",
+    "pt": "nenhum peso pôde ser reduzido",
+    "tr": "hiçbir kalınlık küçültülemedi",
+    "de": "kein Schnitt konnte abgespeckt werden",
+    "fr": "aucune graisse n'a pu être allégée"
+  }
+};
+
+function fillLogTemplate(tpl, params) {
+  const values = params && typeof params === "object" ? params : {};
+  return String(tpl).replace(/\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_m, key) => {
+    const v = values[key];
+    if (v == null) return "";      // 缺 params 填空串，绝不把 {i} 字面量漏到界面
+    const alias = key === "error" ? LOG_PARAM_ALIASES[String(v)] : null;
+    return alias ? (alias[LANG] || alias.en) : String(v);
+  });
+}
+
+/* 日志翻译入口：优先吃结构化日志对象 {message, code, params}，
+   没有可用 code 时退回旧的中文句式正则（LOG_PATTERNS），最后原文。 */
+function trLog(log) {
+  const isObj = log !== null && typeof log === "object";
+  const msg = isObj ? String(log.message ?? "") : String(log ?? "");
+  const code = isObj ? log.code : null;
+  const tpls = (typeof code === "string"
+                && Object.prototype.hasOwnProperty.call(LOG_CODES, code))
+    ? LOG_CODES[code] : null;
+  if (tpls) {
+    const tpl = tpls[LANG] || tpls.en;   // 缺该语言模板时回退英文
+    if (tpl) return fillLogTemplate(tpl, isObj ? log.params : null);
+  }
   if (LANG === "zh") return msg;
   for (const [re, tpl] of LOG_PATTERNS) {
     if (re.test(msg)) {

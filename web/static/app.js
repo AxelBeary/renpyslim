@@ -289,8 +289,8 @@ async function pollAnalyze(path, gen) {
   const lines = [];
   for (const l of d.logs) {
     ANALYZE_IDX++;
-    lines.push(`[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}`);
-    if (stateEl) stateEl.textContent = trLog(l.message);
+    lines.push(`[${t("stages")[l.stage] || l.stage}] ${trLog(l)}`);
+    if (stateEl) stateEl.textContent = trLog(l);
   }
   if (logEl && lines.length) {
     const all = (logEl.textContent + lines.join("\n") + "\n").split("\n").filter(Boolean);
@@ -678,7 +678,7 @@ async function pollJob(gen) {
   }
   const log = document.getElementById("log");
   for (const l of d.logs) {
-    log.textContent += `[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}\n`;
+    log.textContent += `[${t("stages")[l.stage] || l.stage}] ${trLog(l)}\n`;
     LOGIDX++;
     tickProgress(l.message);
   }
@@ -979,7 +979,7 @@ async function pollFontSlim(gen) {
   for (const l of d.logs) {
     FS_IDX++;
     if (logEl) logEl.textContent +=
-      `[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}\n`;
+      `[${t("stages")[l.stage] || l.stage}] ${trLog(l)}\n`;
   }
   if (d.status === "running") { setTimeout(() => pollFontSlim(gen), 500); return; }
   document.getElementById("fsrun").disabled = false;
@@ -1122,8 +1122,8 @@ async function pollApkAnalyze(path, gen) {
   const lines = [];
   for (const l of d.logs) {
     APK_ANALYZE_IDX++;
-    lines.push(`[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}`);
-    if (stateEl) stateEl.textContent = trLog(l.message);
+    lines.push(`[${t("stages")[l.stage] || l.stage}] ${trLog(l)}`);
+    if (stateEl) stateEl.textContent = trLog(l);
   }
   if (logEl && lines.length) {
     logEl.textContent = (logEl.textContent + lines.join("\n") + "\n")
