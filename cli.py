@@ -46,7 +46,7 @@ if _missing:
     sys.exit(1)
 
 from rtools import packager, pipeline, scanner, analyzer, charset, font_tool  # noqa: E402
-from rtools import archives, crashdump  # noqa: E402
+from rtools import archives, crashdump, jobstore, backup  # noqa: E402
 from rtools import __version__  # noqa: E402
 from rtools.config import (OptimizeOptions, CharsetOptions, PRESETS,  # noqa: E402
                            DEFAULT_PRESET)
@@ -246,7 +246,8 @@ def cmd_optimize(args) -> int:
                                              output_dir, progress,
                                              password=args.password,
                                              cancel=cancel)
-    except (pipeline.PipelineError, archives.ArchiveError) as e:
+    except (pipeline.PipelineError, archives.ArchiveError,
+            backup.BackupError) as e:
         return _fail(str(e))
     result.pop("report_dict", None)
     result["report"] = str(result["report"])
@@ -288,7 +289,7 @@ def cmd_full(args) -> int:
     try:
         opt_result = pipeline.run_project(str(path), opts, work_root,
                                           output_dir, progress, cancel=cancel)
-    except pipeline.PipelineError as e:
+    except (pipeline.PipelineError, backup.BackupError) as e:
         return _fail(str(e))
 
     sdk = packager.find_sdk(args.sdk)
@@ -345,6 +346,24 @@ def cmd_slimfont(args) -> int:
     except font_tool.FontSlimError as e:
         return _fail(str(e))
     return _ok({"result": result})
+
+
+def _history_limit(value: str) -> int:
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("必须是整数")
+    if not 1 <= number <= jobstore.MAX_JOBS:
+        raise argparse.ArgumentTypeError(
+            f"取值必须在 1..{jobstore.MAX_JOBS} 之间")
+    return number
+
+
+def cmd_history(args) -> int:
+    """查看或清空本机任务历史。"""
+    if args.clear:
+        return _ok({"cleared": jobstore.clear()})
+    return _ok({"jobs": jobstore.list_jobs(limit=args.limit)})
 
 
 def main(argv=None) -> int:
@@ -432,6 +451,14 @@ def main(argv=None) -> int:
     p.add_argument("--fullwidth", action="store_true", help="保底集加全角符号")
     p.add_argument("--kana", action="store_true", help="保底集加日文假名")
     p.set_defaults(func=cmd_slimfont)
+
+    p = sub.add_parser("history", help="查看或清理本机任务历史")
+    p.add_argument("--limit", type=_history_limit,
+                   default=jobstore.DEFAULT_LIMIT,
+                   help=f"最多返回几条（1..{jobstore.MAX_JOBS}，默认 "
+                        f"{jobstore.DEFAULT_LIMIT}）")
+    p.add_argument("--clear", action="store_true", help="清空任务历史")
+    p.set_defaults(func=cmd_history)
 
     p = sub.add_parser("package", help="调用官方 SDK 打包")
     p.add_argument("path")
