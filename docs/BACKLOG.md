@@ -106,7 +106,7 @@
 | G7 | 可访问性 | — | 导航改原生按钮 + `aria-current`、焦点可见、读屏标签与 `aria-live` 状态播报、尊重 reduced-motion、亮色主题对比度修正 | index.html / styles.css / app.js 落地；test_frontend_v017 校验关键 aria 钩子；styles.css 提供 `:focus-visible`、`prefers-reduced-motion` 与亮色对比度令牌 | ✅ |
 | G8 | 前端完成度 | — | 三件套拆分、首屏三步引导条、主区宽度放宽（max-width 1120px）、窄窗口侧边栏图标化、版本/i18n 文案细节统一 | index.html 只留结构与 `data-i18n`；styles.css 负责响应式与引导条；test_frontend_syntax 校验拆分引用与加载顺序 | ✅ |
 | G9 | 代码优雅度 | — | 前端拆成零构建 styles.css / i18n.js / app.js，不引入打包器 | 三件套拆分完成；`node --check` 通过（无 Node 时 test_frontend_syntax 自动跳过）；拆分后缺键/语法漂移有测试兜底 | ✅ |
-| G10 | 验收与文档 | 新命令进 AGENTS / README（中英同步） | 八语界面键齐全 | AGENTS 中英双节同步 `history` / APK 预分析 / 只优化 / 平台校验 / 磁盘预检 / 历史隐私 / 结构化日志；README、ARCHITECTURE、STATUS、CONTRIBUTING 收口；版本号 0.17.0；issue 模板版本示例同步。**边界：七份翻译 README 本轮不动**（中文事实源先行，翻译批次后续跟进） | ✅ |
+| G10 | 验收与文档 | 新命令进 AGENTS / README（中英同步） | 八语界面键齐全 | AGENTS 中英双节同步 `history` / APK 预分析 / 只优化 / 平台校验 / 磁盘预检 / 历史隐私 / 结构化日志；README、ARCHITECTURE、STATUS、CONTRIBUTING 收口；版本号 0.17.0；issue 模板版本示例同步；七份翻译 README（英/俄/西/葡/土/德/法）已同步 v0.17.0，断链 0 | ✅ |
 
 批次验收线：`python -m pytest tests -q` 全绿（数量以实际收集为准）；ruff F/E9 全绿；
 `python -m pip check` 无冲突；前端三件套 `node --check` 通过（无 Node 环境自动跳过）；
