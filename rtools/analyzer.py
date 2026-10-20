@@ -12,10 +12,32 @@ def _kb(size: int) -> float:
     return size / 1024
 
 
-def _analyze_image(a: AssetInfo, mode: str) -> AnalysisEntry:
+def _analyze_image(a: AssetInfo, mode: str,
+                   apk_remap: bool = False) -> AnalysisEntry:
     entry = AnalysisEntry(asset=a)
     kb = _kb(a.size)
     is_png = a.ext == ".png"
+
+    if mode == "apk":
+        # APK 只读预分析：只按条目体积与格式给粗略预估。
+        # 默认档只做同名重压；开“最大瘦身”才会 PNG/JPG → WebP。
+        ext = a.ext
+        if ext in (".png", ".jpg", ".jpeg") and a.size >= 1024:
+            if apk_remap:
+                entry.priority = Priority.MEDIUM if kb >= 1024 else Priority.LOW
+                entry.issues.append(Issue(
+                    message=f"可换成更省体积的 WebP（{_fmt_size(a.size)}）。",
+                    suggestion="开启“最大瘦身”后转 WebP，通常能再省一半左右。",
+                ))
+                entry.est_saving = int(a.size * 0.5)
+            else:
+                entry.priority = Priority.LOW
+                entry.issues.append(Issue(
+                    message=f"可同名重压（{_fmt_size(a.size)}）。",
+                    suggestion="默认档会按当前画质档重压；想再省一半可开启“最大瘦身”转 WebP。",
+                ))
+                entry.est_saving = int(a.size * (0.15 if is_png else 0.08))
+        return entry
 
     if kb >= cfg.HUGE_IMAGE_KB:
         entry.priority = Priority.HIGH
@@ -48,9 +70,37 @@ def _analyze_image(a: AssetInfo, mode: str) -> AnalysisEntry:
     return entry
 
 
-def _analyze_audio(a: AssetInfo, mode: str) -> AnalysisEntry:
+def _analyze_audio(a: AssetInfo, mode: str,
+                   apk_remap: bool = False) -> AnalysisEntry:
     entry = AnalysisEntry(asset=a)
     kb = _kb(a.size)
+
+    if mode == "apk":
+        # 默认档只重编 OGG/MP3 的码率；WAV 要有重映射（最大瘦身）才转 OGG
+        if a.ext == ".wav":
+            if apk_remap:
+                entry.priority = Priority.HIGH if kb > 512 else Priority.MEDIUM
+                entry.issues.append(Issue(
+                    message=f"WAV 无压缩，体积大（{_fmt_size(a.size)}）。",
+                    suggestion="开启“最大瘦身”后转 OGG，通常能省 80% 左右。",
+                ))
+                entry.est_saving = int(a.size * 0.8)
+            else:
+                entry.priority = Priority.LOW
+                entry.issues.append(Issue(
+                    message=f"WAV 无压缩（{_fmt_size(a.size)}），默认档不会处理。",
+                    suggestion="需要开启“最大瘦身”才能转 OGG。",
+                ))
+        elif a.ext in (".mp3", ".ogg"):
+            entry.priority = Priority.LOW
+            entry.issues.append(Issue(
+                message=f"可降码率重编（{_fmt_size(a.size)}）。",
+                suggestion=("开启“最大瘦身”转 OGG 收益更大。" if apk_remap
+                            else "默认档会按当前码率档重编。"),
+            ))
+            entry.est_saving = int(a.size * (0.35 if apk_remap and a.ext == ".mp3"
+                                             else 0.2))
+        return entry
 
     if a.ext == ".wav":
         entry.priority = Priority.HIGH if kb > 512 else Priority.MEDIUM
@@ -84,9 +134,19 @@ def _analyze_audio(a: AssetInfo, mode: str) -> AnalysisEntry:
     return entry
 
 
-def _analyze_font(a: AssetInfo) -> AnalysisEntry:
+def _analyze_font(a: AssetInfo, mode: str = "project") -> AnalysisEntry:
     entry = AnalysisEntry(asset=a)
     kb = _kb(a.size)
+    if mode == "apk":
+        # 与 slim_apk 的实际处理门槛一致：256KB 以上的 ttf/otf 才做字体瘦身
+        if a.ext in (".ttf", ".otf") and kb >= 256:
+            entry.priority = Priority.HIGH if kb >= 1024 else Priority.MEDIUM
+            entry.issues.append(Issue(
+                message=f"字体可瘦身（{_fmt_size(a.size)}）。",
+                suggestion="只保留游戏实际用到的字符，通常能减 60~80%。",
+            ))
+            entry.est_saving = int(a.size * (0.8 if kb >= 1024 else 0.6))
+        return entry
     if a.ext in (".ttc", ".otc"):
         entry.issues.append(Issue(
             message="字体集合文件（TTC/OTC）当前版本不支持自动瘦身。",
@@ -122,17 +182,21 @@ def _analyze_video(a: AssetInfo) -> AnalysisEntry:
     return entry
 
 
-def analyze(assets: list[AssetInfo], root: str, mode: str) -> AnalysisReport:
-    """mode: "project"（工程）或 "dist"（已打包成品）。"""
+def analyze(assets: list[AssetInfo], root: str, mode: str,
+            apk_remap: bool = False) -> AnalysisReport:
+    """mode: "project"（工程）/ "dist"（成品）/ "apk"（APK 只读预分析）。
+
+    apk_remap 仅对 mode="apk" 有意义：开启后按“最大瘦身”口径估算。
+    """
     report = AnalysisReport(root=root, mode=mode)
     for a in assets:
         report.total_size += a.size
         if a.kind == AssetKind.IMAGE:
-            entry = _analyze_image(a, mode)
+            entry = _analyze_image(a, mode, apk_remap)
         elif a.kind == AssetKind.AUDIO:
-            entry = _analyze_audio(a, mode)
+            entry = _analyze_audio(a, mode, apk_remap)
         elif a.kind == AssetKind.FONT:
-            entry = _analyze_font(a)
+            entry = _analyze_font(a, mode)
         elif a.kind == AssetKind.VIDEO:
             entry = _analyze_video(a)
         else:

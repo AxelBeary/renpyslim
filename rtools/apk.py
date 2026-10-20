@@ -22,13 +22,15 @@ import zipfile
 from pathlib import Path
 from typing import Optional
 
+from . import analyzer as analyzer_mod
 from . import charset as charset_mod
 from . import remap as remap_mod
 from .audio_optimizer import convert_audio, reencode_audio
+from .backup import BackupError, ensure_free_space
 from .config import PRESETS, DEFAULT_PRESET, CharsetOptions
 from .font_optimizer import subset_font
 from .image_optimizer import optimize_image
-from .models import AssetKind, Progress, kind_of
+from .models import AssetInfo, AssetKind, Progress, kind_of
 from .procutil import run_quiet
 from .utils import find_suffix_clashes, safe_join
 
@@ -270,6 +272,89 @@ def _extract_charset_from_apk(extract_root: Path,
     return chars
 
 
+def analyze_apk(apk_path: str,
+                progress: Optional[Progress] = None) -> dict:
+    """只读预分析 APK：只读 ZIP 条目表，不解包、不改动原包。
+
+    返回 {"report": AnalysisReport(mode="apk"), "apk": 汇总}；
+    汇总同时给出默认档与“最大瘦身”档两套预估，供用户决定怎么跑。
+    """
+    p = progress or Progress()
+    apk = Path(apk_path)
+    if not apk.exists():
+        raise ApkError(f"APK 不存在：{apk_path}")
+    if apk.suffix.lower() != ".apk":
+        raise ApkError(f"只接受 .apk 文件：{apk_path}")
+    p.emit("analyze", f"正在分析 APK（只读，不会修改原包）：{apk.name}",
+           code="apk_analyze_start", params={"name": apk.name})
+    try:
+        zf = zipfile.ZipFile(str(apk))
+    except (zipfile.BadZipFile, OSError) as e:
+        raise ApkError(f"无法打开 APK（不是有效的 APK/ZIP 文件）：{e}") from e
+
+    assets: list[AssetInfo] = []
+    total_entries = 0
+    script_count = 0
+    signed = False
+    has_renpy_layout = False
+    with zf:
+        for info in zf.infolist():
+            if info.is_dir():
+                continue
+            total_entries += 1
+            name = info.filename
+            suffix = Path(name).suffix.lower()
+            if name.startswith("META-INF/") and suffix in (".rsa", ".dsa", ".ec"):
+                signed = True
+            if name.startswith(X_GAME_PREFIX) or name.startswith("assets/x-renpy/"):
+                has_renpy_layout = True
+            if (name.startswith(X_GAME_PREFIX)
+                    and suffix in (".rpyc", ".rpymc", ".rpy", ".txt")):
+                script_count += 1
+            if any(name.startswith(pre) for pre in UNTOUCHABLE_PREFIXES):
+                continue
+            if not name.startswith("assets/"):
+                continue
+            kind = kind_of(suffix)
+            if kind == AssetKind.OTHER:
+                continue
+            rel = apk_entry_to_game_rel(name) or name
+            assets.append(AssetInfo(path=f"{apk_path}!/{name}", rel=rel,
+                                    kind=kind, size=info.file_size))
+
+    base = analyzer_mod.analyze(assets, str(apk), "apk", apk_remap=False)
+    maxi = analyzer_mod.analyze(assets, str(apk), "apk", apk_remap=True)
+    base_saving = sum(e.est_saving or 0 for e in base.entries)
+    remap_saving = sum(e.est_saving or 0 for e in maxi.entries)
+    if not has_renpy_layout:
+        base.warnings.append(
+            "包里没找到 assets/x-game 或 assets/x-renpy，"
+            "看起来不像 Ren'Py 游戏的 APK；请确认选对了文件。")
+    if not signed:
+        base.warnings.append(
+            "原 APK 未签名或签名信息不可见；瘦身后必须重新签名才能安装。")
+    base.warnings.append(
+        f"这是只读预分析：没有解包、没有修改原 APK。"
+        f"可优化资源 {len(assets)} 个；实际节省以执行结果为准。")
+
+    summary = {
+        "apk": str(apk),
+        "apk_size": apk.stat().st_size,
+        "total_entries": total_entries,
+        "optimizable": len(assets),
+        "size": base.total_size,
+        "script_count": script_count,
+        "signed": signed,
+        "est_saving": base_saving,
+        "est_saving_remap": remap_saving,
+        "remap_gain": max(0, remap_saving - base_saving),
+        "has_renpy_layout": has_renpy_layout,
+    }
+    p.emit("analyze", f"APK 分析完成：可优化资源 {len(assets)} 个",
+           code="apk_analyze_done", params={"n": len(assets)})
+    return {"report": base, "apk": summary}
+
+
 def slim_apk(apk_path: str, preset_name: str,
               charset_opts: Optional[CharsetOptions] = None,
               sdk: Optional[str] = None,
@@ -311,6 +396,17 @@ def slim_apk(apk_path: str, preset_name: str,
         zf = zipfile.ZipFile(str(apk))
         names = zf.namelist()
 
+        # 空间预检：先把要解出的资源量与最终新包各占一份的空间算清，
+        # 不足时立刻给人话错误，不等到解压到一半才写满磁盘。
+        try:
+            ensure_free_space(
+                str(work), sum(i.file_size for i in zf.infolist()),
+                "解压 APK 内资源")
+            ensure_free_space(str(apk.parent), apk.stat().st_size,
+                              "写出瘦身后的 APK")
+        except BackupError as e:
+            raise ApkError(str(e)) from e
+
         # 1. 提取可优化目标
         targets = []
         script_entries = []   # x-game 内脚本/文本：只供字符集提取，不参与优化
@@ -330,7 +426,9 @@ def slim_apk(apk_path: str, preset_name: str,
                     script_entries.append(name)
                 continue
             targets.append(name)
-        p.emit("apk", f"APK 共 {len(names)} 个条目，可优化资源 {len(targets)} 个")
+        p.emit("apk", f"APK 共 {len(names)} 个条目，可优化资源 {len(targets)} 个",
+               code="apk_entries",
+               params={"total": len(names), "optimizable": len(targets)})
 
         skipped: set[str] = set()        # 审核修复（中-11）：被拒/解出失败的条目
         extracted_names: set[str] = set()  # 已解出到 work 的条目（中-16 复用）
@@ -358,7 +456,8 @@ def slim_apk(apk_path: str, preset_name: str,
 
         # 2. 从脚本提取字符集（供字体瘦身）
         chars = _extract_charset_from_apk(work, cs_opts)
-        p.emit("apk", f"从 APK 内脚本提取到 {len(chars)} 个字符")
+        p.emit("apk", f"从 APK 内脚本提取到 {len(chars)} 个字符",
+               code="apk_charset", params={"n": len(chars)})
 
         # 3. 逐个同名优化（开了 remap_convert 则图/音先试换格式）
         remap_usable = remap_convert and bool(sdk) \
@@ -384,7 +483,9 @@ def slim_apk(apk_path: str, preset_name: str,
             ".ogg", existing=all_game_rels)
         for i, name in enumerate(targets, start=1):
             if i % 10 == 1 or i == len(targets):
-                p.emit("apk", f"瘦身 {i}/{len(targets)}：{name}")
+                p.emit("apk", f"瘦身 {i}/{len(targets)}：{name}",
+                       code="apk_progress",
+                       params={"i": i, "total": len(targets), "name": name})
             f = work / name
             # 审核修复（中-11）：双保险，文件不在直接跳过
             if not f.exists():
@@ -472,7 +573,8 @@ def slim_apk(apk_path: str, preset_name: str,
             rpyc_entry_name = game_rel_to_apk_entry(
                 remap_mod.REMAP_SCRIPT_NAME + "c")
             p.emit("apk", f"已注入重映射脚本，{len(pending_remap)} 个资源"
-                          "将在运行时透明换格式（实验性）")
+                          "将在运行时透明换格式（实验性）",
+                   code="apk_remap", params={"n": len(pending_remap)})
             warnings.append(
                 f"实验性功能：{len(pending_remap)} 个资源已换格式（图→WebP、"
                 "音→OGG）并注入运行时重映射脚本"
@@ -483,7 +585,8 @@ def slim_apk(apk_path: str, preset_name: str,
                             "未转换，已原样保留。")
 
         # 4. 重打包：未改动条目逐字节保留，改动条目用新内容
-        p.emit("apk", f"重新打包（替换 {changes} 个条目）……")
+        p.emit("apk", f"重新打包（替换 {changes} 个条目）……",
+               code="apk_repack", params={"n": changes})
         out_apk = work / "slim-unsigned.apk"
         seen_norm: dict[str, str] = {}   # 归一化名（casefold）→ 首次出现的条目名
         with zipfile.ZipFile(str(out_apk), "w") as out_zf:
@@ -560,7 +663,7 @@ def slim_apk(apk_path: str, preset_name: str,
         use_ks, use_pass = keystore, ks_pass
         use_alias = key_alias
         if not (use_ks and use_pass) and generate_key:
-            p.emit("apk", "正在生成新的签名钥匙……")
+            p.emit("apk", "正在生成新的签名钥匙……", code="apk_keygen")
             keystore_info = generate_keystore(str(apk.parent),
                                               password=new_key_password)
             use_ks = keystore_info["keystore"]

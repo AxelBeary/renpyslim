@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import enum
+import inspect
 import json
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
@@ -132,16 +133,37 @@ class ChangeRecord:
 class Progress:
     """进度回调包装：流水线各阶段通过它汇报进度与日志。"""
 
-    def __init__(self, callback: Optional[Callable[[str, str], None]] = None):
-        # callback(stage, message)，stage 形如 "analyze" / "optimize" / "package"
+    def __init__(self, callback: Optional[Callable[..., None]] = None):
+        # callback(stage, message[, code, params])；stage 形如 "analyze" / "package"
         self._cb = callback
-
-    def emit(self, stage: str, message: str) -> None:
-        if self._cb:
+        self._wide = False
+        if callback is not None:
             try:
+                ps = list(inspect.signature(callback).parameters.values())
+                positional = [p for p in ps if p.kind in (
+                    p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD)]
+                self._wide = (any(p.kind == p.VAR_POSITIONAL for p in ps)
+                              or len(positional) >= 3)
+            except (TypeError, ValueError):
+                self._wide = False
+
+    def emit(self, stage: str, message: str,
+             code: Optional[str] = None,
+             params: Optional[dict] = None) -> None:
+        """汇报一条日志。
+
+        code/params 是给 Web 前端的结构化翻译键（G6）；CLI 与旧回调
+        只拿人话 message，行为不变。宽签名回调额外收到 code/params。
+        """
+        if not self._cb:
+            return
+        try:
+            if self._wide:
+                self._cb(stage, message, code, params)
+            else:
                 self._cb(stage, message)
-            except Exception:
-                pass
+        except Exception:
+            pass
 
     def child(self) -> "Progress":
         return self
