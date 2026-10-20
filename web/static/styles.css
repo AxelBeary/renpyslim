@@ -256,6 +256,50 @@ th { color: var(--muted); font-weight: 600; font-size: 12px; }
   .progress.ind i { animation: none; }
 }
 
+/* ===================== 结果/报告动作条（打开目录、复制路径、定位文件） ===================== */
+.row.actions { margin-top: 12px; gap: 8px; }
+#reportactions, #apkreportactions { margin-bottom: 6px; }
+#reportactions .row.actions, #apkreportactions .row.actions { margin-top: 0; }
+#platarea.is-off { opacity: .55; }
+
+/* ===================== 轻提示（复制结果等，aria-live 同步播报） ===================== */
+.toast { position: fixed; left: 20px; bottom: 20px; z-index: 90; max-width: 360px;
+  background: var(--card); color: var(--text); border: 1px solid var(--border-strong);
+  border-radius: 12px; padding: 10px 14px; font-size: 13px; box-shadow: var(--shadow-lg); }
+
+/* ===================== 危险操作确认框 ===================== */
+.modal { position: fixed; inset: 0; z-index: 120; display: grid; place-items: center;
+  padding: 24px; }
+.modal.hidden, .toast.hidden { display: none; }   /* 后写的 display 会压过 .hidden，必须显式关掉 */
+.modal-backdrop { position: absolute; inset: 0; background: rgba(20, 14, 8, .48); }
+.modal-card { position: relative; width: min(460px, 100%); background: var(--card);
+  border: 1px solid var(--border-strong); border-radius: var(--radius-card);
+  padding: 22px; box-shadow: var(--shadow-lg); }
+.modal-card h3 { font-size: 16px; margin-bottom: 10px; }
+.modal-msg { color: var(--muted); font-size: 13.5px; white-space: pre-line; }
+.modal-actions { margin-top: 18px; justify-content: flex-end; }
+
+/* ===================== 任务历史 ===================== */
+.histlist { margin-top: 10px; display: flex; flex-direction: column; gap: 8px; }
+.histrow { display: flex; align-items: flex-start; gap: 12px;
+  background: var(--card2); border: 1px solid var(--border); border-radius: 13px;
+  padding: 11px 14px; }
+.hist-main { flex: 1; min-width: 0; }
+.hist-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.hist-kind { font-weight: 600; font-size: 13px; }
+.hist-time { color: var(--muted); font-size: 12px; margin-left: auto; }
+.hist-title { font-size: 13px; margin-top: 3px; word-break: break-all; }
+.hist-sub { color: var(--muted); font-size: 12px; margin-top: 3px; word-break: break-word; }
+.hist-error { color: var(--err-ink); }
+.hist-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.hist-actions .row.actions { margin-top: 0; }
+.hist-badge { display: inline-block; padding: 2px 9px; border-radius: 999px;
+  font-size: 11.5px; font-weight: 600; background: var(--card); border: 1px solid var(--border); }
+.hist-badge.st-running, .hist-badge.st-queued { color: var(--warn-ink); border-color: var(--warn-border); }
+.hist-badge.st-done { color: var(--ok-ink); border-color: var(--ok-border); }
+.hist-badge.st-error, .hist-badge.st-interrupted { color: var(--err-ink); border-color: var(--err-border); }
+.hist-badge.st-canceled { color: var(--muted); }
+
 /* 焦点环放在最后：压过组件里后来的 outline:none（同级特异性、后写赢） */
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible,
 summary:focus-visible, [tabindex]:focus-visible {

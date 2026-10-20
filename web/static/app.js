@@ -9,25 +9,46 @@
 let MODE = "project";          // 工作流模式：project / dist
 let VIEW = "project";          // 当前视图：project / dist / font / settings
 
-let REPORT = null;             // 最近一次分析报告
+let REPORT = null;             // 最近一次分析报告 {report, mode, root}
 let LAST_RESULT = null;        // 最近一次执行结果（切语言时重渲染）
 let LAST_CHARLIST = null;
+let APK_REPORT = null;         // APK 预分析结果 {report, apk, root}
 let JOB = null, LOGIDX = 0, JOB_GEN = 0, JOB_RUNNING = false;
 let ANALYZE_JOB = null, ANALYZE_IDX = 0, ANALYZE_START = 0,
     ANALYZE_GEN = 0, ANALYZE_BUSY = false;
+let APK_ANALYZE_JOB = null, APK_ANALYZE_IDX = 0, APK_ANALYZE_START = 0,
+    APK_ANALYZE_GEN = 0, APK_ANALYZE_BUSY = false;
 let FS_JOB = null, FS_IDX = 0, FS_RESULT = null, FS_GEN = 0;
+let HISTORY = null;            // null = 还没加载过；[] = 加载过且为空
+let MODAL = { resolve: null, lastFocus: null };
+let TOAST_TIMER = null;
 
-async function api(url, body) {
+async function api(url, body, method) {
   /* 审核修复（中-29）：网络异常（服务退出/点了退出工具）捕下来
      返回统一失败结构，不再变成未捕获 rejection 断掉轮询链 */
   try {
-    const r = await fetch(url, body === undefined ? undefined :
-      { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body) });
+    let opts;
+    if (body !== undefined || method) {
+      opts = { method: method || "POST" };
+      if (body !== undefined) {
+        opts.headers = { "Content-Type": "application/json" };
+        opts.body = JSON.stringify(body);
+      }
+    }
+    const r = await fetch(url, opts);
     return await r.json();
   } catch (e) {
     return { ok: false, error: "与后台服务的连接已断开", _conn_lost: true };
   }
+}
+
+/* 后台返回的统一错误文案：旧版本后台缺接口时给"升级"人话，而不是 undefined */
+function apiErr(d, fallback) {
+  if (d && typeof d.error === "string" && d.error) return d.error;
+  /* 旧后台缺接口时（404/405 落到静态文件路由）没有 ok 字段：统一提示升级 */
+  if (d && d.ok === undefined) return t("api_too_old");
+  if (d && typeof d.detail === "string" && d.detail) return d.detail;
+  return fallback || t("unknown_error");
 }
 
 /* ===================== 主题与语言 ===================== */
@@ -96,6 +117,9 @@ function applyLang() {
   const rsTxt = rs ? rs.textContent : "";
   if (rs && ["完成", "Done"].includes(rsTxt)) rs.textContent = t("st_done");
   if (REPORT) renderReport(REPORT.report, REPORT.mode);
+  if (APK_REPORT) renderApkReport();
+  if (HISTORY) renderHistory();
+  else if (VIEW === "settings") loadHistory();
   if (LAST_RESULT) renderResult(LAST_RESULT);
   if (FS_RESULT) renderFontResult(FS_RESULT);
 }
@@ -136,6 +160,7 @@ function go(v) {
     applyModeUI();
   }
   applyViewText();
+  if (v === "settings") loadHistory();   // 进入设置时刷新任务历史
 }
 /* ===================== 环境检测 / 更新提醒 ===================== */
 let ENV = null;
@@ -237,7 +262,7 @@ async function analyze() {
     password: document.getElementById("arc_pwd").value || null });
   if (!d.ok) {
     document.getElementById("analyzewarn").innerHTML =
-      `<div class="box err">${esc(d.error)}</div>`;
+      `<div class="box err">${esc(apiErr(d))}</div>`;
     return;
   }
   ANALYZE_BUSY = true;
@@ -256,7 +281,7 @@ async function pollAnalyze(path, gen) {
        不再静默卡死在"分析中" */
     ANALYZE_BUSY = false;
     document.getElementById("analyzewarn").innerHTML =
-      `<div class="box err">${esc(d.error || "")}</div>`;
+      `<div class="box err">${esc(apiErr(d))}</div>`;
     return;
   }
   const logEl = document.getElementById("anlog");
@@ -286,7 +311,8 @@ async function pollAnalyze(path, gen) {
   setTimeout(() => {
     if (gen !== ANALYZE_GEN) return;   // 期间起了新分析，旧链不接管界面
     api("/api/recent", { path }).then(r => { if (r.ok) { RECENT = r.recent; renderRecent(); } });
-    REPORT = { report: d.result.report, mode: d.result.mode };
+    REPORT = { report: d.result.report, mode: d.result.mode,
+               root: d.result.report.root || path };
     LAST_CHARLIST = d.result.charlist || null;
     renderReport(d.result.report, d.result.mode);
     document.getElementById("analyzewarn").innerHTML = "";
@@ -294,20 +320,36 @@ async function pollAnalyze(path, gen) {
   }, wait);
 }
 
-function renderReport(r, mode) {
-  document.getElementById("reportcard").classList.remove("hidden");
-  const counts = {};
-  for (const e of r.entries) counts[e.asset.kind] = (counts[e.asset.kind] || 0) + 1;
+function defaultReportStats(r) {
   const est = r.entries.reduce((s, e) => s + (e.est_saving || 0), 0);
-  const kindTxt = Object.entries(counts)
-    .map(([k, v]) => `${t("kinds")[k] || k} ${v}`).join("、");
   let stats =
     `<div class="stat"><b>${r.entries.length}</b><span>${t("stat_assets")}</span></div>` +
     `<div class="stat"><b>${fmtSize(r.total_size)}</b><span>${t("stat_size")}</span></div>`;
   if (est) stats += `<div class="stat big"><b>${fmtSize(est)}</b><span>${t("stat_est")}</span></div>`;
   if (r.charset_size) stats +=
     `<div class="stat"><b>${r.charset_size}</b><span>${t("stat_chars")}</span></div>`;
-  document.getElementById("reportstats").innerHTML = stats;
+  return stats;
+}
+
+/* 警告条：只显示前 10 条，超出时注明完整内容在 JSON 导出里 */
+function warnBox(list) {
+  if (!list || !list.length) return "";
+  const shown = list.slice(0, 10);
+  return `<div class="box warn">${warnNote()}${shown.map(esc).join("<br>")}` +
+    (list.length > 10
+      ? `<div class="note" style="margin-top:6px">${t("warn_more")}</div>` : "") +
+    `</div>`;
+}
+
+/* 报告渲染：工程报告与 APK 预分析共用；targets 可换目标 DOM，
+   statsHtml 可替换统计卡（APK 用体积/可优化数/两档预估）。 */
+function renderReport(r, mode, targets) {
+  const tg = Object.assign({
+    card: "reportcard", stats: "reportstats", table: "reporttable",
+    warn: "reportwarn", count: "reportcount", actions: "reportactions",
+  }, targets || {});
+  document.getElementById(tg.card).classList.remove("hidden");
+  document.getElementById(tg.stats).innerHTML = tg.statsHtml || defaultReportStats(r);
 
   let html = `<tr><th>${t("th_pri")}</th><th>${t("th_kind")}</th><th>${t("th_file")}</th>` +
     `<th>${t("th_size")}</th><th>${t("th_issue")}</th></tr>`;
@@ -320,21 +362,163 @@ function renderReport(r, mode) {
       `<td style="word-break:break-all">${esc(a.rel)}</td><td>${fmtSize(a.size)}</td>` +
       `<td>${issues || "—"}</td></tr>`;
   }
-  document.getElementById("reporttable").innerHTML = html;
+  document.getElementById(tg.table).innerHTML = html;
 
-  let warnHtml = "";
-  if (r.warnings && r.warnings.length)
-    warnHtml += `<div class="box warn">${warnNote()}${r.warnings.map(w => esc(w)).join("<br>")}</div>`;
-  if (r.charset_size && LAST_CHARLIST)
+  const countEl = document.getElementById(tg.count);
+  if (countEl) {
+    countEl.textContent = r.entries.length > 300
+      ? tf("report_truncated", { n: r.entries.length }) : "";
+  }
+
+  let warnHtml = tg.extraWarn || "";
+  warnHtml += warnBox(r.warnings);
+  if (mode === "project" && r.charset_size && LAST_CHARLIST)
     warnHtml += `<div class="row" style="margin-top:10px">` +
-      `<button class="btn ghost small" onclick="downloadCharlist()">${t("r_charlist")}</button></div>`;
-  document.getElementById("reportwarn").innerHTML = warnHtml;
+      `<button type="button" class="btn ghost small" onclick="downloadCharlist()">${t("r_charlist")}</button></div>`;
+  document.getElementById(tg.warn).innerHTML = warnHtml;
+
+  if (tg.actions) {
+    const root = r.root;
+    const acts = [];
+    if (root) {
+      const isFile = isApkName(root) || isArchiveName(root);
+      acts.push(isFile
+        ? { kind: "file", path: root, label: t(mode === "apk" ? "locate_apk" : "locate_input") }
+        : { kind: "dir", path: root });
+      acts.push({ kind: "copy", path: root });
+    }
+    const box = document.getElementById(tg.actions);
+    box.innerHTML = pathActionButtons(acts);
+    box.setAttribute("aria-label", t("path_actions"));
+    box.classList.toggle("hidden", !box.innerHTML);
+  }
+}
+
+/* ===================== 路径动作（打开/定位/复制） ===================== */
+function pathActionButtons(items) {
+  if (!items || !items.length) return "";
+  let html = `<div class="row actions" role="group" aria-label="${esc(t("path_actions"))}">`;
+  let has = false;
+  for (const it of items) {
+    if (!it || !it.path) continue;
+    const label = it.label ||
+      t(it.kind === "copy" ? "copy_path" : it.kind === "file" ? "locate_file" : "open_dir");
+    const attr = it.kind === "copy" ? "data-copy"
+      : it.kind === "file" ? "data-locate" : "data-open-dir";
+    html += `<button type="button" class="btn ghost small" ${attr}="${esc(it.path)}" ` +
+      `aria-label="${esc(label)}">${esc(label)}</button>`;
+    has = true;
+  }
+  return has ? html + `</div>` : "";
+}
+
+async function revealPath(path, reveal) {
+  if (!path) return;
+  const d = await api("/api/reveal", { path, reveal: !!reveal });
+  if (!d || d.ok !== true) toast(apiErr(d, t("reveal_fail")));
+}
+
+async function copyPath(text) {
+  if (!text) return;
+  let ok = false;
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      ok = true;
+    }
+  } catch (e) { ok = false; }
+  if (!ok) {
+    /* 剪贴板 API 在非安全上下文/旧浏览器不可用：退回隐藏 textarea + execCommand */
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch (e) { ok = false; }
+  }
+  toast(ok ? t("copy_ok") : t("copy_fail"));
+}
+
+function toast(msg) {
+  const el = document.getElementById("toast");
+  if (!el) return;
+  el.textContent = msg;
+  el.classList.remove("hidden");
+  clearTimeout(TOAST_TIMER);
+  TOAST_TIMER = setTimeout(() => el.classList.add("hidden"), 2800);
+}
+
+/* 结果/报告统一挂在 document 上：动态按钮只带 data-*，不拼 onclick */
+document.addEventListener("click", e => {
+  const btn = e.target.closest("button[data-copy],button[data-open-dir],button[data-locate]");
+  if (!btn) return;
+  if (btn.hasAttribute("data-copy")) copyPath(btn.getAttribute("data-copy"));
+  else if (btn.hasAttribute("data-open-dir")) revealPath(btn.getAttribute("data-open-dir"), false);
+  else revealPath(btn.getAttribute("data-locate"), true);
+});
+
+/* ===================== 报告导出（全量，不受表格 300 行截断影响） ===================== */
+function csvCell(v) {
+  const s = v == null ? "" : String(v);
+  return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+}
+
+function reportToCSV(r) {
+  const head = ["priority", "kind", "rel", "size", "est_saving", "issues"];
+  const rows = [head.join(",")];
+  for (const e of r.entries || []) {
+    const a = e.asset || {};
+    const issues = (e.issues || [])
+      .map(i => [i.message, i.suggestion].filter(Boolean).join(" ")).join(" | ");
+    rows.push([
+      e.priority, a.kind, a.rel, a.size,
+      e.est_saving == null ? "" : e.est_saving, issues,
+    ].map(csvCell).join(","));
+  }
+  return rows.join("\r\n");
+}
+
+function downloadText(text, filename, mime) {
+  const blob = new Blob([text], { type: mime + ";charset=utf-8" });
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob);
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function reportFor(scope) {
+  if (scope === "apk") return APK_REPORT ? APK_REPORT.report : null;
+  return REPORT ? REPORT.report : null;
+}
+
+function exportReport(scope, format) {
+  const r = reportFor(scope);
+  if (!r || !Array.isArray(r.entries)) { toast(t("export_fail")); return; }
+  const d = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}` +
+    `-${pad(d.getHours())}${pad(d.getMinutes())}`;
+  const base = t(scope === "apk" ? "export_name_apk" : "export_name_report") + "-" + stamp;
+  if (format === "json") {
+    downloadText(JSON.stringify(r, null, 2), base + ".json", "application/json");
+  } else {
+    /* UTF-8 BOM：Excel 直接双击打开不乱码 */
+    downloadText("\ufeff" + reportToCSV(r), base + ".csv", "text/csv");
+  }
 }
 
 function downloadCharlist() {
   if (!LAST_CHARLIST) return;
-  const blob = new Blob([LAST_CHARLIST], { type: "text/plain;charset=utf-8" });
   const a = document.createElement("a");
+  const blob = new Blob([LAST_CHARLIST], { type: "text/plain;charset=utf-8" });
   a.href = URL.createObjectURL(blob);
   a.download = LANG === "zh" ? "使用字符清单.txt" : "charset-used.txt";
   a.click();
@@ -375,12 +559,44 @@ function scrollToRunCard() {
   document.getElementById("runcard").scrollIntoView({ behavior: reduce ? "auto" : "smooth" });
 }
 async function runJob() {
+  const path = document.getElementById("path").value.trim();
+  if (!path) { alert(t("fill_path")); return; }
+  const opts = collectOptions();
+  const onlyOpt = MODE === "project" && document.getElementById("opt_only").checked;
+
+  /* 工程模式：要打包就必须选平台；只优化则不需要（也不要求 SDK） */
+  const platforms = [];
+  if (MODE === "project" && !onlyOpt) {
+    if (document.getElementById("pl_pc").checked) platforms.push("pc");
+    if (document.getElementById("pl_mac").checked) platforms.push("mac");
+    if (document.getElementById("pl_android").checked) platforms.push("android");
+    if (!platforms.length) {
+      document.getElementById("runcard").classList.remove("hidden");
+      document.getElementById("log").textContent = "";
+      document.getElementById("runstatus").textContent = t("st_failed");
+      document.getElementById("progressbar").classList.remove("ind");
+      document.getElementById("resultarea").innerHTML =
+        `<div class="box err">${t("plat_none")}</div>`;
+      document.getElementById("runbtn").disabled = false;
+      scrollToRunCard();
+      return;
+    }
+  }
+
+  /* 直接改原件是高危操作：提交前必须走自定义确认框（默认焦点在取消） */
+  if (opts.in_place) {
+    const okay = await confirmDanger({
+      title: t("inplace_confirm_title"),
+      message: t("inplace_confirm_msg"),
+      confirmText: t("inplace_confirm_ok"),
+    });
+    if (!okay) return;
+  }
+
   /* 审核修复（中-26）：起新任务先作废旧轮询链，防新旧链共写
      全局游标导致日志重复/丢条、"停止"打到新任务上 */
   JOB_GEN++;
   const gen = JOB_GEN;
-  const path = document.getElementById("path").value.trim();
-  const opts = collectOptions();
   document.getElementById("runcard").classList.remove("hidden");
   document.getElementById("log").textContent = "";
   document.getElementById("resultarea").innerHTML = "";
@@ -394,19 +610,20 @@ async function runJob() {
   let d;
   const pwd = document.getElementById("arc_pwd").value || null;
   if (MODE === "project") {
-    const platforms = [];
-    if (document.getElementById("pl_pc").checked) platforms.push("pc");
-    if (document.getElementById("pl_mac").checked) platforms.push("mac");
-    if (document.getElementById("pl_android").checked) platforms.push("android");
-    d = await api("/api/full", { path, platforms, options: opts,
-      archive_rpa: document.getElementById("rpa_pack").checked });
+    if (onlyOpt) {
+      /* 只优化不打包：工程模式也走 /api/optimize，不需要 SDK */
+      d = await api("/api/optimize", { path, mode: "project", options: opts });
+    } else {
+      d = await api("/api/full", { path, platforms, options: opts,
+        archive_rpa: document.getElementById("rpa_pack").checked });
+    }
   } else {
     d = await api("/api/optimize", { path, mode: "dist", options: opts, password: pwd });
   }
   if (gen !== JOB_GEN) return;        // 等待期间又起了新任务
   if (!d.ok) {
     document.getElementById("resultarea").innerHTML =
-      `<div class="box err">${esc(d.error)}</div>`;
+      `<div class="box err">${esc(apiErr(d))}</div>`;
     document.getElementById("runbtn").disabled = false;
     setProgress(100); document.getElementById("progressbar").classList.remove("ind");
     return;
@@ -448,6 +665,7 @@ async function pollJob(gen) {
        不再永久卡在“执行中”（高-2 的前端放大器） */
     JOB_RUNNING = false;
     clearSavedJob();
+    loadHistory();
     document.getElementById("cancelbtn").style.display = "none";
     document.getElementById("progressbar").classList.remove("ind");
     document.getElementById("runstatus").textContent =
@@ -482,6 +700,7 @@ async function pollJob(gen) {
   }
   JOB_RUNNING = false;
   clearSavedJob();
+  loadHistory();                       // 任务结束：刷新设置页的历史卡
   document.getElementById("cancelbtn").style.display = "none";
   document.getElementById("progressbar").classList.remove("ind");
   if (d.status === "canceled") {
@@ -524,7 +743,7 @@ async function refreshQueue() {
   const panel = document.getElementById("queuepanel");
   const d = await api("/api/jobs");
   if (!d.ok) { panel.classList.add("hidden"); return; }
-  const active = d.jobs.filter(j => j.status === "running" || j.status === "queued");
+  const active = (d.jobs || []).filter(j => j.status === "running" || j.status === "queued");
   if (!active.length) { panel.classList.add("hidden"); return; }
   panel.classList.remove("hidden");
   const states = t("q_states");
@@ -542,11 +761,12 @@ async function tryResumeJob() {
   if (!d.ok) return;
   const alive = j => RESUMABLE_KINDS.includes(j.kind) &&
     (j.status === "running" || j.status === "queued");
+  const jobs = d.jobs || [];
   let saved = null;
   try { saved = localStorage.getItem("rps-job"); } catch (e) {}
-  const job = d.jobs.find(j => j.id === saved && alive(j)) ||
-              d.jobs.find(j => alive(j) && j.status === "running") ||
-              d.jobs.find(j => alive(j));
+  const job = jobs.find(j => j.id === saved && alive(j)) ||
+              jobs.find(j => alive(j) && j.status === "running") ||
+              jobs.find(j => alive(j));
   if (!job) { if (saved) clearSavedJob(); return; }
   saveJob(job.id);
   JOB = job.id; LOGIDX = 0; JOB_GEN++;
@@ -568,9 +788,68 @@ async function tryResumeJob() {
 }
 
 /* ===================== 结果渲染 ===================== */
+function optimizeActions(o) {
+  const acts = [];
+  if (!o) return "";
+  if (o.working_dir) {
+    acts.push({ kind: "dir", path: o.working_dir });
+    acts.push({ kind: "copy", path: o.working_dir });
+  }
+  if (o.changelog) acts.push({ kind: "file", path: o.changelog, label: t("locate_changelog") });
+  if (o.report) acts.push({ kind: "file", path: o.report, label: t("locate_report") });
+  return pathActionButtons(acts);
+}
+
+function renderOptimizeBody(o, only) {
+  const label = t("r_opt_done").split("：")[0].split(": ")[0];
+  let html = `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
+    `<div class="stat big"><b>${fmtSize(o.saved_bytes)}</b><span>${esc(label)}</span></div>` +
+    `<div class="stat"><b style="font-size:13px">${esc(o.working_dir)}</b><span>${t("r_workdir")}</span></div>` +
+    `<div class="stat"><b style="font-size:13px">${esc(String(o.changelog))}</b><span>${t("r_changelog")}</span></div></div>`;
+  if (o.validation && o.validation.ran) {
+    html += o.validation.ok
+      ? `<div class="box ok">${t("r_lint_ok")}</div>`
+      : `<div class="box warn">${t("r_lint_head")}${esc(o.validation.summary)}` +
+        (o.validation.suspects && o.validation.suspects.length
+          ? "<br>" + o.validation.suspects.slice(0, 5).map(s => "· " + esc(s)).join("<br>") : "") +
+        `</div>`;
+  }
+  const extra = [];
+  if (o.junk && o.junk.removed.length)
+    extra.push(tf("r_junk", { n: o.junk.removed.length, s: fmtSize(o.junk.freed_bytes) }));
+  if (o.unused && o.unused.length)
+    extra.push(tf("r_unused", { n: o.unused.length }) +
+      (o.quarantined && o.quarantined.length
+        ? tf("r_unused_q", { n: o.quarantined.length }) : t("r_unused_rep")));
+  if (o.duplicates && o.duplicates.length)
+    extra.push(tf("r_dup", { n: o.duplicates.length }));
+  if (o.missing_glyphs && Object.keys(o.missing_glyphs).length)
+    extra.push(tf("r_glyph", { n: Object.keys(o.missing_glyphs).length }));
+  if (extra.length) html += `<div class="box ok">${t("r_extra_head")}${extra.map(esc).join("<br>")}</div>`;
+  html += warnBox(o.warnings);
+  if (only) html += `<div class="box warn">${t("r_only_opt")}</div>`;
+  return html;
+}
+
+function renderPackageBody(p) {
+  let html = "";
+  if (p.built && p.built.length) {
+    html += `<div class="box ok">${t("r_pkg_ok")}${esc(p.built.join("、"))}<br>` +
+      (p.artifacts || []).map(a => `· ${esc(a.name)}（${fmtSize(a.size)}）`).join("<br>") +
+      `<br>${t("r_pkg_out")}：${esc(p.destination)}</div>`;
+  }
+  for (const e of (p.errors || [])) html += `<div class="box err">${esc(e)}</div>`;
+  const acts = [];
+  if (p.destination) {
+    acts.push({ kind: "dir", path: p.destination });
+    acts.push({ kind: "copy", path: p.destination });
+  }
+  return html + pathActionButtons(acts);
+}
+
 function renderResult(res) {
   let html = "";
-  if (res.saved_bytes !== undefined && res.changes !== undefined) {
+  if (res.saved_bytes !== undefined && res.changes !== undefined && !res.optimize) {
     /* APK 瘦身结果（APK 页与压缩包自动转发共用此渲染） */
     html += `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
       `<div class="stat big"><b>${fmtSize(res.saved_bytes)}</b><span>${t("r_apk_saved")}</span></div>` +
@@ -582,60 +861,51 @@ function renderResult(res) {
         ? `<br>${t("r_apk_ks")}：${esc(res.keystore.keystore)}` +
           `<br>${t("r_apk_ks_memo")}：${esc(res.keystore.memo)}`
         : "") + `</div>`;
-    if (res.warnings && res.warnings.length)
-      html += `<div class="box warn">${warnNote()}${res.warnings.map(w => esc(w)).join("<br>")}</div>`;
+    const acts = [];
+    if (res.output) {
+      acts.push({ kind: "file", path: res.output, label: t("locate_output") });
+      acts.push({ kind: "copy", path: res.output });
+    }
+    if (res.keystore) {
+      if (res.keystore.keystore)
+        acts.push({ kind: "file", path: res.keystore.keystore, label: t("locate_keystore") });
+      if (res.keystore.memo) acts.push({ kind: "copy", path: res.keystore.memo });
+    }
+    html += pathActionButtons(acts);
+    html += warnBox(res.warnings);
     document.getElementById("resultarea").innerHTML = html;
     return;
   }
   if (res.optimize) {
-    const o = res.optimize;
-    html += `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
-      `<div class="stat big"><b>${fmtSize(o.saved_bytes)}</b><span>${t("r_opt_done").split("：")[0].split(": ")[0]}</span></div>` +
-      `<div class="stat"><b style="font-size:13px">${esc(o.working_dir)}</b><span>${t("r_workdir")}</span></div>` +
-      `<div class="stat"><b style="font-size:13px">${esc(String(o.changelog))}</b><span>${t("r_changelog")}</span></div></div>`;
-    if (o.validation && o.validation.ran) {
-      html += o.validation.ok
-        ? `<div class="box ok">${t("r_lint_ok")}</div>`
-        : `<div class="box warn">${t("r_lint_head")}${esc(o.validation.summary)}` +
-          (o.validation.suspects && o.validation.suspects.length
-            ? "<br>" + o.validation.suspects.slice(0, 5).map(s => "· " + esc(s)).join("<br>") : "") +
-          `</div>`;
-    }
-    const extra = [];
-    if (o.junk && o.junk.removed.length)
-      extra.push(tf("r_junk", { n: o.junk.removed.length, s: fmtSize(o.junk.freed_bytes) }));
-    if (o.unused && o.unused.length)
-      extra.push(tf("r_unused", { n: o.unused.length }) +
-        (o.quarantined && o.quarantined.length
-          ? tf("r_unused_q", { n: o.quarantined.length }) : t("r_unused_rep")));
-    if (o.duplicates && o.duplicates.length)
-      extra.push(tf("r_dup", { n: o.duplicates.length }));
-    if (o.missing_glyphs && Object.keys(o.missing_glyphs).length)
-      extra.push(tf("r_glyph", { n: Object.keys(o.missing_glyphs).length }));
-    if (extra.length) html += `<div class="box ok">${t("r_extra_head")}${extra.map(esc).join("<br>")}</div>`;
-    if (o.warnings && o.warnings.length)
-      html += `<div class="box warn">${warnNote()}${o.warnings.slice(0, 10).map(w => esc(w)).join("<br>")}</div>`;
+    html += renderOptimizeBody(res.optimize, false);
+    html += optimizeActions(res.optimize);
+  } else if (res.mode === "project" && res.saved_bytes !== undefined) {
+    /* 工程「只优化不打包」：结果结构与 /api/full 的 optimize 段一致 */
+    html += renderOptimizeBody(res, true);
+    html += optimizeActions(res);
   } else if (res.saved_bytes !== undefined) {
+    const label = t("r_dist_done").split("：")[0].split(": ")[0];
     html += `<div class="stats" style="grid-template-columns:repeat(3,1fr)">` +
-      `<div class="stat big"><b>${fmtSize(res.saved_bytes)}</b><span>${t("r_dist_done").split("：")[0].split(": ")[0]}</span></div>` +
+      `<div class="stat big"><b>${fmtSize(res.saved_bytes)}</b><span>${esc(label)}</span></div>` +
       `<div class="stat"><b style="font-size:13px">${esc(res.working_dir)}</b><span>${t("r_outdir")}</span></div>` +
       (res.archive_output
         ? `<div class="stat"><b style="font-size:13px">${esc(res.archive_output)}</b><span>${t("r_deliver")}</span></div>`
         : `<div class="stat"><b style="font-size:13px">${esc(String(res.changelog))}</b><span>${t("r_changelog")}</span></div>`)
       + `</div>`;
     if (res.has_rpy) html += `<div class="box ok">${t("r_has_rpy")}</div>`;
-    if (res.warnings && res.warnings.length)
-      html += `<div class="box warn">${warnNote()}${res.warnings.slice(0, 10).map(w => esc(w)).join("<br>")}</div>`;
-  }
-  if (res.package) {
-    const p = res.package;
-    if (p.built.length) {
-      html += `<div class="box ok">${t("r_pkg_ok")}${esc(p.built.join("、"))}<br>` +
-        p.artifacts.map(a => `· ${esc(a.name)}（${fmtSize(a.size)}）`).join("<br>") +
-        `<br>${t("r_pkg_out")}：${esc(p.destination)}</div>`;
+    html += warnBox(res.warnings);
+    const acts = [];
+    if (res.working_dir) {
+      acts.push({ kind: "dir", path: res.working_dir });
+      acts.push({ kind: "copy", path: res.working_dir });
     }
-    for (const e of p.errors) html += `<div class="box err">${esc(e)}</div>`;
+    if (res.archive_output) acts.push({ kind: "file", path: res.archive_output, label: t("locate_deliver") });
+    if (res.changelog) acts.push({ kind: "file", path: res.changelog, label: t("locate_changelog") });
+    if (res.report) acts.push({ kind: "file", path: res.report, label: t("locate_report") });
+    html += pathActionButtons(acts);
   }
+  const pkg = res.package || (res.built && res.destination ? res : null);
+  if (pkg) html += renderPackageBody(pkg);
   document.getElementById("resultarea").innerHTML = html ||
     `<div class="box ok">${t("st_done")}</div>`;
 }
@@ -646,7 +916,23 @@ function applyModeUI() {
   document.getElementById("delwrap").classList.toggle("hidden", isP);
   document.getElementById("qwrap").classList.toggle("hidden", !isP);
   document.getElementById("pwdrow").classList.toggle("hidden", isP);
+  /* “只优化不打包”只对工程有意义（成品/APK 本来就是本地处理） */
+  document.getElementById("onlywrap").classList.toggle("hidden", !isP);
+  updatePlatWarn();
 }
+
+/* 工程模式没选平台且没勾“只优化”：常驻提示，runJob 里也会拦下 */
+function updatePlatWarn() {
+  const isP = MODE === "project";
+  const only = document.getElementById("opt_only").checked;
+  const any = ["pl_pc", "pl_mac", "pl_android"]
+    .some(id => document.getElementById(id).checked);
+  document.getElementById("platwarn").classList.toggle("hidden", !(isP && !only && !any));
+  document.getElementById("platarea").classList.toggle("is-off", isP && only);
+}
+["pl_pc", "pl_mac", "pl_android"].forEach(id =>
+  document.getElementById(id).addEventListener("change", updatePlatWarn));
+document.getElementById("opt_only").addEventListener("change", updatePlatWarn);
 
 /* ===================== 字体瘦身（独立工具） ===================== */
 async function runFontSlim() {
@@ -697,6 +983,7 @@ async function pollFontSlim(gen) {
   }
   if (d.status === "running") { setTimeout(() => pollFontSlim(gen), 500); return; }
   document.getElementById("fsrun").disabled = false;
+  loadHistory();
   if (d.status === "error") {
     document.getElementById("fsresult").innerHTML =
       `<div class="box err">${esc(d.error)}</div>`;
@@ -717,8 +1004,13 @@ function renderFontResult(r) {
       `<br>&nbsp;&nbsp;${t("font_out")}：${esc(o.out)}<br>`;
   }
   html += `${t("font_charlist")}：${esc(r.charlist)}</div>`;
+  const acts = [];
+  for (const o of (r.outputs || []))
+    if (o.out) acts.push({ kind: "file", path: o.out, label: t("locate_font") });
+  if (r.charlist) acts.push({ kind: "file", path: r.charlist, label: t("locate_charlist") });
+  html += pathActionButtons(acts);
   if (r.warnings && r.warnings.length)
-    html += `<div class="box warn">${r.warnings.map(w => esc(w)).join("<br>")}</div>`;
+    html += warnBox(r.warnings);
   document.getElementById("fsresult").innerHTML = html;
 }
 
@@ -783,6 +1075,244 @@ async function runApkSlim() {
   pollJob(gen);
 }
 
+/* ===================== APK 预分析（只读扫描，不动原包） ===================== */
+async function analyzeApk() {
+  if (APK_ANALYZE_BUSY) return;
+  const path = document.getElementById("apk_path").value.trim();
+  if (!path) { alert(t("fill_apk")); return; }
+  const info = document.getElementById("apkanalyzeinfo");
+  info.classList.remove("hidden");
+  info.innerHTML = `<div class="box ok">` +
+    `<div id="apkstate" role="status" aria-live="polite">${t("apk_analyzing")}</div>` +
+    `<div class="progress ind" id="apkprogress"><i id="apkprogressfill"></i></div>` +
+    `<div class="logbox" id="apklog" style="margin-top:8px;max-height:110px"></div></div>`;
+  const btn = document.getElementById("apkanalyze");
+  btn.disabled = true;
+  APK_ANALYZE_BUSY = true;
+
+  const d = await api("/api/analyze", { path, mode: "apk" });
+  if (!d || d.ok !== true) {
+    APK_ANALYZE_BUSY = false;
+    btn.disabled = false;
+    info.innerHTML = `<div class="box err">${esc(apiErr(d))}` +
+      `<br>${t("apk_analyze_err")}</div>`;
+    return;
+  }
+  APK_ANALYZE_JOB = d.job;
+  APK_ANALYZE_IDX = 0;
+  APK_ANALYZE_START = Date.now();
+  APK_ANALYZE_GEN++;
+  pollApkAnalyze(path, APK_ANALYZE_GEN);
+}
+
+async function pollApkAnalyze(path, gen) {
+  if (gen !== APK_ANALYZE_GEN) return;
+  const d = await api(`/api/job/${APK_ANALYZE_JOB}?since=${APK_ANALYZE_IDX}`);
+  if (gen !== APK_ANALYZE_GEN) return;
+  const info = document.getElementById("apkanalyzeinfo");
+  const btn = document.getElementById("apkanalyze");
+  if (!d.ok) {
+    APK_ANALYZE_BUSY = false;
+    btn.disabled = false;
+    info.innerHTML = `<div class="box err">${esc(apiErr(d))}<br>${t("apk_analyze_err")}</div>`;
+    return;
+  }
+  const logEl = document.getElementById("apklog");
+  const stateEl = document.getElementById("apkstate");
+  const lines = [];
+  for (const l of d.logs) {
+    APK_ANALYZE_IDX++;
+    lines.push(`[${t("stages")[l.stage] || l.stage}] ${trLog(l.message)}`);
+    if (stateEl) stateEl.textContent = trLog(l.message);
+  }
+  if (logEl && lines.length) {
+    logEl.textContent = (logEl.textContent + lines.join("\n") + "\n")
+      .split("\n").filter(Boolean).slice(-6).join("\n");
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+  if (d.status === "running" || d.status === "queued") {
+    setTimeout(() => pollApkAnalyze(path, gen), 300);
+    return;
+  }
+  APK_ANALYZE_BUSY = false;
+  btn.disabled = false;
+  const prog = document.getElementById("apkprogress");
+  if (prog) { prog.classList.remove("ind"); document.getElementById("apkprogressfill").style.width = "100%"; }
+  if (d.status === "error") {
+    info.innerHTML = `<div class="box err">${esc(d.error || "")}<br>${t("apk_analyze_err")}</div>`;
+    return;
+  }
+  const res = d.result || {};
+  if (!res.apk || !res.report) {
+    /* 旧后台把 mode=apk 当成品分析，或接口尚未落地 */
+    info.innerHTML = `<div class="box err">${t("api_too_old")}<br>${t("apk_analyze_err")}</div>`;
+    return;
+  }
+  if (stateEl) stateEl.textContent = t("analyze_done");
+  const wait = Math.max(0, 1000 - (Date.now() - APK_ANALYZE_START));
+  setTimeout(() => {
+    if (gen !== APK_ANALYZE_GEN) return;
+    APK_REPORT = { report: res.report, apk: res.apk,
+                   root: res.report.root || path };
+    renderApkReport();
+    api("/api/recent", { path }).then(r => {
+      if (r && r.ok) { RECENT = r.recent; renderRecent(); }
+    });
+  }, wait);
+}
+
+function renderApkReport() {
+  if (!APK_REPORT) return;
+  const a = APK_REPORT.apk || {};
+  const r = APK_REPORT.report || { entries: [], warnings: [] };
+  const statsHtml =
+    `<div class="stat big"><b>${fmtSize(a.apk_size)}</b><span>${t("apk_stat_size")}</span></div>` +
+    `<div class="stat"><b>${a.optimizable != null ? a.optimizable : (r.entries || []).length}</b>` +
+    `<span>${t("apk_stat_optimizable")}</span></div>` +
+    `<div class="stat"><b>${fmtSize(a.est_saving)}</b><span>${t("apk_stat_est")}</span></div>` +
+    `<div class="stat big"><b>${fmtSize(a.est_saving_remap)}</b><span>${t("apk_stat_est_remap")}</span></div>`;
+  let extraWarn = "";
+  if (a.signed === false) extraWarn += `<div class="box warn">${t("apk_signed_warn")}</div>`;
+  if (a.has_renpy_layout === false) extraWarn += `<div class="box err">${t("apk_not_renpy")}</div>`;
+  /* 后台报告的同类中文警告已用上面两段本地化文案替代，避免重复 */
+  let warns = (r.warnings || []).slice();
+  if (a.signed === false) warns = warns.filter(w => !w.includes("未签名"));
+  if (a.has_renpy_layout === false) warns = warns.filter(w => !w.includes("x-game"));
+  const report = Object.assign({}, r, { warnings: warns });
+  renderReport(report, "apk", {
+    card: "apkreportcard", stats: "apkreportstats", table: "apkreporttable",
+    warn: "apkreportwarn", count: "apkreportcount", actions: "apkreportactions",
+    statsHtml, extraWarn,
+  });
+  const meta = document.getElementById("apkreportmeta");
+  if (meta) meta.textContent = tf("apk_stat_meta", {
+    entries: a.total_entries != null ? a.total_entries : "—",
+    scripts: a.script_count != null ? a.script_count : "—",
+  });
+}
+
+/* ===================== 任务历史（设置页卡片） ===================== */
+function historyStatus(job) {
+  const states = t("hist_states") || {};
+  return states[job.status] || job.status || states.unknown || "—";
+}
+function historyKind(k) {
+  const d = t("q_kinds");
+  return (d && d[k]) || k || "—";
+}
+function historyTime(ts) {
+  if (!ts) return "";
+  const dt = new Date(ts * 1000);
+  if (isNaN(dt.getTime())) return "";
+  const locale = ({ zh: "zh-CN", pt: "pt-BR" })[LANG] || LANG;
+  try { return dt.toLocaleString(locale); } catch (e) { return dt.toLocaleString(); }
+}
+function jobSummary(job) {
+  return (job && typeof job.summary === "object" && job.summary) || {};
+}
+function jobSaved(job) {
+  const s = jobSummary(job);
+  const cands = [s.saved_bytes, s.optimize && s.optimize.saved_bytes,
+                 s.apk && s.apk.saved_bytes];
+  for (const v of cands)
+    if (typeof v === "number" && isFinite(v)) return v;
+  return null;
+}
+/* 产物路径：后台摘要字段可能来自不同任务类型，挨个找第一个像路径的 */
+function jobArtifact(job) {
+  const s = jobSummary(job);
+  const cands = [
+    s.output, s.archive_output, s.artifact, s.working_dir, s.output_dir, s.keystore,
+    s.package && s.package.destination,
+    s.optimize && s.optimize.working_dir,
+  ];
+  for (const c of cands) if (typeof c === "string" && c.trim()) return c.trim();
+  return "";
+}
+function looksLikeFile(p) {
+  return isApkName(p) || isArchiveName(p) || /\.[A-Za-z0-9]{1,8}$/.test(p);
+}
+function historyTitle(job) {
+  const s = jobSummary(job);
+  return job.title || s.title || s.path || s.input || t("hist_untitled");
+}
+
+async function loadHistory() {
+  const state = document.getElementById("histstate");
+  const list = document.getElementById("histlist");
+  if (!state || !list) return;
+  if (!HISTORY) state.textContent = t("hist_loading");
+  const d = await api("/api/history?limit=20");
+  if (!d || d.ok !== true || !Array.isArray(d.jobs)) {
+    HISTORY = [];
+    const reason = apiErr(d, "");
+    /* 旧后台缺接口：直接给“版本不支持”的升级提示，不再叠加“加载失败” */
+    state.textContent = (!d || d.ok === undefined) ? reason
+      : (reason ? t("hist_fail") + " " + reason : t("hist_fail"));
+    list.innerHTML = "";
+    return;
+  }
+  HISTORY = d.jobs;
+  renderHistory();
+}
+
+function renderHistory() {
+  const state = document.getElementById("histstate");
+  const list = document.getElementById("histlist");
+  if (!state || !list) return;
+  const jobs = HISTORY || [];
+  if (!jobs.length) {
+    state.textContent = t("hist_empty");
+    list.innerHTML = "";
+    return;
+  }
+  state.textContent = "";
+  list.innerHTML = jobs.map(job => {
+    const status = String(job.status || "unknown");
+    const saved = jobSaved(job);
+    const artifact = jobArtifact(job);
+    const err = job.error ? String(job.error).split("\n")[0] : "";
+    const sub = [];
+    if (saved != null) sub.push(tf("hist_saved", { s: fmtSize(saved) }));
+    let acts = "";
+    if (artifact) {
+      acts = pathActionButtons([{
+        kind: looksLikeFile(artifact) ? "file" : "dir",
+        path: artifact,
+        label: t("hist_locate"),
+      }]);
+    }
+    return `<div class="histrow" role="listitem">` +
+      `<div class="hist-main">` +
+      `<div class="hist-head">` +
+      `<span class="hist-badge st-${esc(status)}">${esc(historyStatus(job))}</span>` +
+      `<span class="hist-kind">${esc(historyKind(job.kind))}</span>` +
+      `<span class="hist-time">${esc(historyTime(job.finished || job.created))}</span>` +
+      `</div>` +
+      `<div class="hist-title">${esc(historyTitle(job))}</div>` +
+      (sub.length ? `<div class="hist-sub">${sub.map(esc).join(" · ")}</div>` : "") +
+      (err ? `<div class="hist-sub hist-error">${esc(err.length > 160 ? err.slice(0, 157) + "…" : err)}</div>` : "") +
+      `</div>` +
+      `<div class="hist-actions">${acts}</div>` +
+      `</div>`;
+  }).join("");
+}
+
+async function clearHistory() {
+  const okay = await confirmDanger({
+    title: t("hist_clear_title"),
+    message: t("hist_clear_msg"),
+    confirmText: t("hist_clear_ok"),
+  });
+  if (!okay) return;
+  const d = await api("/api/history", undefined, "DELETE");
+  if (!d || d.ok !== true) { toast(apiErr(d, t("hist_fail"))); return; }
+  HISTORY = [];
+  renderHistory();
+  const state = document.getElementById("histstate");
+  if (state) state.textContent = tf("hist_cleared", { n: d.cleared != null ? d.cleared : 0 });
+}
+
 /* ===================== SDK 设置 ===================== */
 async function saveSdk() {
   const d = await api("/api/sdk", { sdk_path: document.getElementById("sdkpath").value.trim() });
@@ -791,6 +1321,62 @@ async function saveSdk() {
   msg.style.color = d.ok ? "var(--ok-ink)" : "var(--err-ink)";
   if (d.ok) loadEnv();
 }
+
+/* ===================== 危险操作确认框（可复用，Promise<boolean>） ===================== */
+function confirmDanger(opts) {
+  return new Promise(resolve => {
+    const root = document.getElementById("modalroot");
+    if (!root) { resolve(false); return; }
+    MODAL.lastFocus = document.activeElement;
+    MODAL.resolve = resolve;
+    document.getElementById("modaltitle").textContent = (opts && opts.title) || "";
+    document.getElementById("modalmsg").textContent = (opts && opts.message) || "";
+    document.getElementById("modalconfirm").textContent =
+      (opts && opts.confirmText) || t("confirm");
+    document.getElementById("modalcancel").textContent = t("btn_cancel");
+    root.classList.remove("hidden");
+    root.setAttribute("aria-hidden", "false");
+    /* 默认焦点放在“取消”上：危险操作不默认确认 */
+    document.getElementById("modalcancel").focus();
+  });
+}
+
+function closeModal(result) {
+  const root = document.getElementById("modalroot");
+  if (!root || root.classList.contains("hidden")) return;
+  root.classList.add("hidden");
+  root.setAttribute("aria-hidden", "true");
+  const resolve = MODAL.resolve;
+  MODAL.resolve = null;
+  const last = MODAL.lastFocus;
+  MODAL.lastFocus = null;
+  if (resolve) resolve(!!result);
+  /* 关闭后把焦点还给触发者（键盘用户不迷路） */
+  if (last && typeof last.focus === "function") {
+    try { last.focus(); } catch (e) {}
+  }
+}
+
+document.getElementById("modalcancel").addEventListener("click", () => closeModal(false));
+document.getElementById("modalconfirm").addEventListener("click", () => closeModal(true));
+document.querySelector("#modalroot .modal-backdrop")
+  .addEventListener("click", () => closeModal(false));
+document.addEventListener("keydown", e => {
+  const root = document.getElementById("modalroot");
+  if (!root || root.classList.contains("hidden")) return;
+  if (e.key === "Escape") { e.preventDefault(); closeModal(false); return; }
+  if (e.key === "Tab") {
+    /* 只有两个可聚焦按钮：把 Tab 圈在弹窗内 */
+    const nodes = [document.getElementById("modalcancel"),
+                   document.getElementById("modalconfirm")];
+    const idx = nodes.indexOf(document.activeElement);
+    if (e.shiftKey) {
+      if (idx <= 0) { e.preventDefault(); nodes[1].focus(); }
+    } else if (idx === -1 || idx === nodes.length - 1) {
+      e.preventDefault(); nodes[0].focus();
+    }
+  }
+});
 
 /* ===================== 退出工具 ===================== */
 async function shutdownTool() {

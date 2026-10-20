@@ -115,11 +115,17 @@
       <div class="card hidden" id="reportcard">
         <h2><span class="stepnum">2</span><span data-i18n="s2_title">分析报告</span></h2>
         <div class="stats" id="reportstats"></div>
+        <div class="row" style="margin-bottom:12px">
+          <button type="button" class="btn ghost small" data-i18n="export_csv" onclick="exportReport('project','csv')">导出 CSV</button>
+          <button type="button" class="btn ghost small" data-i18n="export_json" onclick="exportReport('project','json')">导出 JSON</button>
+        </div>
+        <div class="row hidden" id="reportactions" role="group"></div>
         <details class="advgroup">
           <summary data-i18n="report_expand">资源明细清单（点一下展开，不看不影响继续）</summary>
           <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:13px">
             <table id="reporttable"></table>
           </div>
+          <div class="note" id="reportcount" aria-live="polite"></div>
           <div id="reportwarn"></div>
         </details>
       </div>
@@ -158,6 +164,8 @@
         <details class="advgroup">
           <summary data-i18n="grp_adv">高级与实验性选项</summary>
           <div class="opts">
+            <label class="opt hidden" id="onlywrap"><input type="checkbox" id="opt_only">
+              <span data-i18n="opt_only">只优化，不打包（不需要 SDK）<br><span class="hint">只瘦身，不生成安装包；之后想打包再取消勾选执行一次</span></span></label>
             <label class="opt"><input type="checkbox" id="in_place">
               <span data-i18n="opt_inplace">直接修改原文件（危险）<br><span class="hint">不勾选则在副本上操作；勾选后会先强制生成备份压缩包</span></span></label>
             <label class="opt hidden" id="delwrap"><input type="checkbox" id="del_unref">
@@ -190,6 +198,8 @@
             <label class="opt"><input type="checkbox" id="rpa_pack">
               <span data-i18n="opt_rpa">资源封入 RPA 封包<br><span class="hint">走官方通道，防顺手牵羊但不能防破解</span></span></label>
           </div>
+          <div class="note hidden" id="platwarn" role="status" aria-live="polite" style="margin-top:8px"
+               data-i18n="plat_none">还没有勾选任何打包平台：请至少勾选一个，或改勾“只优化，不打包”。</div>
         </div>
         <div class="row" style="margin-top:18px">
           <button class="btn primary" id="runbtn" data-i18n="run" onclick="runJob()">开始执行</button>
@@ -219,7 +229,31 @@
         <div class="row">
           <input type="text" id="apk_path" data-i18n-ph="apk_path_ph" placeholder="例如：E:\MyGame.apk">
           <button class="btn ghost" data-i18n="apk_browse" onclick="browseFor('apk_path','apk')">浏览 APK</button>
+          <button class="btn primary" id="apkanalyze" data-i18n="analyze" onclick="analyzeApk()">扫描分析</button>
         </div>
+        <div class="note" data-i18n="apk_analyze_hint" style="margin-top:8px">先扫描分析看看能省多少（只读，不改原包），也可以直接跳到第 2 步开始瘦身。</div>
+        <div id="apkanalyzeinfo" class="hidden" style="margin-top:10px"></div>
+      </div>
+
+      <!-- APK 预分析报告（只读扫描结果，不污染工程页报告卡） -->
+      <div class="card hidden" id="apkreportcard">
+        <h2 data-i18n="apk_report_title">APK 预分析报告</h2>
+        <div class="desc" data-i18n="apk_report_desc">只读扫描：不改原包、不产生文件。数字是估算，实际节省以瘦身结果为准。</div>
+        <div class="stats" id="apkreportstats"></div>
+        <div class="note" id="apkreportmeta"></div>
+        <div class="row" style="margin:12px 0">
+          <button type="button" class="btn ghost small" data-i18n="export_csv" onclick="exportReport('apk','csv')">导出 CSV</button>
+          <button type="button" class="btn ghost small" data-i18n="export_json" onclick="exportReport('apk','json')">导出 JSON</button>
+        </div>
+        <div class="row hidden" id="apkreportactions" role="group"></div>
+        <div id="apkreportwarn"></div>
+        <details class="advgroup">
+          <summary data-i18n="report_expand">资源明细清单（点一下展开，不看不影响继续）</summary>
+          <div style="max-height:300px;overflow-y:auto;border:1px solid var(--border);border-radius:13px">
+            <table id="apkreporttable"></table>
+          </div>
+          <div class="note" id="apkreportcount" aria-live="polite"></div>
+        </details>
       </div>
       <div class="card">
         <h2><span class="stepnum">2</span><span data-i18n="apk_s2">选择瘦身方案</span></h2>
@@ -307,10 +341,37 @@
         <div class="stats" style="grid-template-columns:repeat(3,1fr)" id="envstats"></div>
         <div id="updbox"></div>
       </div>
+      <div class="card" id="historycard">
+        <h2 data-i18n="hist_title">任务历史</h2>
+        <div class="desc" data-i18n="hist_desc">最近 20 个任务的去留记录（重启工具也不丢），只记摘要，不含完整日志。</div>
+        <div class="row">
+          <button type="button" class="btn ghost small" id="histrefresh" data-i18n="hist_refresh" onclick="loadHistory()">刷新</button>
+          <button type="button" class="btn danger small" id="histclear" data-i18n="hist_clear" onclick="clearHistory()">清空历史</button>
+        </div>
+        <div class="note" id="histstate" role="status" aria-live="polite" style="margin-top:8px"></div>
+        <div id="histlist" class="histlist" role="list"></div>
+      </div>
       <div class="card">
         <h2 data-i18n="set_appearance">外观</h2>
         <div class="desc" data-i18n="set_appearance_desc">语言与亮暗随时可在右上角切换，选择会被记住；不手动选时亮暗跟随系统。</div>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- 全局操作反馈（复制路径/轻量错误提示） -->
+<div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+<!-- 危险操作确认框：自定义模态，role=dialog + aria-modal，Esc 取消 -->
+<div id="modalroot" class="modal hidden" aria-hidden="true">
+  <div class="modal-backdrop" data-modal-cancel></div>
+  <div class="modal-card" role="dialog" aria-modal="true"
+       aria-labelledby="modaltitle" aria-describedby="modalmsg">
+    <h3 id="modaltitle"></h3>
+    <div id="modalmsg" class="modal-msg"></div>
+    <div class="row modal-actions">
+      <button type="button" class="btn ghost" id="modalcancel" data-modal-cancel>取消</button>
+      <button type="button" class="btn danger" id="modalconfirm">确认</button>
     </div>
   </div>
 </div>
