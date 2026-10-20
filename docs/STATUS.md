@@ -6,10 +6,12 @@
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.16.2（最近一个已发布版本，
-自更新检查靶子，附 exe；发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
-v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。v0.17.0 本次只做代码与
-文档收口，**未打 tag、未发 Release**。
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.0（当前已发布版本，
+自更新检查靶子，附 exe；Release workflow `39509688657` 全绿，资产 RenPySlim.exe
+32,031,929 字节，SHA256 `8aa3b126980188f9f2784c580a2eb27680bfd71cd69115fdfd56af09cfaa0027`；
+发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
+v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
+v0.17.0 已完成代码、文档、tag 与 Release 产物验证（2026-10-21）。
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
 含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
 
