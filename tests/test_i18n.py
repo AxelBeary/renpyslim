@@ -2,11 +2,14 @@
 
 这是"不引 TypeScript 也要字典类型安全"的平价方案：
 任何一本字典漏键/页面新增 data-i18n 忘了翻译，这里立刻红。
+字典与语言注册表在 i18n.js，页面键仍从 index.html 读取。
 """
 import re
 from pathlib import Path
 
-HTML_PATH = Path(__file__).resolve().parent.parent / "web" / "static" / "index.html"
+STATIC = Path(__file__).resolve().parent.parent / "web" / "static"
+HTML_PATH = STATIC / "index.html"
+I18N_PATH = STATIC / "i18n.js"
 LANGS = ("zh", "en", "ru", "es", "pt", "tr", "de", "fr")
 
 _STR_CHARS = "\"'`"
@@ -15,6 +18,10 @@ _KEY_FORM = re.compile(r"[a-z_$][a-z_0-9$]*")
 
 def _src() -> str:
     return HTML_PATH.read_text(encoding="utf-8")
+
+
+def _i18n_src() -> str:
+    return I18N_PATH.read_text(encoding="utf-8")
 
 
 def _skip_string(text: str, i: int) -> int:
@@ -89,7 +96,7 @@ def _top_keys(block: str) -> set:
 
 
 def test_all_language_dicts_have_identical_keys():
-    src = _src()
+    src = _i18n_src()
     keysets = {lang: _top_keys(_lang_block(src, lang)) for lang in LANGS}
     base = keysets["zh"]
     for lang in LANGS[1:]:
@@ -100,16 +107,15 @@ def test_all_language_dicts_have_identical_keys():
 
 
 def test_every_page_i18n_key_is_translated():
-    src = _src()
-    zh_keys = _top_keys(_lang_block(src, "zh"))
-    used = set(re.findall(r'data-i18n(?:-ph)?="([^"]+)"', src))
+    zh_keys = _top_keys(_lang_block(_i18n_src(), "zh"))
+    used = set(re.findall(r'data-i18n(?:-ph)?="([^"]+)"', _src()))
     missing = used - zh_keys
     assert not missing, f"页面用到但 zh 字典没有的键：{sorted(missing)}"
 
 
 def test_langs_registry_matches_dicts():
     """LANGS 注册表必须与字典一致（语言选择器选项的事实源）。"""
-    src = _src()
+    src = _i18n_src()
     m = re.search(r"const LANGS = \{([^}]+)\}", src)
     assert m, "找不到 LANGS 注册表"
     registered = set(re.findall(r'(\w+):', m.group(1)))
