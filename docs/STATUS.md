@@ -52,6 +52,9 @@ v0.17.0 已完成代码、文档、tag 与 Release 产物验证（2026-10-21）�
    可访问性（原生按钮 + aria、焦点可见、减少动态效果、亮色主题对比度修正）。
 8. **结构化日志**：`Progress.emit` 与 Web 任务日志带 `code` + `params`（稳定
    snake_case）；Web 日志按结构化 code 做八语翻译，未覆盖项回退原文/旧句式。
+9. **文档与翻译同步**：八份 README、AGENTS 中英双节、ARCHITECTURE/STATUS/BACKLOG/
+   CONTRIBUTING 已同步；非中文界面字典与 42 条日志 code 的七语译文无中文残留
+   （语言切换行中的“简体中文”语言名与后端未覆盖警告除外）。
 
 验收：`python -m pytest tests -q` 全绿（本机最近一次全量运行；数量以 pytest 实际收集为准）；`ruff check --select F,E9 ...` 全绿；
 `python -m pip check` 无冲突；前端三件套在装 Node 的环境跑 `node --check` 通过
