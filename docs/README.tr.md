@@ -163,7 +163,7 @@ bu port doluyken sistem tarafından atanan boş bir porta otomatik geçer;
 | Gereksiz dosya temizliği yalnızca yeniden üretilebilirleri siler | Önbellek/günlük/bayt kodu; asıl dosyayı doğrudan değiştirme modunda kayıtları korumak için otomatik atlanır |
 | Görseller hurdaya çıkarılmaz | Ren'Py görselleri dosya adına göre otomatik yükler; referans bulunamaması kullanılmadığı anlamına gelmez |
 | Kötü niyetli girdi koruması | Paket dizinleri beyaz listeyle çözümlenir; arşiv giriş yolları temizlenir (zip-slip savunması) |
-| Güvenli açma/konumlandırma | Yalnızca bu makinenin mutlak yolları kabul edilir (UNC/ağ paylaşımları reddedilir); yalnızca Dosya Gezgini'nde açılır veya seçilir, dosyalar asla çalıştırılmaz |
+| Güvenli açma/konumlandırma | Tüm yol parametreleri kullanılmadan önce normalize edilir (`..` katlanır, yalnızca bu makinenin mutlak yolları, UNC/ağ paylaşımları reddedilir); klasörü açma veya dosyayı seçme sistem Shell API'siyle yapılır (komut satırı birleştirilmez), dosyalar asla çalıştırılmaz |
 | Geçmiş gizliliği | Görev geçmişi yalnızca özeti ve çıktı yollarını saklar, tam günlüğü saklamaz; tek tıkla temizlenebilir |
 | Yalnızca yerel kullanım | Hizmet yalnızca 127.0.0.1'i dinler, istek kaynağını doğrular; dış ağdan erişim mümkün değildir |
 | Optimizasyon sonrası otomatik lint | Resmî statik denetim akışa gömülüdür, çıktı validation.txt olarak saklanır |

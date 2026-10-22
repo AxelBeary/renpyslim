@@ -162,7 +162,7 @@ wird automatisch ein vom System zugewiesener freier Port verwendet. Mit der Umge
 | Müllbeseitigung löscht nur neu erzeugbare Dinge | Caches/Logs/Bytecode; im Modus "Original direkt ändern" werden sie automatisch übersprungen, um Spielstände zu schützen |
 | Bilder werden nie für tot erklärt | Ren'Py lädt Bilder automatisch nach Dateinamen – kein gefundener Verweis heißt nicht automatisch unbenutzt |
 | Schutz vor bösartigen Eingaben | Deserialisierung von Archiv-Indizes per Whitelist; Pfad-Bereinigung bei Archiveinträgen (Schutz vor zip-slip) |
-| Sicheres Öffnen/Zeigen | Es werden nur lokale absolute Pfade angenommen (UNC/Netzwerkfreigaben abgelehnt); geöffnet oder markiert wird ausschließlich im Explorer, Dateien werden niemals ausgeführt |
+| Sicheres Öffnen/Zeigen | Alle Pfadparameter werden vor der Verwendung normalisiert (`..` wird aufgelöst, nur lokale absolute Pfade, UNC/Netzwerkfreigaben abgelehnt); Ordner öffnen oder Dateien markieren läuft über die Windows-Shell-API (ohne zusammengesetzte Befehlszeile), Dateien werden niemals ausgeführt |
 | Verlauf und Privatsphäre | Der Aufgabenverlauf speichert nur Zusammenfassungen und Pfade zu Ergebnissen, keine vollständigen Protokolle, und lässt sich mit einem Klick leeren |
 | Nur für den lokalen Rechner | Der Dienst hört nur auf 127.0.0.1 und prüft die Herkunft der Anfragen – aus dem Netz ist er nicht erreichbar |
 | Automatisches lint nach der Optimierung | Der offizielle statische Check ist in den Ablauf eingebaut und speichert validation.txt ins Archiv |

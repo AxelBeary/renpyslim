@@ -139,7 +139,7 @@ falls back to a system-assigned free port. Set `RENPYTOOLS_PORT` to override.
 | Junk cleanup removes only regenerable items | Caches/logs/bytecode; skipped automatically in modify-originals mode to protect saves |
 | Images never declared dead | Ren'Py auto-loads images by filename — no reference found ≠ unused |
 | Malicious-input protection | Whitelisted deserialization of archive indexes; path sanitization of archive entries (zip-slip defense) |
-| Open/reveal safety | Accepts only local absolute paths (UNC/network shares rejected); files are only opened or selected in Explorer, never executed |
+| Open/reveal safety | Every path parameter is normalized before use (collapsing `..`, local absolute paths only, UNC/network shares rejected); opening a folder or selecting a file goes through the Windows Shell API (no command line is assembled), and files are never executed |
 | History privacy | Task history keeps only summaries and artifact paths, never full logs, and can be cleared in one click |
 | Local-only | The service listens on 127.0.0.1 only and verifies request origins — unreachable from the network |
 | Auto lint after optimization | The official static check is built into the pipeline, archived as validation.txt |

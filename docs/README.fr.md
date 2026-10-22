@@ -159,7 +159,7 @@ il bascule automatiquement sur un port libre attribué par le système. Tu peux 
 | Le nettoyage ne supprime que le reproductible | Cache/journaux/bytecode ; en mode modification directe des originaux, ces éléments sont automatiquement sautés pour protéger les sauvegardes de partie |
 | Une image n'est jamais déclarée morte | Ren'Py charge automatiquement les images par nom de fichier : référence introuvable ne veut pas dire inutile |
 | Protection contre les entrées malveillantes | Désérialisation de l'index des archives sur liste blanche ; assainissement des chemins des entrées d'archives (défense contre le zip-slip) |
-| Ouverture/localisation sûres | Seuls des chemins absolus locaux sont acceptés (UNC/partages réseau refusés) ; l'ouverture ou la sélection se fait uniquement dans l'explorateur, jamais par exécution du fichier |
+| Ouverture/localisation sûres | Tous les chemins sont normalisés avant usage (les `..` sont résolus, seuls des chemins absolus locaux sont acceptés, UNC/partages réseau refusés) ; l'ouverture du dossier ou la sélection du fichier passe par l'API Shell du système (aucune ligne de commande concaténée), jamais par exécution du fichier |
 | Confidentialité de l'historique | L'historique des tâches ne garde que des résumés et les chemins des résultats, jamais les journaux complets, et s'efface en un clic |
 | Réservé au local | Le service n'écoute que sur 127.0.0.1 et vérifie la provenance des requêtes : aucun accès possible depuis l'extérieur |
 | Lint automatique après optimisation | Le vérificateur statique officiel est intégré au parcours ; le résultat est archivé dans validation.txt |

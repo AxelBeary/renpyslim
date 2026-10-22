@@ -14,7 +14,7 @@ body:
     id: version
     attributes:
       label: 版本 / Version
-      description: 界面左下角或右上角的版本号，如 v0.17.0
+      description: 界面左下角或右上角的版本号，如 v0.17.1
     validations:
       required: true
   - type: dropdown
@@ -25,7 +25,7 @@ body:
         - 超级打包器 Slim & Pack
         - 成品瘦身 Dist Slimming
         - 字体瘦身 Font Slimming
-        - APK 瘦身 APK Slimming (CLI)
+        - APK 瘦身 APK Slimming
         - 打包 Packaging
         - 其他 Other
     validations:

@@ -4,7 +4,8 @@
 
 | Version / 版本 | Supported / 支持状态 |
 |---|---|
-| 0.10.x | ✅ 接收安全报告 receiving security reports |
+| 0.17.x | ✅ 接收安全报告 receiving security reports |
+| 0.10 – 0.16 | ⚠️ 仅按需回移修复，请升级到 0.17.x fixes backported case-by-case; please upgrade |
 | < 0.10 | ❌ 请升级 please upgrade |
 
 ## 报告漏洞 / Reporting a Vulnerability
@@ -30,6 +31,9 @@
   不建议修改源码对外暴露（界面无鉴权）
 - RPA 索引反序列化白名单（防恶意 pickle 执行代码）
 - 压缩包/封包条目路径净化（防 zip-slip 路径穿越）
+- Web 接口的路径参数统一归一化后才使用（realpath 折叠 `..`、只收本机绝对路径、
+  拒绝 UNC/网络共享与 NUL），"校验的路径"与"使用的路径"始终是同一个（v0.17.1）
+- 打开目录/定位文件走系统 Shell API：不拼命令行、不执行文件本身（v0.17.1）
 - 引擎目录保护（renpy/、lib/、assets/x-renpy/ 绝不写）
 - 隔离区只移不删
 

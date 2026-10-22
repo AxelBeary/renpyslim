@@ -155,7 +155,7 @@ usa automaticamente uma porta livre atribuída pelo sistema. Use a variável de 
 | Limpeza de lixo só exclui itens regeneráveis | Cache/logs/bytecode; no modo de modificar os originais diretamente, são ignorados automaticamente para proteger os saves |
 | Imagens nunca são condenadas | O Ren'Py carrega imagens automaticamente pelo nome do arquivo; não achar a referência não significa que não é usada |
 | Proteção contra entrada maliciosa | Desserialização com lista branca dos índices de pacotes; higienização dos caminhos das entradas de arquivos compactados (defesa contra zip-slip) |
-| Abertura/localização segura | Só aceita caminhos absolutos desta máquina (recusa UNC/compartilhamentos de rede); abre ou seleciona apenas no Explorador de Arquivos, nunca executa arquivos |
+| Abertura/localização segura | Todos os caminhos são normalizados antes do uso (recolhendo `..`, só caminhos absolutos desta máquina, recusa UNC/compartilhamentos de rede); abrir a pasta ou selecionar o arquivo usa a API do Shell do sistema (sem montar linha de comando) e nunca executa arquivos |
 | Privacidade do histórico | O histórico de tarefas guarda apenas o resumo e os caminhos dos artefatos, não o log completo, e pode ser limpo com um clique |
 | Somente local | O serviço escuta apenas em 127.0.0.1 e verifica a origem das requisições; inacessível pela internet |
 | Lint automático após a otimização | A verificação estática oficial faz parte do fluxo, com saída arquivada em validation.txt |

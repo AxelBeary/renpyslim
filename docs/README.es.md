@@ -140,7 +140,7 @@ Puedes fijar otro puerto con la variable `RENPYTOOLS_PORT`.
 | La limpieza solo borra lo regenerable | Cachés/registros/bytecode; en modo de modificación directa se omite automáticamente para proteger las partidas |
 | Las imágenes no se declaran muertas | Ren'Py carga imágenes por nombre de archivo — sin referencia ≠ sin uso |
 | Protección contra entradas maliciosas | Deserialización de índices por lista blanca; saneado de rutas de entradas (defensa contra zip-slip) |
-| Seguridad al abrir/localizar | Solo se aceptan rutas absolutas locales (se rechazan UNC/recursos de red); los archivos solo se abren o seleccionan en el explorador, nunca se ejecutan |
+| Seguridad al abrir/localizar | Todas las rutas se normalizan antes de usarse (se colapsan los `..`, solo rutas absolutas locales, se rechazan UNC/recursos de red); abrir la carpeta o seleccionar el archivo se hace mediante la API del Shell del sistema (sin construir líneas de comandos) y nunca se ejecutan archivos |
 | Privacidad del historial | El historial de tareas solo guarda resúmenes y rutas de resultados, sin registros completos, y se puede borrar con un clic |
 | Solo local | El servicio escucha únicamente en 127.0.0.1 y verifica el origen de las peticiones — inaccesible desde fuera |
 | Lint automático tras optimizar | La comprobación estática oficial está integrada en el flujo y se archiva como validation.txt |

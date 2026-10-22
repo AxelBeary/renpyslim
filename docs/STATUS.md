@@ -1,19 +1,51 @@
-# RenPySlim 交接状态（截至 2026-10-21 v0.17.0 功能批次收口）
+# RenPySlim 交接状态（截至 2026-10-23 v0.17.1 Web 路径校验加固收口）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.17.0（功能批次：APK 预分析、只优化不打包、任务历史、结果动作/导出、磁盘预检、结构化日志；v0.10.0 起 AGPL-3.0）
+## 当前版本：v0.17.1（安全补丁：Web 请求路径统一归一化校验、打开/定位改走 Shell API；能力面同 v0.17.0；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.0（当前已发布版本，
-自更新检查靶子，附 exe；Release workflow `39509688657` 全绿，资产 RenPySlim.exe
-32,031,929 字节，SHA256 `8aa3b126980188f9f2784c580a2eb27680bfd71cd69115fdfd56af09cfaa0027`；
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.1（当前已发布版本，
+自更新检查靶子，附 exe；资产校验记录见下面 v0.17.1 一节末行；
 发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
 v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
-v0.17.0 已完成代码、文档、tag 与 Release 产物验证（2026-10-21）。
+上一版 v0.17.0：Release workflow `39509688657` 全绿，资产 RenPySlim.exe
+32,031,929 字节，SHA256 `8aa3b126980188f9f2784c580a2eb27680bfd71cd69115fdfd56af09cfaa0027`，
+代码、文档、tag 与 Release 产物已于 2026-10-21 验证。
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
 含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
+
+## 2026-10-23 v0.17.1 安全补丁（Web 请求路径统一校验，用户要求“发个新版并及时更新文档”）
+
+起因：GitHub CodeQL 在 v0.17.0 的 Web 层报出路径注入类告警。本批次只做安全加固与
+文档收口，不加功能（用户本次要求即“发个新版 + 及时更新文档”）。
+
+已交付（代码在 35eb4bc，本节文字与实现逐条对过）：
+
+1. **请求路径统一校验**：`web/app.py::_local_path` 成为所有接口路径参数的唯一入口
+   ——realpath 归一化（折叠 `..`）、要求绝对路径、按需校验存在性、拒绝 NUL 与
+   UNC/网络共享，并核对归一化结果仍在自身盘符根之下；文件操作只用归一化后的路径，
+   “校验的路径”与“使用的路径”从此是同一个。覆盖面（逐处核过 `web/app.py`）：
+   `/api/analyze`、`/api/optimize`（含 `work_root` / `output`）、`/api/package` 与
+   `/api/full`（含 `destination` / `sdk`）、`/api/reveal`、设置页 SDK 目录、
+   `/api/slimfont`（字体与每个文本来源）、`/api/slimapk`（含 `keystore`）。
+2. **打开/定位不再拼命令行**：`/api/reveal` 改用 Windows Shell API
+   （`_open_in_explorer`），用户路径不进命令行，也不再 `subprocess.Popen` explorer.exe；
+   仍然只打开目录或选中文件，绝不执行文件本身。
+3. **异常细节不回传前端**：平台校验改走 `packager.platform_error`（返回给人看的文案，
+   不靠异常传消息），打开失败只回人话提示，堆栈只进服务端日志。
+4. **日志防伪造**：用户可控值写日志前经 `_log_safe` 压成单行，防换行伪造日志条目。
+
+验收：本机 venv 全量 `python -m pytest tests -q` 全绿（数量以实际收集为准）；
+`ruff check --select F,E9 --exclude rtools/vendor ...` 全绿；`python -m pip check`
+无冲突；`gh api .../code-scanning/alerts` 开放告警 0；main 上 CI 全绿。
+
+安全语义（与实现一致）：沿用下面 v0.17.0 一节的「安全语义」清单，其中
+`/api/reveal` 与“所有接口路径参数先经 `_local_path` 归一化”两条已按本次实现改写。
+
+发版验证（tag 推送后回填）：Release workflow 待填、资产 RenPySlim.exe 字节数待填、
+SHA256 待填。
 
 ## 2026-10-21 v0.17.0 功能批次（用户拍板“值得加入的全部加入”）
 

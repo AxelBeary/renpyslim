@@ -111,3 +111,19 @@
 批次验收线：`python -m pytest tests -q` 全绿（数量以实际收集为准）；ruff F/E9 全绿；
 `python -m pip check` 无冲突；前端三件套 `node --check` 通过（无 Node 环境自动跳过）；
 文档中的命令、路径与参数逐条对照实现。
+
+## 七、2026-10-23 v0.17.1 安全补丁（Web 请求路径统一校验）
+
+来源：GitHub CodeQL 在 v0.17.0 的 Web 层报出路径注入类告警。本批次只做安全加固与
+文档收口，不加功能。
+
+| # | 事项 | 结果记录 | 状态 |
+|---|---|---|---|
+| S1 | Web 所有接口路径参数统一归一化校验 | `web/app.py::_local_path`：realpath 折叠 `..`、要求绝对路径、按需校验存在性、拒 NUL 与 UNC/网络共享，并核对结果仍在自身盘符根之下；文件操作只用归一化后的路径。覆盖面逐处核过：analyze / optimize（含 work_root、output）/ package / full（含 destination、sdk）/ reveal / 设置页 SDK 目录 / slimfont（字体与每个文本来源）/ slimapk（含 keystore）；test_web_v017、test_web_api_regressions 锁住 | ✅ |
+| S2 | `/api/reveal` 不再拼 explorer 命令行 | 改用 Windows Shell API（`_open_in_explorer`）打开目录或选中文件，用户路径不进命令行、绝不执行文件；失败只回人话提示，堆栈只进服务端日志 | ✅ |
+| S3 | 平台校验不靠异常传消息 | 新增 `packager.platform_error` 返回给人看的文案，`validate_platforms` 复用同一判据（CLI 仍抛 ValueError，口径不变），异常细节不进 HTTP 响应 | ✅ |
+| S4 | 日志防伪造 | 用户可控值经 `_log_safe` 压成单行再写日志，防换行伪造日志条目 | ✅ |
+| S5 | 文档同步（用户要求"及时更新文档"） | 版本号 0.17.1；STATUS 新增对应章节并把 v0.17.0 资产校验记录降为"上一版"；SECURITY 支持版本表抬到 0.17.x、防护清单补"请求路径归一化 + Shell API 打开定位"；README.md 与七份翻译 README 的"打开/定位安全"行同步；issue 模板版本示例同步，并去掉 APK 瘦身那条已过期的"(CLI)"标注（v0.17.0 起界面已有 APK 页） | ✅ |
+
+批次验收线：本机 venv 全量 `python -m pytest tests -q` 全绿；ruff F/E9 全绿；
+`python -m pip check` 无冲突；`gh api` 查 CodeQL 开放告警 0；main 上 CI 全绿。
