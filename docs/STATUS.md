@@ -44,8 +44,14 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
 安全语义（与实现一致）：沿用下面 v0.17.0 一节的「安全语义」清单，其中
 `/api/reveal` 与“所有接口路径参数先经 `_local_path` 归一化”两条已按本次实现改写。
 
-发版验证（tag 推送后回填）：Release workflow 待填、资产 RenPySlim.exe 字节数待填、
-SHA256 待填。
+发版验证（2026-10-23 实测，不只看流水线状态）：tag `v0.17.1`（附注标签）已推送；
+Release workflow `39840040041` 全绿（Sanity tests → Build exe → Publish Release
+逐步通过）；main 上 CI `39840035502` 全绿；Release 页面
+https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.1 非 draft/非 prerelease，
+发布说明为手写版（含加固清单、兼容性口径与八语文档入口），已补资产校验段；
+资产 `RenPySlim.exe` 32,037,128 字节，SHA256
+`7ceffc376be5abb984d39ebee40110627fc8000bd33c8337b5a4b0d1f1eaec04`
+（下载实物复算，文件头 MZ 正常）。
 
 ## 2026-10-21 v0.17.0 功能批次（用户拍板“值得加入的全部加入”）
 
