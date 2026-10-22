@@ -141,34 +141,33 @@ def test_history_summary_keeps_only_small_fields():
 def test_reveal_directory_and_file(client, tmp_path, monkeypatch):
     calls = []
 
-    def fake_popen(args):
-        calls.append(args)
-        return object()
+    def fake_open(target, *, select):
+        calls.append((target, select))
 
-    monkeypatch.setattr(app_mod.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(app_mod, "_open_in_explorer", fake_open)
 
     folder = tmp_path / "output"
     folder.mkdir()
     assert client.post("/api/reveal",
                        json={"path": str(folder)}).json() == {"ok": True}
-    assert calls[-1] == ["explorer.exe", str(folder)]
+    assert calls[-1] == (folder, False)
 
     target = folder / "game-pc.zip"
     target.write_bytes(b"ZIP")
     r = client.post("/api/reveal", json={"path": str(target), "reveal": True})
     assert r.json() == {"ok": True}
-    assert calls[-1] == ["explorer.exe", "/select,", str(target)]
+    assert calls[-1] == (target, True)
 
     # 文件但不要定位：打开所在目录，绝不执行文件
     r = client.post("/api/reveal", json={"path": str(target)})
     assert r.json() == {"ok": True}
-    assert calls[-1] == ["explorer.exe", str(folder)]
+    assert calls[-1] == (folder, False)
 
 
 def test_reveal_rejects_missing_relative_and_unc(client, tmp_path, monkeypatch):
     calls = []
-    monkeypatch.setattr(app_mod.subprocess, "Popen",
-                        lambda args: calls.append(args) or object())
+    monkeypatch.setattr(app_mod, "_open_in_explorer",
+                        lambda target, *, select: calls.append((target, select)))
 
     missing = client.post("/api/reveal",
                           json={"path": str(tmp_path / "nope")}).json()
@@ -189,14 +188,36 @@ def test_reveal_rejects_missing_relative_and_unc(client, tmp_path, monkeypatch):
     assert calls == []      # 非法路径一次都不许拉起资源管理器
 
 
-def test_reveal_popen_failure_reports_error(client, tmp_path, monkeypatch):
-    def boom(_args):
+def test_reveal_failure_reports_generic_error(client, tmp_path, monkeypatch):
+    def boom(_target, *, select):
         raise OSError("explorer 挂了")
 
-    monkeypatch.setattr(app_mod.subprocess, "Popen", boom)
+    monkeypatch.setattr(app_mod, "_open_in_explorer", boom)
     data = client.post("/api/reveal", json={"path": str(tmp_path)}).json()
     assert data["ok"] is False
-    assert "explorer 挂了" in data["error"]
+    assert "资源管理器" in data["error"]
+    # 异常细节只进服务端日志，不回传前端
+    assert "explorer 挂了" not in data["error"]
+
+
+def test_local_path_normalizes_and_rejects_unsafe_forms(tmp_path):
+    assert app_mod._local_path("  ", must_exist=False)[0] is None
+    assert app_mod._local_path("relative/game", must_exist=False)[0] is None
+    assert app_mod._local_path(str(tmp_path / "a" / ".." / "b"),
+                               must_exist=False)[0] == tmp_path / "b"
+    assert app_mod._local_path(str(tmp_path) + "\x00evil",
+                               must_exist=False)[0] is None
+    assert app_mod._local_path(r"\\server\share\game", must_exist=False,
+                               allow_network=False)[1]
+    assert app_mod._local_path(str(tmp_path / "nope"), must_exist=True)[1]
+
+
+def test_analyze_rejects_unsafe_path_before_job(client):
+    for raw in ("relative/game", "C:\\game\x00evil"):
+        data = client.post("/api/analyze", json={"path": raw}).json()
+        assert data["ok"] is False
+        assert "路径" in data["error"]
+    assert app_mod.JOBS == {}, "非法路径不得创建任务"
 
 
 # ---------------------------------------------------------------------------

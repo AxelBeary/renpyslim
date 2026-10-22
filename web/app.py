@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 import threading
 import time
 import traceback
@@ -28,6 +27,12 @@ from rtools.models import Progress
 
 STATIC_DIR = Path(__file__).parent / "static"
 _LOG = logging.getLogger("renpyslim.web")
+
+
+def _log_safe(value: object) -> str:
+    """把用户可控值压成单行再写日志，防止换行伪造日志条目。"""
+    return (str(value).replace("\r\n", " ")
+            .replace("\n", " ").replace("\r", " "))
 
 app = FastAPI(title="Ren'Py 工具箱")
 
@@ -57,6 +62,40 @@ async def guard_local_only(request: Request, call_next):
             return JSONResponse({"ok": False, "error": "非本机来源，已拒绝"},
                                 status_code=403)
     return await call_next(request)
+
+# ---------------------------------------------------------------------------
+# 请求路径校验
+# ---------------------------------------------------------------------------
+# 所有从 HTTP 请求进来的路径都先过 _local_path 再交给文件操作：
+# realpath 折叠 ".." 后，再核对结果仍位于自身盘符根之下——保证“校验的路径”
+# 与“真正使用的路径”是同一个，也满足 CodeQL 路径注入规则要求的净化形态。
+def _local_path(raw: Optional[str], *, must_exist: bool,
+                allow_network: bool = True
+                ) -> tuple[Optional[Path], Optional[str]]:
+    """校验并规范化请求里的路径；不合法时返回 (None, 给人看的提示)。"""
+    text = (raw or "").strip()
+    if not text:
+        return None, "路径为空"
+    if "\x00" in text:
+        return None, "路径包含非法字符"
+    if not allow_network and text.startswith(("\\\\", "//")):
+        return None, "不支持网络/共享路径，只允许本机路径"
+    if not os.path.isabs(text):
+        return None, f"只接受绝对路径：{text}"
+    resolved = os.path.realpath(text)
+    drive, _ = os.path.splitdrive(resolved)
+    if not drive:
+        return None, f"只接受本机绝对路径：{text}"
+    if not allow_network and drive.startswith(("\\\\", "//")):
+        return None, "不支持网络/共享路径，只允许本机路径"
+    root = drive + os.sep
+    if not resolved.startswith(root):
+        return None, f"路径无法定位到所在磁盘：{text}"
+    path = Path(resolved)
+    if must_exist and not path.exists():
+        return None, f"路径不存在：{text}"
+    return path, None
+
 
 # ---------------------------------------------------------------------------
 # 任务管理
@@ -473,9 +512,9 @@ def _detect_mode(path: Path) -> str:
 
 @app.post("/api/analyze")
 def api_analyze(req: AnalyzeReq):
-    path = Path(req.path)
-    if not path.exists():
-        return JSONResponse({"ok": False, "error": f"路径不存在：{req.path}"})
+    path, error = _local_path(req.path, must_exist=True)
+    if error:
+        return JSONResponse({"ok": False, "error": error})
 
     # APK 走只读预分析：只读 ZIP 条目表，不解包、不建工作目录、不改原包
     if path.suffix.lower() == ".apk":
@@ -589,9 +628,9 @@ def api_optimize(req: OptimizeReq):
                              "error": f"非法的 mode 值：{req.mode}，"
                                       "只支持 project / dist / 不传（自动判断）"},
                             status_code=400)
-    path = Path(req.path)
-    if not path.exists():
-        return JSONResponse({"ok": False, "error": f"路径不存在：{req.path}"})
+    path, error = _local_path(req.path, must_exist=True)
+    if error:
+        return JSONResponse({"ok": False, "error": error})
     if archives.is_archive(str(path)):
         if req.mode == "project":
             _LOG.warning("optimize：压缩包输入不支持 project 模式，"
@@ -600,9 +639,18 @@ def api_optimize(req: OptimizeReq):
     else:
         mode = req.mode or _detect_mode(path)
     opts = _options_from_dict(req.options)
-    work_root = req.work_root or str(path.parent / "_rtools_work")
-    output_dir = req.output or str(path.parent / "_rtools_output")
-    Path(work_root).mkdir(parents=True, exist_ok=True)
+    work_path = path.parent / "_rtools_work"
+    if req.work_root:
+        work_path, error = _local_path(req.work_root, must_exist=False)
+        if error:
+            return JSONResponse({"ok": False, "error": error})
+    out_path = path.parent / "_rtools_output"
+    if req.output:
+        out_path, error = _local_path(req.output, must_exist=False)
+        if error:
+            return JSONResponse({"ok": False, "error": error})
+    work_root, output_dir = str(work_path), str(out_path)
+    work_path.mkdir(parents=True, exist_ok=True)
 
     job_id = _new_job("optimize", title=path.name)
     progress = _job_progress(job_id)
@@ -626,11 +674,22 @@ def api_optimize(req: OptimizeReq):
 
 def _platform_error(platforms: list[str]) -> Optional[JSONResponse]:
     """打包平台统一校验（与 CLI 同一口径）；合法返回 None。"""
-    try:
-        packager.validate_platforms(platforms)
-    except ValueError as exc:
-        return JSONResponse({"ok": False, "error": str(exc)}, status_code=400)
-    return None
+    error = packager.platform_error(platforms)
+    if error is None:
+        return None
+    return JSONResponse({"ok": False, "error": error}, status_code=400)
+
+
+def _sdk_override(raw: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """校验请求里显式指定的 SDK 目录；未指定返回 (None, None)。"""
+    if not raw:
+        return None, None
+    path, error = _local_path(raw, must_exist=True)
+    if error:
+        return None, error
+    if not (path / "renpy.exe").exists():
+        return None, "该目录下找不到 renpy.exe，请检查 SDK 路径"
+    return str(path), None
 
 
 @app.post("/api/package")
@@ -639,16 +698,27 @@ def api_package(req: PackageReq):
     error = _platform_error(req.platforms)
     if error is not None:
         return error
-    sdk = packager.find_sdk(req.sdk)
+    path, message = _local_path(req.path, must_exist=True)
+    if message:
+        return JSONResponse({"ok": False, "error": message})
+    destination = None
+    if req.destination:
+        dest_path, message = _local_path(req.destination, must_exist=False)
+        if message:
+            return JSONResponse({"ok": False, "error": message})
+        destination = str(dest_path)
+    sdk_override, message = _sdk_override(req.sdk)
+    if message:
+        return JSONResponse({"ok": False, "error": message})
+    sdk = packager.find_sdk(sdk_override)
     if not sdk:
         return JSONResponse({"ok": False,
                              "error": "找不到 Ren'Py SDK，请在设置里指定 SDK 目录"})
-    path = Path(req.path)
     job_id = _new_job("package", title=path.name)
 
     def task():
-        return packager.package_project(sdk, req.path, req.platforms,
-                                        req.destination,
+        return packager.package_project(sdk, str(path), req.platforms,
+                                        destination,
                                         log=lambda m: _job_log(job_id, "package", m),
                                         archive_rpa=req.archive_rpa)
 
@@ -662,18 +732,30 @@ def api_full(req: FullReq):
     error = _platform_error(req.platforms)
     if error is not None:
         return error
-    path = Path(req.path)
+    path, message = _local_path(req.path, must_exist=True)
+    if message:
+        return JSONResponse({"ok": False, "error": message})
     if not (path / "game").is_dir():
         return JSONResponse({"ok": False,
                              "error": f"{req.path} 不是有效工程（缺少 game 目录）"})
-    sdk = packager.find_sdk(req.sdk)
+    destination = None
+    if req.destination:
+        dest_path, message = _local_path(req.destination, must_exist=False)
+        if message:
+            return JSONResponse({"ok": False, "error": message})
+        destination = str(dest_path)
+    sdk_override, message = _sdk_override(req.sdk)
+    if message:
+        return JSONResponse({"ok": False, "error": message})
+    sdk = packager.find_sdk(sdk_override)
     if not sdk:
         return JSONResponse({"ok": False,
                              "error": "找不到 Ren'Py SDK，请在设置里指定 SDK 目录"})
     opts = _options_from_dict(req.options)
-    work_root = str(path.parent / "_rtools_work")
+    work_path = path.parent / "_rtools_work"
+    work_root = str(work_path)
     output_dir = str(path.parent / "_rtools_output")
-    Path(work_root).mkdir(parents=True, exist_ok=True)
+    work_path.mkdir(parents=True, exist_ok=True)
 
     job_id = _new_job("full", title=path.name)
     progress = _job_progress(job_id)
@@ -683,7 +765,7 @@ def api_full(req: FullReq):
                                    progress,
                                    cancel=lambda: _job_cancelled(job_id))
         pkg = packager.package_project(sdk, opt["working_dir"], req.platforms,
-                                       req.destination,
+                                       destination,
                                        log=lambda m: _job_log(job_id, "package", m),
                                        archive_rpa=req.archive_rpa)
         return {"optimize": _clean_result(opt), "package": pkg}
@@ -737,7 +819,8 @@ def api_job_cancel(job_id: str):
         try:
             jobstore.record_finish(job_id, "canceled", error=queued_error)
         except Exception:
-            _LOG.warning("写入排队取消记录失败（%s）", job_id, exc_info=True)
+            _LOG.warning("写入排队取消记录失败（%s）",
+                         _log_safe(job_id), exc_info=True)
     return {"ok": True}
 
 
@@ -843,16 +926,57 @@ def _browse_open_dialog(kind: str) -> str:
     return p or ""
 
 
-def _is_network_path(p: Path, raw: str) -> bool:
-    """UNC / 网络路径判定：\\\\server\\share、//server/share 一律拒绝。
+def _open_in_explorer(target: Path, *, select: bool) -> None:
+    """用 Windows Shell 打开目录；select=True 时在资源管理器中选中 target。
 
-    只允许本机盘符路径（如 E:\\games\\foo）；设备命名空间（\\\\?\\）
-    也因以 \\\\ 开头被拒。绝不把网络资源交给资源管理器。
+    不拼 explorer.exe 命令行：用户路径不进入命令行解析，避免参数注入。
+    文件只用于“定位选中”，不会被 Shell 执行。
     """
-    if raw.startswith("\\\\") or raw.startswith("//"):
-        return True
-    drive = str(p.drive or "")
-    return drive.startswith("\\\\") or drive.startswith("//")
+    import ctypes
+    from ctypes import wintypes
+
+    shell32 = ctypes.windll.shell32
+    if not select:
+        shell32.ShellExecuteW.argtypes = [
+            wintypes.HWND, wintypes.LPCWSTR, wintypes.LPCWSTR,
+            wintypes.LPCWSTR, wintypes.LPCWSTR, ctypes.c_int,
+        ]
+        shell32.ShellExecuteW.restype = wintypes.HINSTANCE
+        handle = shell32.ShellExecuteW(None, "open", str(target),
+                                       None, None, 1)
+        if not handle or int(handle) <= 32:
+            raise OSError("ShellExecuteW 打开目录失败")
+        return
+
+    ole32 = ctypes.windll.ole32
+    ole32.CoInitializeEx.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    ole32.CoInitializeEx.restype = ctypes.c_long
+    hr = ole32.CoInitializeEx(None, 2)      # COINIT_APARTMENTTHREADED
+    try:
+        pidl = ctypes.c_void_p()
+        shell32.SHParseDisplayName.argtypes = [
+            wintypes.LPCWSTR, ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_void_p),
+            wintypes.DWORD, ctypes.POINTER(wintypes.DWORD),
+        ]
+        shell32.SHParseDisplayName.restype = ctypes.c_long
+        if shell32.SHParseDisplayName(str(target), None, ctypes.byref(pidl),
+                                      0, None) != 0:
+            raise OSError("SHParseDisplayName 解析文件失败")
+        try:
+            shell32.SHOpenFolderAndSelectItems.argtypes = [
+                ctypes.c_void_p, ctypes.c_uint, ctypes.c_void_p,
+                wintypes.DWORD,
+            ]
+            shell32.SHOpenFolderAndSelectItems.restype = ctypes.c_long
+            if shell32.SHOpenFolderAndSelectItems(pidl, 0, None, 0) != 0:
+                raise OSError("SHOpenFolderAndSelectItems 定位文件失败")
+        finally:
+            ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+            ole32.CoTaskMemFree(pidl)
+    finally:
+        if hr in (0, 1):                    # S_OK / S_FALSE
+            ole32.CoUninitialize()
 
 
 @app.post("/api/reveal")
@@ -860,34 +984,25 @@ def api_reveal(req: RevealReq):
     """在资源管理器里打开目录 / 定位文件。
 
     安全语义：只接受“绝对 + 存在”的本机路径；网络/UNC 路径拒绝；
-    只用 explorer.exe 打开或选中，绝不执行文件本身（不用 os.startfile）。
+    只用 Windows Shell 打开或选中，绝不执行文件本身。
     """
-    raw = (req.path or "").strip()
-    if not raw:
-        return JSONResponse({"ok": False, "error": "路径为空"})
-    p = Path(raw)
-    if not p.is_absolute():
-        return JSONResponse({"ok": False,
-                             "error": f"只接受绝对路径：{req.path}"})
-    if _is_network_path(p, raw):
-        return JSONResponse({"ok": False,
-                             "error": "不支持网络/共享路径，只允许本机路径"})
-    if not p.exists():
-        return JSONResponse({"ok": False, "error": f"路径不存在：{req.path}"})
-    if p.is_dir():
-        args = ["explorer.exe", str(p)]
-    elif p.is_file():
-        # 未要求定位时打开所在目录；定位用 /select, 选中文件，绝不执行文件
-        args = (["explorer.exe", "/select,", str(p)] if req.reveal
-                else ["explorer.exe", str(p.parent)])
-    else:
-        return JSONResponse({"ok": False,
-                             "error": "该路径不是文件夹或普通文件"})
+    p, error = _local_path(req.path, must_exist=True, allow_network=False)
+    if error:
+        return JSONResponse({"ok": False, "error": error})
     try:
-        subprocess.Popen(args)
-    except Exception as exc:
-        _LOG.warning("打开资源管理器失败（%s）：%s", args, exc)
-        return JSONResponse({"ok": False, "error": f"无法打开资源管理器：{exc}"})
+        if p.is_dir():
+            _open_in_explorer(p, select=False)
+        elif p.is_file():
+            # 未要求定位时打开所在目录；定位只选中文件，绝不执行文件
+            _open_in_explorer(p if req.reveal else p.parent,
+                              select=req.reveal)
+        else:
+            return JSONResponse({"ok": False,
+                                 "error": "该路径不是文件夹或普通文件"})
+    except Exception:
+        _LOG.warning("打开资源管理器失败：%s", _log_safe(p), exc_info=True)
+        return JSONResponse({"ok": False,
+                             "error": "无法打开资源管理器，请稍后重试"})
     return {"ok": True}
 
 
@@ -903,8 +1018,9 @@ def api_browse(kind: str = "file"):
     def run():
         try:
             result["path"] = _browse_open_dialog(kind)
-        except Exception as e:
-            result["error"] = str(e)
+        except Exception:
+            _LOG.warning("弹出选择框失败", exc_info=True)
+            result["failed"] = True
         finally:
             # 锁必须由线程自己在真正结束时释放（旧版 join 超时后照样放锁，
             # 旧线程手里的 Tk 还活着，会开出第二个并发 Tk 实例带崩进程）；
@@ -920,9 +1036,10 @@ def api_browse(kind: str = "file"):
                              "error": "选择框超时，请重试。"
                                       "若选择框仍开着，请先在那边完成选择；"
                                       "若找不到对话框，请重启工具。"})
-    if "error" in result:
+    if result.get("failed"):
         return JSONResponse({"ok": False,
-                             "error": "无法弹出选择框：" + result["error"]})
+                             "error": "无法弹出选择框，请重试；"
+                                      "若反复失败请重启工具。"})
     return {"ok": True, "path": result.get("path", "")}
 
 
@@ -947,12 +1064,12 @@ def api_add_recent(body: dict):
 
 @app.post("/api/sdk")
 def api_set_sdk(body: dict):
-    path = body.get("sdk_path", "")
-    if not path or not (Path(path) / "renpy.exe").exists():
+    sdk_dir, error = _local_path(body.get("sdk_path", ""), must_exist=True)
+    if error or not (sdk_dir / "renpy.exe").exists():
         return JSONResponse({"ok": False,
                              "error": "该目录下找不到 renpy.exe，请检查路径"})
     cfg = packager.load_config()
-    cfg["sdk_path"] = path
+    cfg["sdk_path"] = str(sdk_dir)
     packager.save_config(cfg)
     return {"ok": True}
 
@@ -960,10 +1077,18 @@ def api_set_sdk(body: dict):
 @app.post("/api/slimfont")
 def api_slimfont(req: FontSlimReq):
     """独立字体瘦身：选字体 + 文本来源，输出瘦身字体与字符清单。"""
-    if not Path(req.font).exists():
-        return JSONResponse({"ok": False, "error": f"字体文件不存在：{req.font}"})
+    font, error = _local_path(req.font, must_exist=True)
+    if error:
+        return JSONResponse({"ok": False, "error": error})
     if not req.sources:
         return JSONResponse({"ok": False, "error": "请至少提供一个文本来源"})
+    sources = []
+    for item in req.sources:
+        source, error = _local_path(item, must_exist=True)
+        if error:
+            return JSONResponse({"ok": False,
+                                 "error": f"文本来源不可用：{error}"})
+        sources.append(str(source))
 
     csd = req.charset or {}
     cs = CharsetOptions()
@@ -973,11 +1098,11 @@ def api_slimfont(req: FontSlimReq):
     cs.kana = csd.get("kana", False)
     cs.extra_chars = csd.get("extra_chars", "")
 
-    job_id = _new_job("slimfont", title=Path(req.font).name)
+    job_id = _new_job("slimfont", title=font.name)
     progress = _job_progress(job_id)
 
     def task():
-        return font_tool.run_font_slim(req.font, req.sources, cs,
+        return font_tool.run_font_slim(str(font), sources, cs,
                                        progress=progress)
 
     _dispatch_job(job_id, task)
@@ -987,15 +1112,22 @@ def api_slimfont(req: FontSlimReq):
 @app.post("/api/slimapk")
 def api_slimapk(req: SlimApkReq):
     """APK 瘦身（图形界面入口，与 CLI slimapk 同一引擎）。"""
-    if not Path(req.path).exists():
-        return JSONResponse({"ok": False, "error": f"APK 不存在：{req.path}"})
-    job_id = _new_job("slimapk", title=Path(req.path).name)
+    path, error = _local_path(req.path, must_exist=True)
+    if error:
+        return JSONResponse({"ok": False, "error": error})
+    keystore = None
+    if req.keystore:
+        ks_path, error = _local_path(req.keystore, must_exist=True)
+        if error:
+            return JSONResponse({"ok": False, "error": error})
+        keystore = str(ks_path)
+    job_id = _new_job("slimapk", title=path.name)
     progress = _job_progress(job_id)
 
     def task():
-        r = apk.slim_apk(req.path, req.preset,
+        r = apk.slim_apk(str(path), req.preset,
                           sdk=packager.find_sdk(),
-                          keystore=req.keystore, ks_pass=req.ks_pass,
+                          keystore=keystore, ks_pass=req.ks_pass,
                           key_alias=req.key_alias,
                           key_pass=req.key_pass,
                           generate_key=req.gen_key,

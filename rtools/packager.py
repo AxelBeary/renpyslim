@@ -31,22 +31,32 @@ PLATFORM_PACKAGES = {
 KNOWN_PLATFORMS = tuple(PLATFORM_PACKAGES) + ("android",)
 
 
+def platform_error(platforms: list[str]) -> Optional[str]:
+    """校验打包平台列表：合法返回 None，否则返回给人看的提示文案。
+
+    Web 层直接返回这段文案即可，无需借异常传递消息（避免把异常信息
+    带进 HTTP 响应）。
+    """
+    if not isinstance(platforms, (list, tuple)) or not platforms:
+        return "至少选择一个打包平台，不能全不选。"
+    unknown = [str(item) for item in platforms
+               if str(item).strip() not in KNOWN_PLATFORMS]
+    if unknown:
+        return (f"未知的打包平台：{'、'.join(unknown)}；"
+                f"可选：{', '.join(KNOWN_PLATFORMS)}")
+    return None
+
+
 def validate_platforms(platforms: list[str]) -> list[str]:
     """校验打包平台列表：空列表或未知平台直接报错，绝不静默过滤。
 
     CLI 与 Web 单一口径——凡是调用 package_project 的入口都先过这里，
     避免“选了平台却没打出来”的静默失败。返回去掉首尾空白的平台名。
     """
-    if not isinstance(platforms, (list, tuple)) or not platforms:
-        raise ValueError("至少选择一个打包平台，不能全不选。")
-    normalized: list[str] = []
-    for item in platforms:
-        name = str(item).strip()
-        if not name or name not in KNOWN_PLATFORMS:
-            raise ValueError(
-                f"未知的打包平台：{item}；可选：{', '.join(KNOWN_PLATFORMS)}")
-        normalized.append(name)
-    return normalized
+    error = platform_error(platforms)
+    if error:
+        raise ValueError(error)
+    return [str(item).strip() for item in platforms]
 
 # A 模式"打包时把资源封进 RPA"：写入一份构建配置，剩下的交给官方 SDK，
 # 不自制封包逻辑（官方 launcher/game/archiver.rpy 同款写法）

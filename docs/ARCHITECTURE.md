@@ -104,8 +104,12 @@ has_renpy_layout）。全程不解包、不建工作目录、不改原包；CLI 
   （`RENPYSLIM_HOME` 可改目录），最多 50 条；`GET/DELETE /api/history` 与
   CLI `history` 读写同一份记录；`env` / `history` 等查询命令不记录；运行态靠心跳
   （>180 秒判陈旧）+ 进程判活改判 interrupted；只存摘要字段。
+- 请求路径：所有接口的路径参数先过 `web/app.py::_local_path`——realpath
+  归一化（折叠 `..`）、要求绝对路径、按需校验存在性、拒绝 NUL；文件操作只用
+  归一化后的路径，避免“校验的路径”和“使用的路径”不一致。
 - 安全动作：`POST /api/reveal` 只接受“绝对 + 存在”的本机路径，拒绝 UNC/
-  网络共享；目录用 explorer 打开，文件用 `/select,` 定位，绝不执行文件。
+  网络共享；目录用 Windows Shell 打开，文件用 Shell 定位选中（不拼
+  explorer 命令行、不执行文件本身）。
 - 平台校验：`packager.validate_platforms` 是 CLI 与 Web 的唯一口径；空列表
   或未知平台在查 SDK、建工作目录、跑优化之前报错（CLI JSON 失败，Web 400）。
 - 磁盘预检：`backup.ensure_free_space` 在复制工作副本、写 in_place 备份、
@@ -126,7 +130,7 @@ has_renpy_layout）。全程不解包、不建工作目录、不改原包；CLI 
 10. **空间不足不动手**：工作副本/备份/APK 解包回写前先过 `ensure_free_space`
 11. **预分析只读**：APK 预分析只读 ZIP 条目表，不解包、不建工作目录、不改原包
 12. **路径动作不执行文件**：`/api/reveal` 只接受绝对存在本机路径（拒绝 UNC/
-    网络共享），只用资源管理器打开/定位
+    网络共享），只用 Windows Shell API 打开/定位（不拼命令行）
 
 ## 5. 扩展指南
 

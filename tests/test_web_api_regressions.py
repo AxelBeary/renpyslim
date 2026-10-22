@@ -137,6 +137,8 @@ def test_slimapk_passes_key_passwords(client, monkeypatch, tmp_path):
     """SlimApkReq 的签名参数必须同名透传到 apk.slim_apk。"""
     fake_apk = tmp_path / "fake.apk"
     fake_apk.write_bytes(b"PK\x03\x04fake")
+    keystore = tmp_path / "my.ks"
+    keystore.write_bytes(b"KS")
     captured = {}
 
     def fake_slim(path, preset, **kw):
@@ -148,7 +150,7 @@ def test_slimapk_passes_key_passwords(client, monkeypatch, tmp_path):
     monkeypatch.setattr(app_mod.apk, "slim_apk", fake_slim)
     r = client.post("/api/slimapk", json={
         "path": str(fake_apk), "preset": "balanced",
-        "keystore": "E:/keys/my.ks", "ks_pass": "kspass1",
+        "keystore": str(keystore), "ks_pass": "kspass1",
         "key_alias": "myalias", "key_pass": "KEYPASS-123",
         "new_key_password": "NEWPASS-456"})
     assert r.json()["ok"] is True
@@ -156,7 +158,7 @@ def test_slimapk_passes_key_passwords(client, monkeypatch, tmp_path):
 
     assert captured["key_pass"] == "KEYPASS-123"
     assert captured["new_key_password"] == "NEWPASS-456"
-    assert captured["keystore"] == "E:/keys/my.ks"
+    assert captured["keystore"] == str(keystore)
     assert captured["ks_pass"] == "kspass1"
     assert captured["key_alias"] == "myalias"
     assert captured["preset"] == "balanced"
