@@ -6,7 +6,7 @@
 # 分工：ci.yml 装最新（当上游破坏性发布的 canary）；release.yml 按
 # requirements-lock.txt 冻结（exe 构建可复现）；抬下限由人工在发版周期统一做，
 # Dependabot 只推安全更新（原因见 .github/dependabot.yml 注释）。
-pillow>=12.3.0      # CVE-2026-59205/59204/59200/59199（high）仅 12.3.0 修复
+pillow>=13.0.0      # CVE-2026-59205/59204/59200/59199（high）仅 12.3.0 修复
 fonttools>=4.66.1   # 4.66 起要求 Python 3.11+，即源码运行的下限由它定
 fastapi>=0.143.0
 uvicorn>=0.54.0
