@@ -35,6 +35,16 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = sys.stdout or _devnull
     sys.stderr = sys.stderr or _devnull
 
+# Windows 的管道/重定向默认按 ANSI 代码页编码（CI runner 上是 cp1252），中文会被
+# backslashreplace 成反斜杠-u 转义——画面上看着"没坏"，但机器读到的不是原字符。
+# 与 cli.py 同口径强制 UTF-8：脚本与 agent 拿到的 stdout/stderr 一律是 UTF-8。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        if hasattr(_stream, "reconfigure"):
+            _stream.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 import rtools
 
 # 入口参数分流：本文件既是图形界面入口，也是打包后 exe 的唯一入口。
@@ -63,8 +73,9 @@ def _attach_parent_console() -> None:
         import ctypes
         if not ctypes.windll.kernel32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
             return
-        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
-        sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        # 不写死 encoding：真实控制台按自己的代码页解码，硬写 UTF-8 反而会花屏。
+        sys.stdout = open("CONOUT$", "w", errors="replace", buffering=1)
+        sys.stderr = open("CONOUT$", "w", errors="replace", buffering=1)
     except Exception:
         pass
 

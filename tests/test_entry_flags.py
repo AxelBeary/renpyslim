@@ -65,6 +65,9 @@ def test_cli_subcommand_is_routed_to_headless_cli(tmp_path):
 def test_unknown_option_is_rejected_not_treated_as_path(tmp_path):
     r = _run(["--definitely-not-a-flag"], tmp_path)
     assert r.returncode == 2
+    # ASCII 断言是行为契约；中文断言同时验证"管道里是 UTF-8 而不是 \uXXXX 转义"
+    # （CI runner 的默认管道编码是 cp1252，曾把这里的中文打成反斜杠转义）
+    assert "--definitely-not-a-flag" in r.stderr
     assert "未知选项" in r.stderr
     assert not (tmp_path / ".renpytools" / "runtime.json").exists()
 
