@@ -12,6 +12,10 @@
 - RenPySlim 是 Windows 专属工具（Ren'Py 游戏资源瘦身 + 打包），**无 Linux/macOS 支持**。
 - 有两个入口：图形界面（本地网页 127.0.0.1）和无头 CLI。**Agent 一律用无头 CLI，不要操作图形界面。**
 - 无头入口：仓库根目录的 `cli.py`（Python 源码方式运行）。
+- 发行版 exe 也认命令行：`RenPySlim.exe --version` / `--help` / `<子命令>`
+  （如 `RenPySlim.exe analyze <路径>`）会分流到同一套无头 CLI，输出接回调用方终端；
+  带未知选项（`-` 开头且不认识）直接报错退出码 2，**不会被当成要打开的工程路径**。
+  注意窗口版 exe 没有独立控制台，须从 cmd / PowerShell / 带终端的进程调用才看得见输出。
 - 输出约定：**结果 JSON 走 stdout，过程日志走 stderr**——解析时只读 stdout，stderr 不要当 JSON 解析。
   参数错误也不例外：同样向 stdout 输出 `{"ok": false, ...}` JSON，退出码 1。
 - 所有命令的结果 JSON 顶层有 `"ok": true/false`；失败时带 `"error"` 字段。
@@ -143,6 +147,12 @@ python cli.py env [--sdk SDK路径]
 - Two entry points exist: a local web GUI and a headless CLI.
   **Agents must use the headless CLI only; never drive the GUI.**
 - Headless entry: `cli.py` at the repository root (run from source).
+- The released exe also accepts command-line use: `RenPySlim.exe --version` / `--help` /
+  `<subcommand>` (e.g. `RenPySlim.exe analyze <path>`) is routed to the same headless CLI
+  with output attached to the caller's terminal; unknown options (leading `-` that is not
+  recognised) fail with exit code 2 and are **never** treated as a project path.
+  The windowed exe has no console of its own, so invoke it from cmd / PowerShell / a
+  terminal-owning process to see the output.
 - Output contract: **result JSON on stdout, progress logs on stderr**.
   Parse stdout only; stderr is never JSON. Argument errors are no exception:
   they also emit `{"ok": false, ...}` JSON on stdout and exit with code 1.

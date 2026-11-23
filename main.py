@@ -35,18 +35,69 @@ if sys.stdout is None or sys.stderr is None:
     sys.stdout = sys.stdout or _devnull
     sys.stderr = sys.stderr or _devnull
 
-# 启动自检：从源码运行且忘装依赖时，给人话指引而非裸 traceback。
-# 窗口模式没有控制台可看，额外弹一个系统对话框。
 import rtools
-_missing = rtools.missing_dependencies(gui=True)
-if _missing:
-    _msg = (f"缺少 Python 依赖：{', '.join(_missing)}\n\n"
-            "请在仓库根目录先运行：\n"
-            "    pip install -r requirements.txt\n"
-            "然后重新启动本工具。\n"
-            "（exe 发行版用户不会遇到此问题，依赖已随包内置）")
+
+# 入口参数分流：本文件既是图形界面入口，也是打包后 exe 的唯一入口。
+# 窗口版 exe 没有自己的控制台，命令行用户/自动化脚本敲 --version、
+# --help 或 cli 子命令时，必须先分流到无头 CLI，否则会被当成"要打开的工程路径"。
+CLI_SUBCOMMANDS = frozenset({
+    "env", "analyze", "optimize", "full", "slimapk", "slimfont", "history", "package",
+})
+INFO_FLAGS = frozenset({"--version", "-V", "--help", "-h"})
+
+# 未知选项的退出码（与 cli.py 的参数错误口径一致：非 0 即失败）
+BAD_OPTION_EXIT = 2
+
+
+def _attach_parent_console() -> None:
+    """窗口版 exe 被终端调用时，把标准输出接回父控制台。
+
+    console=False 构建的进程没有自己的控制台，默认什么都打不出来；
+    AttachConsole(ATTACH_PARENT_PROCESS) 借用调用方终端，这样
+    `RenPySlim.exe --version` 在 cmd / PowerShell 里看得见输出。
+    双击启动时没有父控制台，此函数安静失败，不影响界面流程。
+    """
+    if os.name != "nt":
+        return
     try:
-        print(_msg, file=sys.stderr)
+        import ctypes
+        if not ctypes.windll.kernel32.AttachConsole(-1):  # ATTACH_PARENT_PROCESS
+            return
+        sys.stdout = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+        sys.stderr = open("CONOUT$", "w", encoding="utf-8", errors="replace", buffering=1)
+    except Exception:
+        pass
+
+
+def _classify_argv(argv) -> str:
+    """把入口参数分成三类：cli（走无头 CLI）/ gui（开界面）/ bad（未知选项）。
+
+    以 "-" 开头的参数一律不当路径：这正是 v0.17.2 之前把 --version 填进
+    工程路径框的原因。已知子命令与信息开关交给 cli.py，口径与 AGENTS.md 一致。
+    """
+    if not argv:
+        return "gui"
+    first = argv[0]
+    if first in INFO_FLAGS or first in CLI_SUBCOMMANDS:
+        return "cli"
+    if first.startswith("-"):
+        return "bad"
+    return "gui"
+
+
+def _ensure_dependencies() -> None:
+    """启动自检：从源码运行且忘装依赖时，给人话指引而非裸 traceback。
+    窗口模式没有控制台可看，额外弹一个系统对话框。"""
+    missing = rtools.missing_dependencies(gui=True)
+    if not missing:
+        return
+    msg = (f"缺少 Python 依赖：{', '.join(missing)}\n\n"
+           "请在仓库根目录先运行：\n"
+           "    pip install -r requirements.txt\n"
+           "然后重新启动本工具。\n"
+           "（exe 发行版用户不会遇到此问题，依赖已随包内置）")
+    try:
+        print(msg, file=sys.stderr)
     except Exception:
         pass
     try:
@@ -54,7 +105,7 @@ if _missing:
         from tkinter import messagebox
         _root = tkinter.Tk()
         _root.withdraw()
-        messagebox.showerror("RenPySlim — 缺少依赖 / Missing dependencies", _msg)
+        messagebox.showerror("RenPySlim — 缺少依赖 / Missing dependencies", msg)
         _root.destroy()
     except Exception:
         pass
@@ -153,8 +204,29 @@ def _start_tray(url: str):
 
 
 def main() -> None:
+    argv = sys.argv[1:]
+    kind = _classify_argv(argv)
+
+    # 命令行形态：交给无头 CLI（--version / --help / analyze 等子命令）。
+    # 先把输出接回调用方终端，窗口版 exe 才看得见结果。
+    if kind == "cli":
+        _attach_parent_console()
+        from cli import main as cli_main
+        sys.exit(cli_main(argv))
+
+    if kind == "bad":
+        _attach_parent_console()
+        print(f"未知选项：{argv[0]}", file=sys.stderr)
+        print("用法：RenPySlim.exe [工程目录|压缩包]    或    "
+              "RenPySlim.exe --version / --help / <子命令>", file=sys.stderr)
+        sys.exit(BAD_OPTION_EXIT)
+
+    # 只有确认要用界面了才做依赖自检：--version 之类不依赖第三方包，
+    # 不该在缺依赖的机器上先弹一个缺依赖对话框。
+    _ensure_dependencies()
+
     # 拖拽/命令行传入的路径（系统拖拽会自动加引号并作为参数传入）
-    path_arg = sys.argv[1] if len(sys.argv) > 1 else None
+    path_arg = argv[0] if argv else None
 
     # 已有实例在运行：不重复启动，把路径转给老实例（新开一个标签页）
     existing = _running_instance_port()

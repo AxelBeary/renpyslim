@@ -1,19 +1,56 @@
-# RenPySlim 交接状态（截至 2026-11-23 v0.17.2 发版收口）
+# RenPySlim 交接状态（截至 2026-11-23 v0.17.3 发版收口）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.17.2（依赖安全补丁：Pillow 13.0.0 等 4 个依赖清零 46 条 Dependabot 警报；能力面同 v0.17.1；v0.10.0 起 AGPL-3.0）
+## 当前版本：v0.17.3（入口修复：exe 认命令行参数，--version / --help / 子命令分流到无头 CLI，未知选项不再被当成工程路径；能力面同 v0.17.2；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.2（当前已发布版本，
-自更新检查靶子，附 exe；资产校验记录见下面 v0.17.2 一节末行；
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.3（当前已发布版本，
+自更新检查靶子，附 exe；资产校验记录见下面 v0.17.3 一节末行；
 发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
 v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
-上一版 v0.17.1：Release workflow `39840040041` 全绿，资产 RenPySlim.exe
-32,037,128 字节，SHA256 `7ceffc376be5abb984d39ebee40110627fc8000bd33c8337b5a4b0d1f1eaec04`。
+上一版 v0.17.2：Release workflow `45164416909` 全绿，资产 RenPySlim.exe
+32,331,713 字节，SHA256 `795d2fe3e549d3939e07f7d92e0c5396c4a8bcf9082f155f4da94fd870f4fdf6`。
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
 含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
+
+## 2026-11-23 v0.17.3 入口参数分流（exe 认命令行，cli 用户不再被吞）
+
+起因（用户实测发现）：v0.17.2 的 exe 入口是 `main.py`（图形界面），它把 `sys.argv[1]`
+直接当"要打开的工程路径"。于是 `RenPySlim.exe --version` 会被填进页面路径框、起本地服务、
+还自动打开浏览器标签；加上 `console=False`（窗口版无控制台），命令行用户既看不到版本号
+也退不出来，只能手动关进程。这属于为 cli / 自动化使用埋的坑，用户拍板当缺陷修。
+
+处置：
+1. **入口分流**（`main.py::_classify_argv`）：`--version` / `-V` / `--help` / `-h` 与
+   `env` / `analyze` / `optimize` / `full` / `slimapk` / `slimfont` / `history` /
+   `package` 一律转交无头 CLI（`cli.main`）；以 `-` 开头的未知选项直接报错退出码 2，
+   **绝不再当路径**；只有真正的路径才进界面。
+2. **输出接回终端**（`_attach_parent_console`）：窗口版 exe 没有自己的控制台，用
+   `AttachConsole(ATTACH_PARENT_PROCESS)` 借用调用方终端，`RenPySlim.exe --version`
+   在 cmd / PowerShell 里看得见结果；双击启动时安静失败，不影响界面流程。
+3. **依赖自检延后**：`--version` 这类不依赖第三方包的路径不再先弹"缺少依赖"对话框。
+4. **`-V` 别名**：`cli.py` 的 `--version` 补 `-V`（入口白名单与 argparse 口径对齐）。
+5. **打包**：`RenPySlim.spec` 的 hiddenimports 显式加 `cli`，防静态分析漏掉；
+   AGENTS.md 中英两版同步记录 exe 的命令行用法。
+
+实测（2026-11-23，Python 3.13.14）：
+- 全量回归：**345 passed / 2 skipped**；ruff F/E9 全绿；`pip check` 无冲突。
+- 新增 `tests/test_entry_flags.py` 6 条：`--version` / `-V` / `--help` 退出码 0 且
+  **不产生 runtime.json（没起服务）**；`env` 子命令走无头 CLI 且 stdout 为纯 JSON；
+  `--definitely-not-a-flag` 退出码 2 且报"未知选项"；`_classify_argv` 断言 `-` 开头的
+  参数永远不判为路径。
+- 本机 PyInstaller 实打包验证：`dist\RenPySlim.exe --version` 输出
+  `renpyslim 0.17.3` 并退出码 0，未起服务、未写 runtime.json（构建产物已清理）；
+  `cli` 已确认进入 Analysis TOC。
+- 未在本机验证到的面：窗口版 exe 在**纯 cmd 控制台**下的 AttachConsole 输出（本机沙箱
+  限制，见下方风险）；该路径依赖 `AttachConsole` 失败即静默降级，不影响退出码与分流。
+
+风险与遗留：PyInstaller 单文件 exe 在本机会话里无法在 AppData 临时目录解包
+（报 "Could not create temporary directory!"），改用工作区内临时目录则正常——
+判定为会话沙箱环境限制，与本次改动无关；真实发行版由 GitHub Actions 干净 Windows
+构建。发版后建议在普通 cmd 窗口实跑一次 `RenPySlim.exe --version` 复核。
 
 ## 2026-11-23 v0.17.2 依赖安全批（46 条 Dependabot 警报清零）
 

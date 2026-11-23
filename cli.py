@@ -544,7 +544,7 @@ def cmd_history(args) -> int:
 
 def main(argv=None) -> int:
     ap = _JsonArgumentParser(prog="renpyslim", description="RenPySlim：Ren'Py 资源瘦身与打包工具箱（无头模式）")
-    ap.add_argument("--version", action="version", version=f"renpyslim {__version__}")
+    ap.add_argument("--version", "-V", action="version", version=f"renpyslim {__version__}")
     sub = ap.add_subparsers(dest="command", required=True)
 
     p = sub.add_parser("env", help="环境体检（SDK/FFmpeg/Java）")

@@ -8,7 +8,9 @@ a = Analysis(
     pathex=[],
     binaries=[],
     datas=[('web/static', 'web/static'), ('assets', 'assets'), ('rtools/vendor/unrpyc', 'rtools/vendor/unrpyc')],
-    hiddenimports=['rtools.pipeline', 'rtools.packager', 'pystray._win32'],
+    # cli：入口把 --version / --help / 子命令分流给无头 CLI（main.py::_classify_argv），
+    # 显式列进 hiddenimports，避免静态分析漏掉导致 exe 里 import 失败。
+    hiddenimports=['rtools.pipeline', 'rtools.packager', 'pystray._win32', 'cli'],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

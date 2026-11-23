@@ -1,0 +1,86 @@
+"""GUI 入口的参数分流：窗口版 exe 被当命令行用时不许乱来。
+
+回归背景（v0.17.2 实测）：exe 的入口是 main.py，它把 `sys.argv[1]` 直接当
+"要打开的工程路径"。于是 `RenPySlim.exe --version` 会把 `--version` 填进路径框、
+起本地服务、还打开浏览器标签，而且因为 console=False 什么都打不出来——cli 用户
+既拿不到版本号，也退不出来。v0.17.3 起入口先分流：信息开关与子命令走无头 CLI，
+未知选项直接报错退出，只有真·路径才进界面。
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import pytest
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _run(args, tmp_path, timeout=120):
+    """跑 main.py 子进程；HOME 指到临时目录，绝不碰用户真实的 ~/.renpytools。"""
+    env = dict(os.environ)
+    for key in ("USERPROFILE", "HOME", "RENPYSLIM_HOME"):
+        env[key] = str(tmp_path)
+    return subprocess.run(
+        [sys.executable, str(ROOT / "main.py"), *args],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        env=env,
+        timeout=timeout,
+        cwd=str(ROOT),
+    )
+
+
+@pytest.mark.parametrize("arg", ["--version", "-V"])
+def test_version_flag_prints_version_and_does_not_start_gui(arg, tmp_path):
+    r = _run([arg], tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert "renpyslim" in r.stdout.lower()
+    # 关键：没有起服务，也就没有登记端口文件
+    assert not (tmp_path / ".renpytools" / "runtime.json").exists()
+
+
+def test_help_flag_shows_usage_without_starting_gui(tmp_path):
+    r = _run(["--help"], tmp_path)
+    assert r.returncode == 0, r.stderr
+    assert "usage:" in r.stdout.lower()
+    assert not (tmp_path / ".renpytools" / "runtime.json").exists()
+
+
+def test_cli_subcommand_is_routed_to_headless_cli(tmp_path):
+    r = _run(["env"], tmp_path)
+    assert r.returncode == 0, r.stderr
+    # 无头 CLI 的 stdout 契约：纯 JSON
+    import json
+
+    data = json.loads(r.stdout)
+    assert data["ok"] is True
+    assert not (tmp_path / ".renpytools" / "runtime.json").exists()
+
+
+def test_unknown_option_is_rejected_not_treated_as_path(tmp_path):
+    r = _run(["--definitely-not-a-flag"], tmp_path)
+    assert r.returncode == 2
+    assert "未知选项" in r.stderr
+    assert not (tmp_path / ".renpytools" / "runtime.json").exists()
+
+
+def test_classify_argv_never_treats_dash_as_path():
+    sys.path.insert(0, str(ROOT))
+    try:
+        import main as entry
+    finally:
+        sys.path.pop(0)
+
+    assert entry._classify_argv([]) == "gui"
+    assert entry._classify_argv([r"C:\games\demo"]) == "gui"
+    assert entry._classify_argv(["demo.zip"]) == "gui"
+    assert entry._classify_argv(["--version"]) == "cli"
+    assert entry._classify_argv(["--help"]) == "cli"
+    assert entry._classify_argv(["analyze"]) == "cli"
+    assert entry._classify_argv(["--oops"]) == "bad"
+    assert entry._classify_argv(["-x"]) == "bad"
