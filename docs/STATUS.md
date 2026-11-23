@@ -47,10 +47,28 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
 - 未在本机验证到的面：窗口版 exe 在**纯 cmd 控制台**下的 AttachConsole 输出（本机沙箱
   限制，见下方风险）；该路径依赖 `AttachConsole` 失败即静默降级，不影响退出码与分流。
 
+**发布过程实录（同日，两次才过）**：首轮 Release workflow `45171329252` 在 Sanity tests
+红了——CI runner 的管道编码是 cp1252，而 `main.py` 没像 `cli.py` 那样把 stdout/stderr
+重设为 UTF-8，中文"未知选项"被 backslashreplace 成反斜杠-u 转义，测试断言无法匹配。
+这暴露了第二层缺陷：**exe 的管道输出编码不确定**，对脚本/agent 解析是硬伤。补
+`main.py` 的 UTF-8 重设（与 cli.py 同口径）并把 `CONOUT$` 的编码交还控制台后重跑，
+workflow `45172260419` 全绿。诊断用 `PYTHONIOENCODING=cp1252` 复现，od 可见修复后
+输出为 UTF-8 字节。
+
+发版（2026-11-23，用户拍板"修！"并"发新版"）：
+- 标签 `v0.17.3` 曾指向未通过 CI 的提交（当时 Release 未创建、未发布任何产物），
+  修复后**强制更新**到 `37c6578`（`--force-with-lease`，显式比对旧 tag 对象
+  `658a804`）；workflow `45172260419` 全绿并自动建 Release。
+- 资产下载实物复算：`RenPySlim.exe` **32,351,623 字节**，SHA256
+  `1946bbc2c36fb437f049b67bde06f0c291d943ddb71685b5c0968f4fc3239ad3`，
+  与 GitHub digest 一致；Release 非 draft、非 prerelease。
+- **发布版 exe 实测**：`RenPySlim.exe --version` → `renpyslim 0.17.3`，退出码 0，
+  未起服务、未写 runtime.json（这是本批的核心验收点，不是只看流水线状态）。
+
 风险与遗留：PyInstaller 单文件 exe 在本机会话里无法在 AppData 临时目录解包
 （报 "Could not create temporary directory!"），改用工作区内临时目录则正常——
-判定为会话沙箱环境限制，与本次改动无关；真实发行版由 GitHub Actions 干净 Windows
-构建。发版后建议在普通 cmd 窗口实跑一次 `RenPySlim.exe --version` 复核。
+判定为会话沙箱环境限制，与本次改动无关（发布版 exe 在同样规避方式下工作正常）。
+建议用户在普通 cmd 窗口实跑一次 `RenPySlim.exe --version` 复核纯控制台路径。
 
 ## 2026-11-23 v0.17.2 依赖安全批（46 条 Dependabot 警报清零）
 
