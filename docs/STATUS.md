@@ -41,6 +41,16 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
   `renpyslim 0.17.4` 退出码 0；`env` 的 stdout 是纯 JSON；
   `bogus` 输出 `{"ok": false, ...}` JSON 且退出码 1（契约与 cli.py 一致）。
 
+发版（2026-11-23）：标签 `v0.17.4`，workflow `45176153589` 全绿，Release 附两个产物，
+均**下载实物复算**并与 digest 一致：
+
+| 资产 | 字节 | SHA256 |
+|---|---|---|
+| `RenPySlim.exe` | 32,352,359 | `7b9e05af1a470b1826108c020b0d9d7e72c0318d98885f0049f072d9754e6fe3` |
+| `RenPySlim-cli.exe` | 23,027,513 | `ed933815892ec2f630009bf65b5146e478543442e2d7c728344c8495a1a50ffa` |
+
+发布版 `RenPySlim-cli.exe --version` → `renpyslim 0.17.4`、`env` 输出纯 JSON，实测通过。
+
 ## 2026-11-23 v0.17.3 入口参数分流（exe 认命令行，cli 用户不再被吞）
 
 起因（用户实测发现）：v0.17.2 的 exe 入口是 `main.py`（图形界面），它把 `sys.argv[1]`
@@ -90,6 +100,8 @@ workflow `45172260419` 全绿。诊断用 `PYTHONIOENCODING=cp1252` 复现，od 
   与 GitHub digest 一致；Release 非 draft、非 prerelease。
 - **发布版 exe 实测**：`RenPySlim.exe --version` → `renpyslim 0.17.3`，退出码 0，
   未起服务、未写 runtime.json（这是本批的核心验收点，不是只看流水线状态）。
+- 随后用户在自己的 PowerShell 里实测**零输出**，证伪了 AttachConsole 这条路，
+  才有了 v0.17.4 的控制台版 CLI（见上一节）。
 
 风险与遗留：PyInstaller 单文件 exe 在本机会话里无法在 AppData 临时目录解包
 （报 "Could not create temporary directory!"），改用工作区内临时目录则正常——
