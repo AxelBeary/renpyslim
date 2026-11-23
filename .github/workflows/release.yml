@@ -37,9 +37,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = "${{ github.ref_name }}"
+          $assets = @("dist\RenPySlim.exe", "dist\RenPySlim-cli.exe")
           if (gh release view $tag 2>$null) {
             Write-Host "Release $tag 已存在，仅补传 exe 附件"
-            gh release upload $tag dist\RenPySlim.exe --clobber
+            foreach ($a in $assets) { gh release upload $tag $a --clobber }
           } else {
-            gh release create $tag dist\RenPySlim.exe --title $tag --generate-notes
+            gh release create $tag $assets --title $tag --generate-notes
           }

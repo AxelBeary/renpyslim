@@ -15,7 +15,10 @@
 - 发行版 exe 也认命令行：`RenPySlim.exe --version` / `--help` / `<子命令>`
   （如 `RenPySlim.exe analyze <路径>`）会分流到同一套无头 CLI，输出接回调用方终端；
   带未知选项（`-` 开头且不认识）直接报错退出码 2，**不会被当成要打开的工程路径**。
-  注意窗口版 exe 没有独立控制台，须从 cmd / PowerShell / 带终端的进程调用才看得见输出。
+- **自动化请一律用 `RenPySlim-cli.exe`**（控制台子系统）：`RenPySlim-cli.exe --version`、
+  `RenPySlim-cli.exe analyze <路径>` 在 PowerShell / cmd / 计划任务 / CI / 管道里都能正常输出。
+  窗口版 `RenPySlim.exe` 虽然也认同一套参数，但它没有自己的控制台（`console=False`），
+  在 Windows Terminal 等 ConPTY 终端里可能完全看不到输出——那只作兜底，不要依赖。
 - 输出约定：**结果 JSON 走 stdout，过程日志走 stderr**——解析时只读 stdout，stderr 不要当 JSON 解析。
   参数错误也不例外：同样向 stdout 输出 `{"ok": false, ...}` JSON，退出码 1。
 - 所有命令的结果 JSON 顶层有 `"ok": true/false`；失败时带 `"error"` 字段。
@@ -151,8 +154,11 @@ python cli.py env [--sdk SDK路径]
   `<subcommand>` (e.g. `RenPySlim.exe analyze <path>`) is routed to the same headless CLI
   with output attached to the caller's terminal; unknown options (leading `-` that is not
   recognised) fail with exit code 2 and are **never** treated as a project path.
-  The windowed exe has no console of its own, so invoke it from cmd / PowerShell / a
-  terminal-owning process to see the output.
+- **Automation should always use `RenPySlim-cli.exe`** (console subsystem):
+  `RenPySlim-cli.exe --version`, `RenPySlim-cli.exe analyze <path>` print reliably in
+  PowerShell / cmd / Task Scheduler / CI / pipes. The windowed `RenPySlim.exe` accepts the
+  same arguments as a fallback, but it has no console of its own (`console=False`) and may
+  print nothing at all in Windows Terminal and other ConPTY hosts — do not rely on it.
 - Output contract: **result JSON on stdout, progress logs on stderr**.
   Parse stdout only; stderr is never JSON. Argument errors are no exception:
   they also emit `{"ok": false, ...}` JSON on stdout and exit with code 1.

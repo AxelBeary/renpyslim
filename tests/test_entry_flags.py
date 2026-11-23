@@ -87,3 +87,18 @@ def test_classify_argv_never_treats_dash_as_path():
     assert entry._classify_argv(["analyze"]) == "cli"
     assert entry._classify_argv(["--oops"]) == "bad"
     assert entry._classify_argv(["-x"]) == "bad"
+
+
+def test_spec_builds_both_gui_and_cli_exes():
+    """打包配方必须同时产出窗口版与控制台版：CLI 只能靠控制台子系统才稳定输出。"""
+    spec = (ROOT / "RenPySlim.spec").read_text(encoding="utf-8")
+    assert "name='RenPySlim'" in spec
+    assert "name='RenPySlim-cli'" in spec, "控制台版 CLI exe 没有出现在打包配方里"
+    assert "console=True" in spec, "CLI exe 必须是控制台子系统，否则终端里看不到输出"
+
+
+def test_release_workflow_uploads_both_exes():
+    """发版流水线两个产物都要传，否则用户下载不到能用的 CLI。"""
+    workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "RenPySlim.exe" in workflow
+    assert "RenPySlim-cli.exe" in workflow, "release.yml 没有上传控制台版 CLI exe"

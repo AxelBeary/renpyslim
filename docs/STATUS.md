@@ -1,19 +1,45 @@
-# RenPySlim 交接状态（截至 2026-11-23 v0.17.3 发版收口）
+# RenPySlim 交接状态（截至 2026-11-23 v0.17.4 发版收口）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.17.3（入口修复：exe 认命令行参数，--version / --help / 子命令分流到无头 CLI，未知选项不再被当成工程路径；能力面同 v0.17.2；v0.10.0 起 AGPL-3.0）
+## 当前版本：v0.17.4（新增控制台版 `RenPySlim-cli.exe`：CLI 在 PowerShell / ConPTY / 计划任务里稳定输出；能力面同 v0.17.3；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.3（当前已发布版本，
-自更新检查靶子，附 exe；资产校验记录见下面 v0.17.3 一节末行；
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.4（当前已发布版本，
+自更新检查靶子，附 exe；资产校验记录见下面 v0.17.4 一节末行；
 发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
 v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
-上一版 v0.17.2：Release workflow `45164416909` 全绿，资产 RenPySlim.exe
-32,331,713 字节，SHA256 `795d2fe3e549d3939e07f7d92e0c5396c4a8bcf9082f155f4da94fd870f4fdf6`。
+上一版 v0.17.3：Release workflow `45172260419` 全绿，资产 RenPySlim.exe
+32,351,623 字节，SHA256 `1946bbc2c36fb437f049b67bde06f0c291d943ddb71685b5c0968f4fc3239ad3`。
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
 含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
+
+## 2026-11-23 v0.17.4 控制台版 CLI（RenPySlim-cli.exe）
+
+起因（用户实测打回）：v0.17.3 的修复只解决了"参数被当路径"，没解决"输出看不见"。
+用户在 PowerShell 里连续敲三次 `.RenPySlim.exe --version`，**零输出**。
+
+根因：窗口版 exe 用 `console=False` 构建，进程没有自己的控制台；`AttachConsole`
+借用调用方终端在 Windows Terminal / ConPTY 下并不可靠（实测就是安静失败）。
+这不是能靠再调 API 修好的问题——**控制台子系统才是唯一在 PowerShell、cmd、
+计划任务、CI、管道下都稳定的做法**。
+
+处置：
+1. **拆出控制台版**：`RenPySlim.spec` 增加第二套 Analysis/EXE，产出
+   `RenPySlim-cli.exe`（`console=True`，入口 `cli.py`）。不带 web 静态资源与
+   pystray，体积 22.5MB（窗口版 31.9MB）。
+2. **发版流水线**：`release.yml` 的资产列表改为两个 exe 一起传（新建与补传两条路径都改）。
+3. **窗口版保留兜底分流**：`RenPySlim.exe --version` 仍走 CLI（管道场景可用），
+   但 AGENTS.md 明确写"自动化一律用 `RenPySlim-cli.exe`，不要依赖窗口版输出"。
+4. **打包契约回归**：`tests/test_entry_flags.py` 新增两条——spec 必须同时定义
+   两个 exe 且 CLI 版是 `console=True`；`release.yml` 必须上传两个产物。
+
+实测（2026-11-23，Python 3.13.14）：
+- 全量回归：**347 passed / 2 skipped**；ruff F/E9 全绿。
+- 本机 PyInstaller 实打包两个产物并验证：`RenPySlim-cli.exe --version` →
+  `renpyslim 0.17.4` 退出码 0；`env` 的 stdout 是纯 JSON；
+  `bogus` 输出 `{"ok": false, ...}` JSON 且退出码 1（契约与 cli.py 一致）。
 
 ## 2026-11-23 v0.17.3 入口参数分流（exe 认命令行，cli 用户不再被吞）
 
