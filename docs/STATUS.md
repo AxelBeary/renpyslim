@@ -43,11 +43,13 @@ RCE、TIFF/PNG eXIf 解码炸弹等）。而 release 的 exe 按 `requirements-l
    （ci.yml 本来就装最新当预警）。
 4. **文档同步**：THIRD_PARTY_NOTICES 的 Pillow 12.x→13.x、FastAPI 0.14x→0.16x；本节。
 
-实测（2026-11-23，干净 venv，Python 3.13.14；数量以实际收集结果为准，不在文档写死）：
-- `python -m pytest tests -q`：**337 passed / 2 skipped / 2 failed**。两条 failed 是
-  `test_run_jobs_cancel_within_seconds` 与 `test_run_quiet_timeout_kills_chain`，
-  断言「取消/超时须 10 秒内生效」，本机 DSH 沙箱下子进程投递被拖到 60 秒级；
-  **同一台机器用升级前的旧 .venv 复跑同样失败**，与本批依赖无关，属环境限制，如实记 FAIL。
+实测（2026-11-23，Python 3.13.14；数量以实际收集结果为准，不在文档写死）：
+- `python -m pytest tests -q`：**339 passed / 2 skipped**（skip 为环境依赖）。
+  过程记录：首轮在受限文件沙箱下跑出 337 passed / 2 skipped / 2 failed，两条 failed 是
+  `test_run_jobs_cancel_within_seconds` 与 `test_run_quiet_timeout_kills_chain` 的
+  「取消/超时须 10 秒内生效」计时断言（沙箱下子进程投递被拖到 60 秒级）；升级前旧 .venv
+  复跑同样失败，佐证与本批依赖无关。放开沙箱后同一套测试全绿，两条断言正常通过，
+  该诊断得到闭环验证。
 - `ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`：
   All checks passed。
 - `python -m pip check`：No broken requirements found。
@@ -56,10 +58,17 @@ RCE、TIFF/PNG eXIf 解码炸弹等）。而 release 的 exe 按 `requirements-l
   `test_manifest_direct_deps_are_pinned_not_below_floor` 与
   `test_security_baseline_not_regressed` 立刻红，还原即绿。
 
-未做（等用户拍板）：未推送、未合 PR #22～#25、未发版。发版时按惯例重打 exe
-（release.yml 按新 lock 冻结），exe 内的 Pillow 才真正换成 13.0.0。
-收尾建议：本批推上去后 #22～#25 的内容已被超越，不合只关并留说明
-（同 v0.16.2 对 #20/#21 的处理）。
+发版（2026-11-23，用户拍板"推送 GitHub 并发新版"）：
+- 代码 `576ed6b`（依赖批）+ `b88b186`（版本号 0.17.2）推送到 `main`；
+  标签 `v0.17.2`（附注标签）触发 Release workflow `45164416909`，**全绿**，自动建 Release。
+- 资产已**下载实物复算**（不只信流水线状态）：`RenPySlim.exe` **32,331,713 字节**，
+  SHA256 `795d2fe3e549d3939e07f7d92e0c5396c4a8bcf9082f155f4da94fd870f4fdf6`，
+  与 GitHub 记录的 digest 一致；Release 非 draft、非 prerelease。
+- PR #22～#25 已关闭并留说明（内容已被本批超越，同 v0.16.2 对 #20/#21 的处理）。
+- Dependabot 警报：**46 条全部转为 `fixed`**（open 0 / dismissed 0，未用 dismiss 掩盖）；
+  code-scanning 与 secret-scanning 开放告警均为 0。
+
+仍未做：无。依赖面回归休闲维护口径，新需求先落 BACKLOG。
 
 
 ## 2026-10-23 v0.17.1 安全补丁（Web 请求路径统一校验，用户要求“发个新版并及时更新文档”）
