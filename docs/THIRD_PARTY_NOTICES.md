@@ -11,9 +11,9 @@ These libraries are bundled inside the distributed executable
 
 | Package / 包 | Version used / 使用版本 | License / 协议 | Notes / 说明 |
 |---|---|---|---|
-| [Pillow](https://github.com/python-pillow/Pillow) | 12.x | HPND (PIL License) | Image processing / 图片处理 |
+| [Pillow](https://github.com/python-pillow/Pillow) | 13.x | HPND (PIL License) | Image processing / 图片处理 |
 | [fontTools](https://github.com/fonttools/fonttools) | 4.x | MIT | Font subsetting & inspection / 字体瘦身与检测 |
-| [FastAPI](https://github.com/fastapi/fastapi) | 0.14x | MIT | Local web UI backend / 本机界面后端 |
+| [FastAPI](https://github.com/fastapi/fastapi) | 0.16x | MIT | Local web UI backend / 本机界面后端 |
 | [uvicorn](https://github.com/encode/uvicorn) | 0.5x | BSD-3-Clause | ASGI server (127.0.0.1 only) / 本机服务 |
 | [py7zr](https://github.com/miurahr/py7zr) | 1.x | MIT | 7z archive support / 7z 压缩包支持 |
 | [pystray](https://github.com/moses-palmer/pystray) | 0.19.x | **LGPL-3.0** | System tray icon / 系统托盘图标 |

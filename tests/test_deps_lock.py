@@ -28,9 +28,12 @@ MANIFESTS = ("requirements.txt", "requirements-dev.txt")
 # 安全底线：锁到"首个修复该包已知高危 CVE 的版本"，低于它就等于放行有洞的包。
 # 来源：GHSA/CVE —— pillow CVE-2026-59205/59204/59200/59199（high，12.3.0 修）、
 # py7zr CVE-2026-23879（high，1.1.3 修；0.20.0 及以下另有 CVE-2022-44900 critical）。
-# 上游若再出修复版，抬下限的同时记得改这里。
+# 2026-11-23：pillow 底线 12.3.0 → 13.0.0。Dependabot 在 12.3.0 上报出 43 条
+# 未修 CVE（6 critical / 24 high，含 FPX 堆溢出、Ghostscript 参数注入 RCE、
+# TIFF 编码器越界等），首个修复版即 13.0.0；本工具直接 Image.open() 他人游戏
+# 素材，正是这些洞的攻击面。上游若再出修复版，抬下限的同时记得改这里。
 SECURITY_BASELINE = {
-    "pillow": "12.3.0",
+    "pillow": "13.0.0",
     "py7zr": "1.1.3",
 }
 

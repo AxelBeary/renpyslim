@@ -1,4 +1,4 @@
-# RenPySlim 交接状态（截至 2026-10-23 v0.17.1 Web 路径校验加固收口）
+# RenPySlim 交接状态（截至 2026-11-23 依赖安全批收口；已发版本仍为 v0.17.1）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
@@ -15,6 +15,53 @@ v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
 代码、文档、tag 与 Release 产物已于 2026-10-21 验证。
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
 含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
+
+## 2026-11-23 依赖安全批（46 条 Dependabot 警报清零；未发版）
+
+起因：仓库开放 **46 条 Dependabot 警报**，全部落在 4 个 Python 依赖上
+（code-scanning 与 secret-scanning 均为 0）——pillow 43 条（6 critical / 24 high / 13 medium）、
+brotli 1 critical、opentelemetry-api 1 medium、setuptools 1 low。Dependabot 已自动开出
+4 份安全更新 PR（#22 pillow、#23 setuptools、#24 brotli、#25 opentelemetry-api），但只改了
+lock 的两行，没走仓库既定四步（下限与注释、SECURITY_BASELINE、干净 venv 重生成、
+文档同步），因此**不直接合并**，改由本地按 CONTRIBUTING「依赖更新」四步重做。
+
+为什么这次值得治本：本工具的本职就是拿 Pillow 去 `Image.open()` **他人游戏**的图片与
+APK 资源，正是这批 CVE 的攻击面（FPX JPEG 解码堆溢出可代码执行、Ghostscript 参数注入
+RCE、TIFF/PNG eXIf 解码炸弹等）。而 release 的 exe 按 `requirements-lock.txt` 冻结构建，
+所以已发的 v0.17.1 exe 里就是 Pillow 12.3.0。
+
+处置：
+1. **抬下限**：`requirements.txt` 的 pillow `>=12.3.0` → `>=13.0.0`（13.0.0 是 12.3.0
+   及以下全部已知 CVE 的首个修复版）；注释改写成本批真实来源，并注明 13.0 放弃
+   Python 3.10 支持但不抬高源码下限（fonttools 早已要求 3.11+）。
+2. **守卫抬底线**：`tests/test_deps_lock.py` 的 SECURITY_BASELINE 里 pillow
+   12.3.0 → 13.0.0，否则守卫对新洞失去牙。
+3. **重生成 lock**：从**干净 venv**（新建后先装两份清单 + pyinstaller 并跑全量测试）
+   解析 `pip freeze`，保留原头部注释池，body 按整行 casefold 排序。除 4 个安全包外，
+   干净解析把 fastapi 0.143.0→0.165.0、starlette 1.8.0→1.10.0、pydantic 2.14.1→2.14.4、
+   fonttools 4.66.1→4.68.0、httpx2 2.13.1→2.16.2、pytest 9.1.1→9.2.0、
+   ruff 0.17.0→0.17.6 等一并带到最新——这是「干净 venv 解析」口径的必然结果
+   （ci.yml 本来就装最新当预警）。
+4. **文档同步**：THIRD_PARTY_NOTICES 的 Pillow 12.x→13.x、FastAPI 0.14x→0.16x；本节。
+
+实测（2026-11-23，干净 venv，Python 3.13.14；数量以实际收集结果为准，不在文档写死）：
+- `python -m pytest tests -q`：**337 passed / 2 skipped / 2 failed**。两条 failed 是
+  `test_run_jobs_cancel_within_seconds` 与 `test_run_quiet_timeout_kills_chain`，
+  断言「取消/超时须 10 秒内生效」，本机 DSH 沙箱下子进程投递被拖到 60 秒级；
+  **同一台机器用升级前的旧 .venv 复跑同样失败**，与本批依赖无关，属环境限制，如实记 FAIL。
+- `ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests`：
+  All checks passed。
+- `python -m pip check`：No broken requirements found。
+- `cli.py env`：ok=true，Ren'Py SDK / FFmpeg / JDK / rapt 均识别正常。
+- 守卫自证有牙：把 lock 的 `pillow==13.0.0` 临时改回 `12.3.0`，
+  `test_manifest_direct_deps_are_pinned_not_below_floor` 与
+  `test_security_baseline_not_regressed` 立刻红，还原即绿。
+
+未做（等用户拍板）：未推送、未合 PR #22～#25、未发版。发版时按惯例重打 exe
+（release.yml 按新 lock 冻结），exe 内的 Pillow 才真正换成 13.0.0。
+收尾建议：本批推上去后 #22～#25 的内容已被超越，不合只关并留说明
+（同 v0.16.2 对 #20/#21 的处理）。
+
 
 ## 2026-10-23 v0.17.1 安全补丁（Web 请求路径统一校验，用户要求“发个新版并及时更新文档”）
 
