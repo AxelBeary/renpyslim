@@ -1,22 +1,21 @@
-# RenPySlim 交接状态（截至 2026-11-23 依赖安全批收口；已发版本仍为 v0.17.1）
+# RenPySlim 交接状态（截至 2026-11-23 v0.17.2 发版收口）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.17.1（安全补丁：Web 请求路径统一归一化校验、打开/定位改走 Shell API；能力面同 v0.17.0；v0.10.0 起 AGPL-3.0）
+## 当前版本：v0.17.2（依赖安全补丁：Pillow 13.0.0 等 4 个依赖清零 46 条 Dependabot 警报；能力面同 v0.17.1；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）
-Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.1（当前已发布版本，
-自更新检查靶子，附 exe；资产校验记录见下面 v0.17.1 一节末行；
+Release：https://github.com/AxelBeary/renpyslim/releases/tag/v0.17.2（当前已发布版本，
+自更新检查靶子，附 exe；资产校验记录见下面 v0.17.2 一节末行；
 发版收尾惯例：验 Release 页面与产物真实存在，不只看流水线状态——
 v0.12.0 曾遭 GitHub 503 静默缺失，故每次发版都要二次验证）。
-上一版 v0.17.0：Release workflow `39509688657` 全绿，资产 RenPySlim.exe
-32,031,929 字节，SHA256 `8aa3b126980188f9f2784c580a2eb27680bfd71cd69115fdfd56af09cfaa0027`，
-代码、文档、tag 与 Release 产物已于 2026-10-21 验证。
+上一版 v0.17.1：Release workflow `39840040041` 全绿，资产 RenPySlim.exe
+32,037,128 字节，SHA256 `7ceffc376be5abb984d39ebee40110627fc8000bd33c8337b5a4b0d1f1eaec04`。
 回归测试：全绿（数量以 `python -m pytest tests -q` 实际收集结果为准，不在文档写死；
 含 test_font_lang 多语言字体瘦身专项、test_i18n 八本字典互检、test_deps_lock 依赖自洽守卫）
 
-## 2026-11-23 依赖安全批（46 条 Dependabot 警报清零；未发版）
+## 2026-11-23 v0.17.2 依赖安全批（46 条 Dependabot 警报清零）
 
 起因：仓库开放 **46 条 Dependabot 警报**，全部落在 4 个 Python 依赖上
 （code-scanning 与 secret-scanning 均为 0）——pillow 43 条（6 critical / 24 high / 13 medium）、
