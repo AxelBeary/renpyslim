@@ -4,6 +4,7 @@
 """
 import json
 import pickle
+import struct
 import subprocess
 import time
 import zipfile
@@ -73,13 +74,22 @@ def test_dist_respects_image_switch(tmp_path):
 
 def _make_gbk_zip(zp: Path) -> None:
     """模拟国产工具：中文文件名按 GBK 编码且不置 UTF-8 标志。"""
-    raw_name = "游戏目录/图片测试.png".encode("gbk").decode("cp437")
-    with zipfile.ZipFile(zp, "w") as zf:
-        info = zipfile.ZipInfo(raw_name)
-        zf.writestr(info, b"fake-image-data")
-        # zipfile 对非 ASCII 名会自动置 UTF-8 标志；改掉内存对象，
-        # close 写中央目录时即为"未置标志"的真实乱码场景
-        zf.filelist[-1].flag_bits &= ~0x800
+    raw_name = "游戏目录/图片测试.png".encode("gbk")
+    data = b"fake-image-data"
+    crc = zlib.crc32(data) & 0xFFFFFFFF
+    # zipfile 会对非 ASCII 名自动置 UTF-8 标志，事后改 ZipInfo.flag_bits
+    # 并不能改变已经写入的头部。这里直接写最小 stored ZIP，确保 local /
+    # central header 都使用真正的 GBK 字节且标志位为 0。
+    local = struct.pack("<4sHHHHHIIIHH", b"PK\x03\x04", 20, 0, 0, 0, 0,
+                        crc, len(data), len(data), len(raw_name), 0)
+    local += raw_name + data
+    central = struct.pack("<4sHHHHHHIIIHHHHHII", b"PK\x01\x02", 20, 20,
+                          0, 0, 0, 0, crc, len(data), len(data),
+                          len(raw_name), 0, 0, 0, 0, 0, 0)
+    central += raw_name
+    eocd = struct.pack("<4sHHHHIIH", b"PK\x05\x06", 0, 0, 1, 1,
+                       len(central), len(local), 0)
+    zp.write_bytes(local + central + eocd)
 
 
 def test_zip_gbk_chinese_names_repaired(tmp_path):
