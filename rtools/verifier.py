@@ -38,8 +38,8 @@ def lint_project(sdk: str, project_dir: str, timeout: int = 600) -> dict:
     审核修复（高-1）：所有返回分支统一带 suspects 键，
     超时/异常分支缺键曾让流水线收尾 KeyError 崩溃。
     """
-    # v0.18.0：改用统一启动器解析——Linux/macOS 的官方 SDK 只带 renpy.sh，
-    # 旧版写死 renpy.exe 会让非 Windows 永远判“SDK 不可用”。
+    # v0.18.0：改用统一启动器解析——旧版写死 renpy.exe，认不得 renpy.sh；
+    # 官方 Linux SDK 两启动器并存，按平台排序才能选对（POSIX 优先 sh）。
     renpy_exe = sdk_mod.find_launcher(sdk)
     if not renpy_exe:
         return {"ran": False, "ok": False, "summary": "SDK 不可用，跳过验证",

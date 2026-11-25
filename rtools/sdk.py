@@ -1,13 +1,15 @@
 """Ren'Py SDK 启动器解析：Windows 的 renpy.exe 与 Linux/macOS 的 renpy.sh。
 
 背景（v0.18.0 / issue #26）：旧版每个调用点都写死 `Path(sdk) / "renpy.exe"`，
-官方 Linux/macOS SDK 只带 `renpy.sh`，于是 lint、packaging、APK remap 在非
-Windows 上一律判“SDK 不可用”。把所有“先找启动器再执行”的逻辑收在这里，
-调用点只认 `find_launcher()` / `require_launcher()`，不再各写一套。
+认不得官方 Linux/macOS SDK 的 `renpy.sh`，于是 lint、packaging、APK remap
+在非 Windows 上一律判“SDK 不可用”。真实 Linux SDK 目录里两个启动器并存，
+所以候选顺序直接决定成败（POSIX 下必须先选 sh）。把所有“先找启动器再执行”
+的逻辑收在这里，调用点只认 `find_launcher()` / `require_launcher()`，不再各写一套。
 
 判定口径：
-- 候选顺序固定为 renpy.exe → renpy.sh，与平台无关：同一个 SDK 目录里
-  两者只会有其一，顺序保证 Windows 行为零变化。
+- 候选顺序按平台：Windows 是 renpy.exe → renpy.sh（行为零变化），
+  POSIX 反过来 renpy.sh → renpy.exe。官方 Linux SDK 目录里两个文件并存，
+  固定 exe 优先会在 Linux 上选中根本跑不起来的 Windows exe（EACCES）。
 - renpy.sh 必须可执行（POSIX 的 EACCES 会让 `run_quiet` 直接抛异常，
   这里提前判定，给出“怎么修”的人话提示）。
 - 从 Windows 挂载点访问到的 `renpy.sh` 一样可用——只要当前解释器不是 Windows。
@@ -19,11 +21,13 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-# 启动器文件名按优先级排列（同目录一般只存在一个）
-LAUNCHER_NAMES = ("renpy.exe", "renpy.sh")
-
 # 提示文案里的“应该装哪个 SDK”：按当前平台给，避免让 Linux 用户去找 .exe
 _IS_WINDOWS = sys.platform == "win32"
+
+# 启动器候选顺序按平台：Windows 保持 exe 优先（行为零变化）；POSIX 必须
+# sh 优先——官方 Linux SDK 同时带 renpy.exe 与 renpy.sh，先选 exe 会 EACCES。
+LAUNCHER_NAMES = (("renpy.exe", "renpy.sh") if _IS_WINDOWS
+                  else ("renpy.sh", "renpy.exe"))
 
 
 def _supported_names() -> str:

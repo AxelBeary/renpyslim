@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from rtools import archives, cleanup, verifier
+from rtools import archives, cleanup, sdk as sdk_mod, verifier
 from rtools.config import OptimizeOptions
 from rtools.models import ChangeRecord, Progress
 from rtools.pipeline import PipelineCancelled, _run_jobs_or_flush
@@ -609,7 +609,8 @@ def test_decompile_roundtrip(tmp_path):
     src = proj / "game" / "script.rpy"
     src.write_text('image bg_x = "images/bg/x.png"\nlabel start:\n    "hi"\n',
                    encoding="utf-8")
-    subprocess.run([str(Path(sdk) / "renpy.exe"), str(proj), "compile"],
+    launcher = sdk_mod.require_launcher(sdk)   # 官方 Linux SDK 两启动器并存
+    subprocess.run([launcher, str(proj), "compile"],
                    capture_output=True, timeout=300, cwd=sdk)
     assert (proj / "game" / "script.rpyc").exists()
     src.unlink()                       # 模拟无源码成品

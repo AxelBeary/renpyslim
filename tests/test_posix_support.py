@@ -179,6 +179,33 @@ def test_find_launcher_falls_back_to_sh(tmp_path):
     assert Path(sdk.find_launcher(str(sdk_dir))).name == "renpy.sh"
 
 
+def _make_sdk_with_both(tmp_path: Path) -> Path:
+    """官方 Linux SDK 的真实布局：renpy.exe 与 renpy.sh 并存。"""
+    sdk_dir = tmp_path / "sdk"
+    sdk_dir.mkdir(exist_ok=True)
+    (sdk_dir / "renpy.exe").write_bytes(b"FAKE-PE")
+    sh = sdk_dir / "renpy.sh"
+    sh.write_text("#!/bin/sh\n", encoding="utf-8")
+    try:
+        os.chmod(sh, 0o755)
+    except OSError:
+        pass                     # Windows 上只能设只读位，忽略
+    return sdk_dir
+
+
+def test_find_launcher_prefers_native_when_both_present(tmp_path):
+    """两启动器并存时按平台选原生启动器（官方 Linux SDK 就是这种布局）。"""
+    sdk_dir = _make_sdk_with_both(tmp_path)
+    expected = "renpy.exe" if os.name == "nt" else "renpy.sh"
+    assert Path(sdk.find_launcher(str(sdk_dir))).name == expected
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 专属：避免选中跑不起来的 exe")
+def test_require_launcher_uses_sh_when_both_present(tmp_path):
+    sdk_dir = _make_sdk_with_both(tmp_path)
+    assert Path(sdk.require_launcher(str(sdk_dir))).name == "renpy.sh"
+
+
 def test_find_launcher_returns_none_for_empty_dir(tmp_path):
     empty = tmp_path / "empty"
     empty.mkdir()

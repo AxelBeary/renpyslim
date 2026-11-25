@@ -125,8 +125,9 @@ has_renpy_layout）。全程不解包、不建工作目录、不改原包；CLI 
 所有平台差异集中在下面三处，业务模块不再各写一套 if：
 
 - **SDK 启动器解析：`rtools/sdk.py`**——唯一的"先找启动器再执行"入口。
-  `LAUNCHER_NAMES = ("renpy.exe", "renpy.sh")` 顺序固定，同一 SDK 目录里两者只有其一，
-  所以 Windows 行为零变化。`find_launcher()` 只判"存在"（discovery 口径），
+  候选顺序按平台：Windows 是 `renpy.exe → renpy.sh`（行为零变化），POSIX 反过来
+  `renpy.sh → renpy.exe`。官方 Linux SDK 目录里两个文件并存，固定 exe 优先会选中
+  Linux 上跑不起来的 Windows exe（EACCES）。`find_launcher()` 只判"存在"（discovery 口径），
   `require_launcher()` 才判 renpy.sh 的执行位并抛人话错误（提示 `chmod +x`）——
   把"有没有 SDK"和"能不能执行"分开，避免跨平台备份目录里的 renpy.exe 被误判成无 SDK。
   lint（verifier）、distribute / android_build（packager）、APK remap（apk）全部收口。
