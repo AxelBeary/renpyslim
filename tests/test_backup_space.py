@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from pathlib import Path
 
 import pytest
 
@@ -78,6 +79,24 @@ def test_working_copy_aborts_before_creating_dest(tmp_path, monkeypatch):
 
     assert not dest_root.exists()
     assert (src / "game" / "script.rpy").exists()
+
+
+def test_working_copy_names_unique_within_same_second(tmp_path, monkeypatch):
+    """同一工程同一秒内两次复制必须得到两个不同目录，不能撞名失败。"""
+    src = tmp_path / "Game"
+    (src / "game").mkdir(parents=True)
+    (src / "game" / "script.rpy").write_bytes(b"x" * 1000)
+    # 冻结时间，模拟同一秒内两次调用
+    monkeypatch.setattr(backup.time, "strftime", lambda fmt: "20261125-135031")
+
+    dest_root = tmp_path / "work"
+    first = backup.make_working_copy(str(src), str(dest_root))
+    second = backup.make_working_copy(str(src), str(dest_root))
+
+    assert first != second
+    assert (Path(first) / "game" / "script.rpy").exists()
+    assert (Path(second) / "game" / "script.rpy").exists()
+    assert (src / "game" / "script.rpy").exists()   # 原件不动
 
 
 def test_backup_zip_aborts_before_writing(tmp_path, monkeypatch):
