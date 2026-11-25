@@ -10,9 +10,12 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from pathlib import Path
 
-from .models import SCRIPT_EXTS, SKIP_DIRS, ChangeRecord
+from .models import (
+    AssetKind, SCRIPT_EXTS, SKIP_DIRS, ChangeRecord, kind_of,
+)
 from .remap import REMAP_SCRIPT_NAME
 
 # 匹配点前面不允许是"文件名一部分"的字符，防止 logo.png 误匹配 gui_logo.png
@@ -29,23 +32,62 @@ class RefIndex:
     编码安全：优先按 UTF-8 严格解码；失败则回退 latin-1（任意字节
     双射，保证写回时逐字节无损）。旧版用 errors="replace" 读取，
     遇到非 UTF-8 脚本写回时会永久损坏文件，已修复。
+
+    asset_names 是相对 game/ 的完整资产清单；流水线传入它可覆盖散文件与
+    RPA 封包资源。省略时直接统计 game/ 下真实资产，过滤脚本与 SKIP_DIRS。
+    裸文件名只有在对应资产唯一时才构成引用证据。
     """
 
-    def __init__(self, game_dir: str):
+    def __init__(self, game_dir: str,
+                 asset_names: Iterable[str] | None = None):
         self.game_dir = Path(game_dir)
         self.files: dict[str, list[str]] = {}      # rel -> 行列表
         self.encodings: dict[str, str] = {}        # rel -> 写回用的编码
+        self._asset_names: set[str] = set()
         self._load()
+        if asset_names is not None:
+            provided: set[str] = set()
+            for name in asset_names:
+                rel = self._normalize(name)
+                if self._is_asset_name(rel):
+                    provided.add(rel)
+            self._asset_names = provided
+        self._basename_counts = self._count_basenames(self._asset_names)
+
+    @staticmethod
+    def _normalize(name: str) -> str:
+        return str(name).replace("\\", "/")
+
+    @staticmethod
+    def _is_asset_name(rel: str) -> bool:
+        """只统计可优化资产；脚本与缓存/存档等跳过目录不参与歧义计数。"""
+        if not rel or any(part in SKIP_DIRS for part in rel.split("/")):
+            return False
+        ext = Path(rel).suffix.lower()
+        return ext not in SCRIPT_EXTS and kind_of(ext) != AssetKind.OTHER
+
+    @staticmethod
+    def _count_basenames(names: Iterable[str]) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for rel in names:
+            bare = rel.rsplit("/", 1)[-1]
+            counts[bare] = counts.get(bare, 0) + 1
+        return counts
 
     def _load(self) -> None:
         for p in self.game_dir.rglob("*"):
-            if not p.is_file() or p.suffix.lower() not in SCRIPT_EXTS:
+            if not p.is_file():
+                continue
+            rel = p.relative_to(self.game_dir).as_posix()
+            if any(part in SKIP_DIRS for part in p.relative_to(self.game_dir).parts):
+                continue
+            if self._is_asset_name(rel):
+                self._asset_names.add(rel)
+            if p.suffix.lower() not in SCRIPT_EXTS:
                 continue
             # 审核修复：本工具注入的重映射脚本内含大量旧文件名键，
             # 进 RefIndex 会让"无引用判定/引用改写"全部误判，必须排除
             if p.name == REMAP_SCRIPT_NAME:
-                continue
-            if any(part in SKIP_DIRS for part in p.relative_to(self.game_dir).parts):
                 continue
             try:
                 raw = p.read_bytes()
@@ -57,16 +99,17 @@ class RefIndex:
             except UnicodeDecodeError:
                 text = raw.decode("latin-1")
                 enc = "latin-1"
-            rel = p.relative_to(self.game_dir).as_posix()
             self.files[rel] = text.splitlines(keepends=True)
             self.encodings[rel] = enc
 
-    def _variants(self, name: str) -> list[str]:
-        """一个资源可能被引用的写法：完整相对路径、纯文件名。"""
-        name = name.replace("\\", "/")
+    def _variants(self, name: str,
+                  basename_counts: dict[str, int] | None = None) -> list[str]:
+        """完整路径始终有效；裸名仅在该 basename 对应唯一资产时追加。"""
+        name = self._normalize(name)
         v = [name]
         bare = name.rsplit("/", 1)[-1]
-        if bare != name:
+        counts = self._basename_counts if basename_counts is None else basename_counts
+        if bare != name and counts.get(bare, 0) == 1:
             v.append(bare)
         return v
 
@@ -119,11 +162,23 @@ class RefIndex:
         """
         records: list[ChangeRecord] = []
         # 长路径优先，避免 "bg.png" 先替换掉 "images/bg.png" 的一部分
-        pairs = sorted(mapping.items(), key=lambda kv: -len(kv[0]))
+        normalized = {self._normalize(old): self._normalize(new)
+                      for old, new in mapping.items()}
+        # 长路径优先，避免短名先替换掉长路径的一部分
+        pairs = sorted(normalized.items(), key=lambda kv: -len(kv[0]))
+        # 目标裸名按“旧资产移除、新资产加入”后的清单判定，避免把唯一
+        # 旧裸名改成一个仍有歧义的新裸名。
+        projected = (self._asset_names - normalized.keys()) | set(normalized.values())
+        target_counts = self._count_basenames(projected)
         patterns: list[tuple[str, str, re.Pattern]] = []
         for old, new in pairs:
-            for variant_old, variant_new in zip(self._variants(old),
-                                                self._variants(new)):
+            old_variants = self._variants(old)
+            new_variants = self._variants(new, target_counts)
+            for i, variant_old in enumerate(old_variants):
+                # 新路径是根文件时只有完整路径；不能因变体数量不同而
+                # 丢掉合法旧裸名的改写。
+                variant_new = (new_variants[i] if i < len(new_variants)
+                               else new_variants[0])
                 pat = re.compile(_LEFT_GUARD + re.escape(variant_old)
                                  + _RIGHT_GUARD)
                 patterns.append((variant_old, variant_new, pat))

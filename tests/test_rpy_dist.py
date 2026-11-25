@@ -74,6 +74,68 @@ def test_dist_with_rpy_unlocks_conversion(tmp_path):
     assert (dist / "game" / "images" / "bg.png").exists()
 
 
+def _image_only_options():
+    opts = default_options()
+    opts.do_audio = False
+    opts.do_fonts = False
+    opts.use_cache = False
+    return opts
+
+
+def test_dist_ambiguous_bare_name_keeps_nested_png(tmp_path, monkeypatch):
+    """只写 bg.png 时，根目录资产可转换，歧义嵌套资产必须留源留名。"""
+    from PIL import Image
+
+    monkeypatch.setenv("RENPYSLIM_HOME", str(tmp_path / "home"))
+    dist = tmp_path / "Game"
+    game = dist / "game"
+    (game / "images").mkdir(parents=True)
+    Image.new("RGB", (800, 600), (220, 20, 20)).save(
+        game / "bg.png", "PNG", optimize=True)
+    Image.new("RGB", (800, 600), (20, 20, 220)).save(
+        game / "images" / "bg.png", "PNG", optimize=True)
+    (game / "script.rpy").write_text(
+        'image hero = "bg.png"\n', encoding="utf-8")
+
+    result = pipeline.run_dist(
+        str(dist), _image_only_options(),
+        work_root=str(tmp_path / "work"), output_dir=str(tmp_path / "out"))
+    wd = Path(result["working_dir"]) / "game"
+
+    assert not (wd / "bg.png").exists()
+    assert (wd / "bg.webp").exists()
+    assert (wd / "images" / "bg.png").exists(), "歧义裸名放行了嵌套资产改名"
+    assert not (wd / "images" / "bg.webp").exists()
+    assert (wd / "script.rpy").read_text(encoding="utf-8") == (
+        'image hero = "bg.webp"\n')
+    # 原件始终不动；转换只发生在工作副本。
+    assert (game / "bg.png").exists()
+    assert (game / "images" / "bg.png").exists()
+
+
+def test_dist_unique_nested_bare_name_converts(tmp_path, monkeypatch):
+    """唯一嵌套资产的合法裸名引用仍应解锁转换。"""
+    from PIL import Image
+
+    monkeypatch.setenv("RENPYSLIM_HOME", str(tmp_path / "home"))
+    dist = tmp_path / "Game"
+    game = dist / "game"
+    (game / "images").mkdir(parents=True)
+    Image.new("RGB", (800, 600), (20, 220, 20)).save(
+        game / "images" / "bg.png", "PNG", optimize=True)
+    (game / "script.rpy").write_text('scene "bg.png"\n', encoding="utf-8")
+
+    result = pipeline.run_dist(
+        str(dist), _image_only_options(),
+        work_root=str(tmp_path / "work"), output_dir=str(tmp_path / "out"))
+    wd = Path(result["working_dir"]) / "game"
+
+    assert not (wd / "images" / "bg.png").exists()
+    assert (wd / "images" / "bg.webp").exists()
+    assert (wd / "script.rpy").read_text(encoding="utf-8") == (
+        'scene "bg.webp"\n')
+
+
 def test_dist_without_rpy_stays_safename(tmp_path):
     """没有源码的普通成品：维持同名策略，绝不换格式。"""
     dist = _make_dist_with_rpy(tmp_path)

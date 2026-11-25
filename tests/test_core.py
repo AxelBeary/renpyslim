@@ -140,6 +140,82 @@ def test_refs_bare_name_never_matches_inside_path(tmp_path):
     assert '"menu.webp"' in out           # 真正的裸引用要改掉
 
 
+def test_refs_ambiguous_bare_name_is_not_evidence(tmp_path):
+    """裸名有歧义时，只允许完整相对路径作为引用证据。"""
+    game = _make_game(tmp_path, {
+        "bg.png": b"root",
+        "images/bg.png": b"nested",
+        "script.rpy": 'show "bg.png"\nshow "images/bg.png"\n',
+    })
+    idx = RefIndex(str(game))
+
+    assert idx.find("bg.png") == [("script.rpy", 1)]
+    assert idx.find("images/bg.png") == [("script.rpy", 2)]
+
+    recs = idx.rewrite({"images/bg.png": "images/bg.webp"})
+    assert recs and recs[0].action == "rename_ref"
+    out = (game / "script.rpy").read_text(encoding="utf-8")
+    assert 'show "bg.png"\n' in out
+    assert 'show "images/bg.webp"\n' in out
+
+
+def test_refs_unique_nested_bare_name_still_valid(tmp_path):
+    """唯一嵌套资产仍可用裸名引用，并按原样式改写。"""
+    game = _make_game(tmp_path, {
+        "images/only.png": b"image",
+        "script.rpy": 'show "only.png"\n',
+    })
+    idx = RefIndex(str(game))
+
+    assert idx.find("images/only.png") == [("script.rpy", 1)]
+    assert idx.rewrite({"images/only.png": "images/only.webp"})
+    assert 'show "only.webp"\n' in (game / "script.rpy").read_text(
+        encoding="utf-8")
+
+
+def test_refs_ambiguous_bare_name_in_font_tags(tmp_path):
+    """字体标签统计与 find/rewrite 共用裸名唯一性判定。"""
+    game = _make_game(tmp_path, {
+        "shared.ttf": b"root",
+        "fonts/shared.ttf": b"nested",
+        "script.rpy": (
+            'e "{font=shared.ttf}root{/font}"\n'
+            'e "{font=fonts/shared.ttf}nested{/font}"\n'
+        ),
+    })
+    idx = RefIndex(str(game))
+
+    assert idx.refs_in_font_tags("shared.ttf") == (1, 1)
+    assert idx.refs_in_font_tags("fonts/shared.ttf") == (1, 1)
+
+
+def test_refs_skip_dirs_do_not_create_bare_name_ambiguity(tmp_path):
+    """缓存/存档目录里的同名文件不是可加载资产，不能让裸名失效。"""
+    game = _make_game(tmp_path, {
+        "images/bg.png": b"image",
+        "cache/bg.png": b"cache",
+        "saves/bg.png": b"save",
+        "script.rpy": 'show "bg.png"\n',
+    })
+    idx = RefIndex(str(game))
+
+    assert idx.find("images/bg.png") == [("script.rpy", 1)]
+
+
+def test_refs_rewrite_avoids_ambiguous_new_bare_name(tmp_path):
+    """旧裸名唯一但新裸名有歧义时，改写为完整新路径。"""
+    game = _make_game(tmp_path, {
+        "images/only.png": b"source",
+        "other/only.webp": b"existing",
+        "script.rpy": 'show "only.png"\n',
+    })
+    idx = RefIndex(str(game))
+
+    assert idx.rewrite({"images/only.png": "images/only.webp"})
+    assert 'show "images/only.webp"\n' in (game / "script.rpy").read_text(
+        encoding="utf-8")
+
+
 def test_refs_non_utf8_roundtrip_lossless(tmp_path):
     """含非 UTF-8 字节的脚本：改写后其余字节必须逐字节无损。"""
     junk = b'\xff\xfe garbage \x9c bytes\nplay sound "s.wav"\n'
