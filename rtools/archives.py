@@ -445,8 +445,9 @@ def _tar_write_link_as_file(tf: tarfile.TarFile, member: tarfile.TarInfo,
       直接跳过会解出缺文件、跑不起来的半成品；复制能保住"能跑"，
       代价只是多占一份空间；
     - 硬链接在 Windows 上还要额外权限，复制是唯一跨平台行为一致的选择。
-    目标不在包里或还没解出来（链接排在目标前面）时告警跳过：
-    宁可缺这一项，也不去猜内容。
+
+    调用时机：由 _extract_tar 在**全部普通成员落盘之后**统一调用（见那里的
+    "两趟"说明）。目标仍不在包里时才告警跳过——宁可缺这一项，也不去猜内容。
     """
     source = _tar_link_source(dest_real, member, member_path)
     if source is None:
@@ -488,8 +489,18 @@ def _extract_tar(src: str, dest_dir: Path) -> None:
     在 3.12+ 上仍然先让标准库 data 过滤器过一遍（双层校验：它顺带剥掉
     group/other 写位、清掉属主信息），被它拦下的条目跳过并告警；
     3.11 没有这个参数（强传只会 TypeError），就只跑我们自己的校验。
+
+    **两趟**：普通成员先落盘，链接成员留到第二趟再还原。tar 允许链接排在
+    目标前面（官方 Ren'Py Linux 包里 `game/xxx.so` → `lib/xxx.so.1` 这类
+    软链就是常态，且按名字排序常常排在目标之前）。若边遍历边还原，目标尚未
+    解出会被判"不是已解压出来的普通文件"而丢弃，解出来的成品缺文件、跑不
+    起来——静默残缺比直接报错更难查。两趟之后所有普通文件都在盘上，
+    还原只取决于目标是否真的在包里。
     """
     dest_real = os.path.realpath(str(dest_dir))
+    # 第一趟：普通文件/目录落盘；链接成员记下来，等第二趟再还原
+    # （tar 允许链接排在目标之前，边遍历边还原会丢掉这类条目）。
+    pending_links: list[tuple[tarfile.TarInfo, str]] = []
     with tarfile.open(src, "r:*") as tf:     # "r:*" 让标准库自己嗅探压缩方式
         supports_filter = hasattr(tarfile, "data_filter")
         for member in tf:
@@ -527,10 +538,8 @@ def _extract_tar(src: str, dest_dir: Path) -> None:
                             shutil.copyfileobj(fsrc, fdst)
                     _tar_set_mode(member_path, member.mode, False)
                 elif member.issym() or member.islnk():
-                    parent = os.path.dirname(member_path)
-                    if parent:
-                        os.makedirs(parent, exist_ok=True)
-                    _tar_write_link_as_file(tf, member, member_path, dest_real)
+                    # 只登记，第二趟再还原（此时目标一定已经落盘）
+                    pending_links.append((member, member_path))
                 else:
                     # 设备文件 / FIFO 等特殊条目：绝不按流打开（可能阻塞或
                     # 写坏系统）。3.12+ 的 data 过滤器已经拦过一次，3.11 兜底
@@ -539,6 +548,23 @@ def _extract_tar(src: str, dest_dir: Path) -> None:
             except (OSError, tarfile.TarError) as exc:
                 logger.warning("tar 包里的条目 '%s' 解压失败（%s），已跳过。",
                                raw_name, exc)
+
+        # 第二趟：还原链接成员。必须在同一个 tarfile 上下文里做——硬链接
+        # 还要回读包内容（tf.extractfile），出了 with 就拿不到句柄了。
+        for member, member_path in pending_links:
+            parent = os.path.dirname(member_path)
+            if parent:
+                try:
+                    os.makedirs(parent, exist_ok=True)
+                except OSError as exc:
+                    logger.warning("tar 包里的链接 '%s' 建父目录失败（%s），"
+                                   "已跳过。", member.name, exc)
+                    continue
+            try:
+                _tar_write_link_as_file(tf, member, member_path, dest_real)
+            except (OSError, tarfile.TarError) as exc:
+                logger.warning("tar 包里的链接 '%s' 还原失败（%s），已跳过。",
+                               member.name, exc)
 
 
 # tar 后缀 -> tarfile 写入模式。放在这里而不是藏进函数里，方便一眼对账

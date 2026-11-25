@@ -230,6 +230,49 @@ def test_tar_symlink_outside_not_followed(tmp_path, monkeypatch, with_stdlib_fil
     assert inner.read_bytes() == b"inside"
 
 
+@pytest.mark.parametrize("with_stdlib_filter", [True, False])
+def test_tar_link_before_target_still_restored(tmp_path, monkeypatch,
+                                               with_stdlib_filter):
+    """链接排在目标**前面**时仍要还原出内容（v0.18.0 实机抓到的回归）。
+
+    官方 Ren'Py Linux 包里 `game/xxx.so` → `lib/xxx.so.1` 这类软链是常态，
+    按名字排序常常排在目标之前。旧实现边遍历边还原，遇到目标尚未解出就判
+    "不是已解压出来的普通文件"并丢弃——解出来的成品缺文件，而且不报错。
+    现改为两趟（普通成员先落盘、链接第二趟还原）。
+    """
+    if not with_stdlib_filter:
+        _drop_stdlib_filter(monkeypatch)
+
+    # 名字刻意让"链接"排在"目标"前面（a_link < z_target）
+    tp = tmp_path / "early.tar"
+    with tarfile.open(tp, "w") as tf:
+        _add_symlink(tf, "a_link", "z_target.txt")
+        _add_bytes(tf, "z_target.txt", b"PAYLOAD")
+
+    out = tmp_path / "out"
+    archives.extract_archive(str(tp), str(out))
+
+    link = out / "a_link"
+    assert link.exists(), "链接排在目标前面时也必须还原，不能静默丢弃"
+    assert not os.path.islink(link), "策略是不创建链接，落成普通文件"
+    assert link.read_bytes() == b"PAYLOAD"
+
+
+def test_tar_hardlink_before_target_still_restored(tmp_path):
+    """硬链接排在目标前面时同样要还原（第二趟仍在 tarfile 上下文内）。"""
+    tp = tmp_path / "early_hl.tar"
+    with tarfile.open(tp, "w") as tf:
+        _add_hardlink(tf, "a_hl", "z_target.txt")
+        _add_bytes(tf, "z_target.txt", b"PAYLOAD")
+
+    out = tmp_path / "out"
+    archives.extract_archive(str(tp), str(out))
+
+    hl = out / "a_hl"
+    assert hl.exists(), "硬链接排在目标前面时也必须还原"
+    assert hl.read_bytes() == b"PAYLOAD"
+
+
 def test_tar_hardlink_outside_not_created(tmp_path):
     """硬链接目标在包外：跳过，不产生任何文件。"""
     tp = tmp_path / "hl.tar"
