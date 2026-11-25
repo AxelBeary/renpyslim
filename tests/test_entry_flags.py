@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
@@ -104,8 +105,10 @@ def test_release_workflow_uploads_both_exes():
     assert "RenPySlim-cli.exe" in workflow, "release.yml 没有上传控制台版 CLI exe"
 
 
-@pytest.mark.parametrize("value", ["70000", "-1", "0"])
-def test_pick_port_rejects_out_of_range_values(value, monkeypatch):
+@pytest.mark.parametrize("value", [
+    "", "not-a-port", "52786.0", "70000", "-1", "0", "65536",
+])
+def test_pick_port_rejects_invalid_values(value, monkeypatch):
     sys.path.insert(0, str(ROOT))
     try:
         import main as entry
@@ -117,13 +120,86 @@ def test_pick_port_rejects_out_of_range_values(value, monkeypatch):
     assert entry._pick_port() == entry.DEFAULT_PORT
 
 
-def test_runtime_port_out_of_range_is_ignored(monkeypatch):
+@pytest.mark.parametrize("value", ["1", "65535"])
+def test_pick_port_accepts_valid_boundaries(value, monkeypatch):
     sys.path.insert(0, str(ROOT))
     try:
         import main as entry
     finally:
         sys.path.pop(0)
 
-    assert entry._port_alive(70000) is False
-    monkeypatch.setattr(entry.runtime, "read_port", lambda: 70000)
+    monkeypatch.setenv("RENPYTOOLS_PORT", value)
+    monkeypatch.setattr(entry, "_port_free", lambda port: True)
+    assert entry._pick_port() == int(value)
+
+
+def test_pick_port_uses_ephemeral_when_default_is_occupied(monkeypatch):
+    """保留先探测再关闭、最后由 uvicorn 绑定的既有 TOCTOU 行为。"""
+    sys.path.insert(0, str(ROOT))
+    try:
+        import main as entry
+    finally:
+        sys.path.pop(0)
+
+    created = []
+
+    class ProbeSocket:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            self.closed = True
+
+        def bind(self, address):
+            self.address = address
+
+        def getsockname(self):
+            return (entry.HOST, 53123)
+
+    def fake_socket(*args, **kwargs):
+        probe = ProbeSocket()
+        probe.closed = False
+        created.append(probe)
+        return probe
+
+    monkeypatch.setenv("RENPYTOOLS_PORT", "70000")
+    monkeypatch.setattr(entry, "_port_free", lambda port: False)
+    monkeypatch.setattr(entry.socket, "socket", fake_socket)
+
+    assert entry._pick_port() == 53123
+    assert len(created) == 1
+    assert created[0].address == (entry.HOST, 0)
+    assert created[0].closed is True
+
+
+@pytest.mark.parametrize("port", [-1, 0, 65536, 70000, True, False, "52786", None])
+def test_port_alive_rejects_invalid_values_without_probe(port, monkeypatch):
+    sys.path.insert(0, str(ROOT))
+    try:
+        import main as entry
+    finally:
+        sys.path.pop(0)
+
+    monkeypatch.setattr(
+        entry.socket, "socket",
+        lambda *args, **kwargs: pytest.fail("非法端口不应创建 socket"),
+    )
+    assert entry._port_alive(port) is None
+
+
+@pytest.mark.parametrize("port", [-1, 0, 65536, 70000])
+def test_runtime_port_out_of_range_is_ignored(port, tmp_path, monkeypatch):
+    sys.path.insert(0, str(ROOT))
+    try:
+        import main as entry
+    finally:
+        sys.path.pop(0)
+
+    runtime_file = tmp_path / "runtime.json"
+    runtime_file.write_text(json.dumps({"port": port}), encoding="utf-8")
+    monkeypatch.setattr(entry.runtime, "RUNTIME_FILE", runtime_file)
+    monkeypatch.setattr(
+        entry.socket, "socket",
+        lambda *args, **kwargs: pytest.fail("越界 runtime.json 不应创建 socket"),
+    )
     assert entry._running_instance_port() is None
