@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+import unicodedata
 from typing import Iterable, Optional
 
 
@@ -44,14 +45,26 @@ def find_suffix_clashes(rels: Iterable[str], new_ext: str,
        资源）——转换会直接覆写既有文件/静默遮蔽封包资源，
        通过 existing 参照集传入全部资源名即可拦截。
     """
+    # 比较键用 NFC + casefold：Windows / macOS 文件系统大小写不敏感（且
+    # macOS 常以 NFD 存名），Foo.png 与 foo.jpg 都会落到同一个 Foo.webp。
+    # 返回值仍保留原始拼写，调用方才能用原始目标路径做成员判断。
+    def norm(value: str) -> str:
+        return unicodedata.normalize("NFC", value).casefold()
+
     seen: dict[str, int] = {}
+    spellings: dict[str, set[str]] = {}
     targets: set[str] = set()
     for rel in rels:
         target = Path(rel).with_suffix(new_ext).as_posix()
-        seen[target] = seen.get(target, 0) + 1
+        key = norm(target)
+        seen[key] = seen.get(key, 0) + 1
+        spellings.setdefault(key, set()).add(target)
         targets.add(target)
-    clashes = {t for t, n in seen.items() if n > 1}
+    clash_keys = {key for key, n in seen.items() if n > 1}
     if existing:
-        existing_norm = {Path(r).as_posix() for r in existing}
-        clashes |= targets & existing_norm
+        existing_keys = {norm(Path(r).as_posix()) for r in existing}
+        clash_keys |= {norm(t) for t in targets} & existing_keys
+    clashes: set[str] = set()
+    for key in clash_keys:
+        clashes |= spellings.get(key, set())
     return clashes

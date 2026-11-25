@@ -80,7 +80,7 @@ def ensure_free_space(dest: str | Path, required_bytes: int,
 def make_working_copy(project_dir: str, dest_root: str) -> str:
     """把工程复制到工作目录，返回副本路径。原件保持不动。"""
     src = Path(project_dir)
-    stamp = time.strftime("%Y%m%d-%H%M%S")
+    stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{uuid.uuid4().hex[:8]}"
     dest = Path(dest_root) / f"{src.name}-working-{stamp}"
 
     ensure_free_space(dest, _tree_size(src, _COPY_SKIP),

@@ -172,6 +172,24 @@ def test_find_suffix_clashes():
     assert clashes == {"images/foo.webp"}
 
 
+def test_find_suffix_clashes_case_insensitive():
+    """Windows/macOS 大小写不敏感：Foo.png 与 foo.jpg 目标同为 webp。
+
+    比较按 NFC+casefold，但返回值保留两个原始拼写，调用方才能逐个降级。
+    """
+    clashes = find_suffix_clashes(["images/Foo.png", "images/foo.jpg"], ".webp")
+    assert clashes == {"images/Foo.webp", "images/foo.webp"}
+
+    # 与现存目标仅大小写不同也算撞车
+    hits = find_suffix_clashes(["images/Foo.png"], ".webp",
+                               existing=["images/foo.webp"])
+    assert hits == {"images/Foo.webp"}
+
+    # 真正的不同目标不受影响
+    assert find_suffix_clashes(["images/Foo.png", "images/bar.jpg"],
+                               ".webp") == set()
+
+
 # ---------------------------------------------------------------------------
 # 中等 #6：rpa 重建异常时 writer 句柄要关
 # ---------------------------------------------------------------------------
