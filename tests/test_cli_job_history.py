@@ -7,7 +7,9 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 
@@ -212,6 +214,141 @@ def test_interrupted_job_records_error(tmp_path, monkeypatch):
     assert len(jobs) == 1
     assert jobs[0]["status"] == "error"
     assert "KeyboardInterrupt" in jobs[0]["error"]
+
+
+# ---------------------------------------------------------------------------
+# 长任务心跳：六类任务统一刷新，结束时线程可靠回收
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize("command,target", [
+    ("analyze", "dummy.apk"),
+    ("optimize", "dummy"),
+    ("full", "dummy"),
+    ("package", "dummy"),
+    ("slimapk", "dummy.apk"),
+    ("slimfont", "dummy.ttf"),
+])
+def test_all_cli_tasks_heartbeat_while_running(tmp_path, monkeypatch,
+                                               capsys, command, target):
+    """模拟超过 stale 阈值的工作时长，六类任务都不能被误判 interrupted。"""
+    import cli
+
+    clock = [1000.0]
+    heartbeat_written = threading.Event()
+    monkeypatch.setattr(jobstore, "time",
+                        SimpleNamespace(time=lambda: clock[0]))
+    monkeypatch.setattr(cli, "_CLI_HEARTBEAT_INTERVAL", 0.01)
+    original_heartbeat = jobstore.heartbeat
+
+    def advancing_heartbeat(job_id, force=False):
+        # 让每一次真实后台刷新都跨越 180 秒阈值；没有心跳的旧实现必红。
+        clock[0] += jobstore.STALE_SECONDS + 1
+        result = original_heartbeat(job_id, force=force)
+        heartbeat_written.set()
+        return result
+
+    monkeypatch.setattr(jobstore, "heartbeat", advancing_heartbeat)
+    observed = {}
+
+    def fake_command(args):
+        thread = cli._ACTIVE_JOB["heartbeat_thread"]
+        observed["thread"] = thread
+        assert thread.daemon is True
+        assert thread.is_alive() is True
+        assert heartbeat_written.wait(timeout=2)
+        observed["during"] = jobstore.list_jobs()[0]
+        return cli._ok({"simulated": True})
+
+    monkeypatch.setattr(cli, f"cmd_{command}", fake_command)
+    rc = cli.main([command, str(tmp_path / target)])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert json.loads(captured.out) == {"ok": True, "simulated": True}
+    assert observed["during"]["kind"] == command
+    assert observed["during"]["status"] == "running"
+    assert jobstore._pid_alive(observed["during"]["pid"]) is True
+    assert observed["thread"].is_alive() is False
+    jobs = jobstore.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == "done"
+
+
+@pytest.mark.parametrize("outcome", ["failed", "exception", "cancelled"])
+def test_heartbeat_thread_stops_on_every_exit_path(tmp_path, monkeypatch,
+                                                  capsys, outcome):
+    """_fail、普通异常与 KeyboardInterrupt 取消都要先停线程再写终态。"""
+    import cli
+
+    heartbeat_written = threading.Event()
+    monkeypatch.setattr(cli, "_CLI_HEARTBEAT_INTERVAL", 0.01)
+    original_heartbeat = jobstore.heartbeat
+
+    def signaling_heartbeat(job_id, force=False):
+        result = original_heartbeat(job_id, force=force)
+        heartbeat_written.set()
+        return result
+
+    monkeypatch.setattr(jobstore, "heartbeat", signaling_heartbeat)
+    monkeypatch.setattr(cli.crashdump, "write_crash", lambda context: "")
+    observed = {}
+
+    def fake_command(args):
+        observed["thread"] = cli._ACTIVE_JOB["heartbeat_thread"]
+        assert heartbeat_written.wait(timeout=2)
+        if outcome == "failed":
+            return cli._fail("模拟失败")
+        if outcome == "exception":
+            raise RuntimeError("模拟异常")
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(cli, "cmd_analyze", fake_command)
+    argv = ["analyze", str(tmp_path / "dummy.apk")]
+    if outcome == "cancelled":
+        with pytest.raises(KeyboardInterrupt):
+            cli.main(argv)
+    else:
+        assert cli.main(argv) == 1
+    captured = capsys.readouterr()
+
+    assert observed["thread"].is_alive() is False
+    jobs = jobstore.list_jobs()
+    assert len(jobs) == 1
+    assert jobs[0]["status"] == ("failed" if outcome == "failed" else "error")
+    if outcome == "failed":
+        assert json.loads(captured.out) == {"ok": False, "error": "模拟失败"}
+    elif outcome == "exception":
+        data = json.loads(captured.out)
+        assert data["ok"] is False
+        assert "RuntimeError" in data["error"]
+
+
+def test_heartbeat_failure_never_pollutes_stdout(tmp_path, monkeypatch, capsys):
+    """后台心跳写盘失败只记 stderr，CLI 结果 JSON 与退出码保持不变。"""
+    import cli
+
+    attempted = threading.Event()
+    monkeypatch.setattr(cli, "_CLI_HEARTBEAT_INTERVAL", 0.01)
+
+    def broken_heartbeat(job_id, force=False):
+        attempted.set()
+        raise OSError("心跳写盘失败")
+
+    monkeypatch.setattr(jobstore, "heartbeat", broken_heartbeat)
+
+    def fake_command(args):
+        assert attempted.wait(timeout=2)
+        return cli._ok({"simulated": True})
+
+    monkeypatch.setattr(cli, "cmd_analyze", fake_command)
+    rc = cli.main(["analyze", str(tmp_path / "dummy.apk")])
+    captured = capsys.readouterr()
+
+    assert rc == 0
+    assert json.loads(captured.out) == {"ok": True, "simulated": True}
+    assert "刷新任务心跳失败" in captured.err
+    assert cli._ACTIVE_JOB["heartbeat_thread"].is_alive() is False
+    assert jobstore.list_jobs()[0]["status"] == "done"
 
 
 # ---------------------------------------------------------------------------

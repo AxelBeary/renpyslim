@@ -24,6 +24,7 @@ import json
 import os
 import signal
 import sys
+import threading
 import uuid
 from pathlib import Path
 
@@ -81,6 +82,7 @@ _TASK_COMMANDS = frozenset({"analyze", "optimize", "full", "package",
                             "slimapk", "slimfont"})
 _SUMMARY_TEXT_LIMIT = 512     # 路径/短文案留这么多字符，超长截断
 _SUMMARY_LIST_LIMIT = 20      # built 之类小列表最多留这么多项
+_CLI_HEARTBEAT_INTERVAL = 30.0
 _ACTIVE_JOB: dict | None = None
 
 
@@ -91,6 +93,43 @@ def _job_title(args) -> str:
         if value:
             return str(value)
     return ""
+
+
+def _job_heartbeat_loop(job_id: str, stop: threading.Event) -> None:
+    """CLI 任务存活期间定期刷新历史；失败只记 stderr，不影响任务。"""
+    while not stop.wait(_CLI_HEARTBEAT_INTERVAL):
+        try:
+            jobstore.heartbeat(job_id)
+        except Exception as exc:
+            _log("history", f"刷新任务心跳失败（任务继续执行）：{exc}")
+
+
+def _start_job_heartbeat(job: dict) -> None:
+    """为单个 CLI 任务启动 daemon 心跳线程；启动失败不影响任务。"""
+    stop = threading.Event()
+    thread = threading.Thread(
+        target=_job_heartbeat_loop,
+        args=(job["id"], stop),
+        name=f"renpyslim-cli-heartbeat-{job['id']}",
+        daemon=True,
+    )
+    job["heartbeat_stop"] = stop
+    job["heartbeat_thread"] = thread
+    try:
+        thread.start()
+    except Exception as exc:
+        _log("history", f"启动任务心跳失败（任务继续执行）：{exc}")
+
+
+def _stop_job_heartbeat(job: dict) -> None:
+    """停止并回收心跳线程，保证结束后不会再改写历史记录。"""
+    stop = job.get("heartbeat_stop")
+    if stop is not None:
+        stop.set()
+    thread = job.get("heartbeat_thread")
+    if (thread is not None and thread is not threading.current_thread()
+            and thread.is_alive()):
+        thread.join()
 
 
 def _start_job(args) -> None:
@@ -107,6 +146,7 @@ def _start_job(args) -> None:
     except Exception as exc:
         _log("history", f"登记任务历史失败（任务继续执行）：{exc}")
         return
+    _start_job_heartbeat(job)
     _ACTIVE_JOB = job
 
 
@@ -116,6 +156,9 @@ def _finish_job(status: str, summary=None, error=None) -> None:
     if not job or job.get("finished"):
         return
     job["finished"] = True
+    # 先停止并 join 心跳，再写终态，避免后台线程在 record_finish 后
+    # 继续刷新 heartbeat；Event 可立即唤醒正在等待的线程。
+    _stop_job_heartbeat(job)
     try:
         jobstore.record_finish(job["id"], status,
                                summary=summary, error=error)
