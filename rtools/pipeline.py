@@ -582,7 +582,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
             out = {"records": [], "saved": 0, "rename": None, "warn": None,
                    "failed": False, "skipped": False}
             h = cache.hash_file(a.path) if options.use_cache else None
-            key = f"vid|{options.preset}|{a.ext}"
+            key = f"vid|{options.preset}|{int(options.experimental_av1)}|{a.ext}"
             hit = cache.lookup_hash(h, key) if h else None
             if hit and cache.apply_cached(hit, a.path):
                 new_sz = Path(a.path).stat().st_size
