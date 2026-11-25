@@ -128,7 +128,15 @@ DEFAULT_PORT = 52786
 HOST = "127.0.0.1"
 
 
+def _valid_port(port: object) -> bool:
+    """端口号必须是 1..65535 的整数；0 只用于让系统临时分配端口。"""
+    return (isinstance(port, int) and not isinstance(port, bool)
+            and 1 <= port <= 65535)
+
+
 def _port_free(port: int) -> bool:
+    if not _valid_port(port):
+        return False
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind((HOST, port))
@@ -137,7 +145,10 @@ def _port_free(port: int) -> bool:
             return False
 
 
-def _port_alive(port: int) -> bool:
+def _port_alive(port: int) -> bool | None:
+    """探测已有实例；非法端口号返回 None，避免交给 socket 后抛 OverflowError。"""
+    if not _valid_port(port):
+        return None
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         try:
@@ -151,6 +162,8 @@ def _pick_port() -> int:
     try:
         preferred = int(os.environ.get("RENPYTOOLS_PORT", "") or DEFAULT_PORT)
     except ValueError:
+        preferred = DEFAULT_PORT
+    if not _valid_port(preferred):
         preferred = DEFAULT_PORT
     if _port_free(preferred):
         return preferred
