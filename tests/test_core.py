@@ -171,10 +171,16 @@ def test_dist_rpa_growth_keeps_renamed_loose_fallback(tmp_path):
     dist = tmp_path / "Game-pc"
     game = dist / "game"
     game.mkdir(parents=True)
-    # 渐变图转 WebP 收益很小（百余字节），会被 20000 条目的索引开销反超，
-    # 从而触发"封包未变小"分支；体积又大于 1KB，不会被体积门槛跳过。
+    # 渐变图转 WebP 收益很小，会被 20000 条目的索引开销反超，从而触发
+    # "封包未变小"分支；体积又大于 1KB，不会被体积门槛跳过。
+    #
+    # optimize 必须为 False：pipeline 用的是 conservative 档的 quality=95，
+    # 已 optimize=True 的 PNG（3353B）在 q=95 下转出的 WebP 反而更大，
+    # optimize_image 按"没变小就不替换"返回 skipped（"已是最优，压不出更小"），
+    # 于是根本不生成 images/bg.webp，本用例要验的改名兜底路径也就无从触发。
+    # optimize=False 的同类图（3861B）转出 3550B，转换成功，才走得到封包反涨。
     Image.linear_gradient("L").resize((800, 800)).convert("RGB").save(
-        tmp_path / "base.png", "PNG", optimize=True)
+        tmp_path / "base.png", "PNG", optimize=False)
     image_data = (tmp_path / "base.png").read_bytes()
     src = game / "archive.rpa"
     _rpa_rebuild_fixture(src, image_data, filler_count=20_000)
