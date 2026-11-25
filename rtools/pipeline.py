@@ -954,6 +954,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
 
     saved = 0
     rpa_replacements: dict[str, dict[str, str]] = {}   # rpa文件名 -> {内部路径: 优化后文件}
+    # 每个封包内资产优化时已计入 saved；但真实节省必须以封包重建后的
+    # 净变化为准（封包索引/格式开销可能吃掉甚至反超资产收益）。
+    # 这里单独记下各封包已记的资产收益，重建时按实际 delta 重算。
+    rpa_saved: dict[str, int] = {}
     # 第二波：skipped 与 failed 分桶，口径同工程模式
     failed = {"image": 0, "audio": 0, "video": 0, "font": 0}
     skipped = {"image": 0, "audio": 0, "video": 0, "font": 0}
@@ -1295,7 +1299,9 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         if r["remap"]:
             remap_map[r["remap"][0]] = r["remap"][1]
         if r["rpa"]:
-            rpa_replacements.setdefault(r["rpa"][0], {})[r["rpa"][1]] = r["rpa"][2]
+            rpa_name = r["rpa"][0]
+            rpa_replacements.setdefault(rpa_name, {})[r["rpa"][1]] = r["rpa"][2]
+            rpa_saved[rpa_name] = rpa_saved.get(rpa_name, 0) + r["saved"]
         # 记账以字段为准（第二波）：failed/skipped 均为类型名字符串；
         # isinstance 防御兜底记录（极端路径下可能不是字符串），
         # 绝不让记账环节抛 KeyError 把整批成果带崩。
@@ -1381,37 +1387,64 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
             _check_cancel(cancel)
             rpa_files = list(working_p.rglob(rpa_name))
             if not rpa_files:
+                # 原包已不在工作副本，相关资产收益不可能落地，必须扣回。
+                saved -= rpa_saved.pop(rpa_name, 0)
+                report.warnings.append(
+                    f"{rpa_name}：未找到待重建的封包，相关资产节省未计入。")
                 continue
             # 第二波：同名封包多份时不能盲取第一个重建——另外几份里的
             # 同名条目仍旧，会产生不一致的兄弟副本；跳过重建并警告。
             if len(rpa_files) > 1:
+                saved -= rpa_saved.pop(rpa_name, 0)
                 report.warnings.append(
                     f"{rpa_name}：在工作副本里找到 {len(rpa_files)} 份同名封包，"
-                    "无法确定该重建哪一份，已跳过该批重建并保留原包。"
-                    "优化后的文件已按散落副本保留，游戏仍可加载。")
+                    "无法确定该重建哪一份，已跳过该批重建并保留原包；"
+                    "改名转换的散落副本（如有）已保留，游戏仍可加载，"
+                    "相关资产节省未计入。")
                 continue
             src_rpa = rpa_files[0]
             p.emit("rpa", f"正在重建封包 {rpa_name}（替换 {len(repl)} 个文件）……",
                    code="rpa_rebuild",
                    params={"rpa": rpa_name, "n": len(repl)})
             tmp_rpa = src_rpa.with_name(src_rpa.name + ".rtools.tmp")
+            archive_replaced = False
             try:
                 replaced, total = rpa.rebuild_archive(str(src_rpa), str(tmp_rpa), repl)
                 old_size, new_size = src_rpa.stat().st_size, tmp_rpa.stat().st_size
-                tmp_rpa.replace(src_rpa)
-                # 改名替换（转换后包回 rpa）的散落副本已入包，删掉避免
-                # 双份存在；若重建失败则散落副本保留——引用已改写，
-                # 散文件照样能加载，是天然兜底
-                for v in repl.values():
-                    if isinstance(v, tuple):
-                        Path(v[1]).unlink(missing_ok=True)
-                records.append(ChangeRecord(
-                    action="rpa_rebuild", src=rpa_name,
-                    detail=f"封包内 {total} 个文件，替换 {replaced} 个，"
-                           f"{_fmt(old_size)} -> {_fmt(new_size)}"))
+                if new_size < old_size:
+                    tmp_rpa.replace(src_rpa)
+                    archive_replaced = True
+                    # 真实节省按封包净变化记账，扣回先前按资产累加的收益。
+                    saved += (old_size - new_size) - rpa_saved.pop(rpa_name, 0)
+                    records.append(ChangeRecord(
+                        action="rpa_rebuild", src=rpa_name,
+                        detail=f"封包内 {total} 个文件，替换 {replaced} 个，"
+                               f"{_fmt(old_size)} -> {_fmt(new_size)}"))
+                    # 改名替换的散落副本已入包，删掉避免双份存在；若重建失败
+                    # 或未变小则保留——引用已改写，散文件照样能加载，是兜底。
+                    for v in repl.values():
+                        if isinstance(v, tuple):
+                            Path(v[1]).unlink(missing_ok=True)
+                else:
+                    # 重建后未变小：保留原包、删临时包；改名转换的散落副本
+                    # 不动。已按资产记的收益并未落地，全部扣回。
+                    tmp_rpa.unlink(missing_ok=True)
+                    saved -= rpa_saved.pop(rpa_name, 0)
+                    report.warnings.append(
+                        f"{rpa_name}：封包重建后未变小（{_fmt(old_size)} -> "
+                        f"{_fmt(new_size)}），已保留原封包；改名转换的散落副本"
+                        "（如有）仍保留，游戏仍可加载，未计入节省体积。")
             except Exception as e:
                 tmp_rpa.unlink(missing_ok=True)
-                report.warnings.append(f"{rpa_name}：封包重建失败，保留原封包（{e}）")
+                if archive_replaced:
+                    report.warnings.append(
+                        f"{rpa_name}：封包已重建，但后续清理或记账失败（{e}）")
+                else:
+                    # 重建失败同样未落地，扣回该封包已记的资产收益。
+                    saved -= rpa_saved.pop(rpa_name, 0)
+                    report.warnings.append(
+                        f"{rpa_name}：封包重建失败，保留原封包（{e}），"
+                        "相关资产节省未计入。")
 
         # --- 第 6 步：无引用冗余文件（默认只标记，不删除） ---
         unreferenced = _find_unreferenced(working_p, loose)
@@ -1461,8 +1494,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     {"records": [r.to_dict() for r in records], "saved_bytes": saved})
     except BaseException:
         # 审核修复（高-5）：任何异常（含取消）都落部分清单，
-        # 磁盘已被部分修改时用户有对账依据
-        _flush_partial_changelog(output_dir, records, saved)
+        # 磁盘已被部分修改时用户有对账依据。尚未完成封包重建的资产
+        # 收益没有落地，部分清单也不能把它们算进 saved。
+        _flush_partial_changelog(
+            output_dir, records, saved - sum(rpa_saved.values()))
         raise
     finally:
         # 审核修复（中-7）：解包临时目录任何路径上都不能残留，
