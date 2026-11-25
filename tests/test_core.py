@@ -5,15 +5,18 @@ rpyc 解析、配置默认值。
 """
 from __future__ import annotations
 
+import json
+import pickle
+import random
 import struct
 import zlib
 from pathlib import Path
 
 import pytest
 
-from rtools import rpa                                   # noqa: E402
+from rtools import pipeline, rpa                          # noqa: E402
 from rtools.charset import read_rpyc_text                # noqa: E402
-from rtools.config import default_options                # noqa: E402
+from rtools.config import OptimizeOptions, default_options  # noqa: E402
 from rtools.font_optimizer import subset_font            # noqa: E402
 from rtools.image_optimizer import optimize_image        # noqa: E402
 from rtools.refs import RefIndex                         # noqa: E402
@@ -56,6 +59,190 @@ def test_rpa_rebuild_with_replacement(tmp_path):
     assert arc.read("x.png") == b"NEW" * 30
     assert arc.read("y.png") == b"KEEP" * 100
     arc.close()
+
+
+def _rpa_rebuild_fixture(path: Path, image_data: bytes,
+                         filler_count: int = 500) -> None:
+    """写合法 RPA-3.0：默认 zlib 索引 + 大量共享长前缀条目。
+
+    源索引使用 zlib 默认级别，重建器使用 level 3；条目足够多时，
+    一个字节的资产收益也会被索引/格式开销吃掉。
+    """
+    key = 0x42424242
+    placeholder = b"RPA-3.0 " + b"X" * 16 + b" " + b"X" * 8 + b"\n"
+    body = bytearray(placeholder)
+    entries = {}
+    for i in range(filler_count):
+        name = f"data/very-long-shared-prefix/chapter-{i:05d}-asset.dat"
+        data = f"payload-{i}".encode() * 4
+        body += b"Made with Ren'Py."
+        offset = len(body)
+        body += data
+        entries[name] = [(offset ^ key, len(data) ^ key, b"")]
+    body += b"Made with Ren'Py."
+    offset = len(body)
+    body += image_data
+    entries["images/bg.png"] = [(offset ^ key, len(image_data) ^ key, b"")]
+    index_offset = len(body)
+    index = zlib.compress(pickle.dumps(entries, 2))
+    path.write_bytes(
+        b"RPA-3.0 %016x %08x\n" % (index_offset, key)
+        + body[len(placeholder):] + index)
+
+
+def _png_with_redundant_byte(path: Path) -> bytes:
+    """生成已优化 PNG 并附加一个冗余字节；同名优化确定只省这一字节。"""
+    from PIL import Image
+
+    pixels = random.Random(42).randbytes(64 * 64 * 3)
+    Image.frombytes("RGB", (64, 64), pixels).save(path, "PNG", optimize=True)
+    return path.read_bytes() + b"\0"
+
+
+def _image_only_options() -> OptimizeOptions:
+    opts = OptimizeOptions()
+    opts.use_cache = False
+    opts.do_audio = False
+    opts.do_fonts = False
+    return opts
+
+
+def test_dist_rpa_keeps_original_when_rebuild_grows(tmp_path):
+    """资产只省 1 字节但封包反涨时：原包不动、临时包删、saved 不虚报。"""
+    dist = tmp_path / "Game-pc"
+    game = dist / "game"
+    game.mkdir(parents=True)
+    image_data = _png_with_redundant_byte(tmp_path / "base.png")
+    src = game / "archive.rpa"
+    _rpa_rebuild_fixture(src, image_data)
+    before = src.read_bytes()
+
+    result = pipeline.run_dist(
+        str(dist), _image_only_options(), str(tmp_path / "work"),
+        str(tmp_path / "out"))
+
+    rebuilt = Path(result["working_dir"]) / "game" / "archive.rpa"
+    assert src.read_bytes() == before
+    assert rebuilt.read_bytes() == before
+    assert not list(Path(result["working_dir"]).rglob("*.rtools.tmp"))
+    assert result["saved_bytes"] <= 0
+    assert any("archive.rpa" in w and "未变小" in w
+               for w in result["warnings"])
+    changelog = json.loads(
+        (tmp_path / "out" / "changelog.json").read_text(encoding="utf-8"))
+    assert changelog["saved_bytes"] == result["saved_bytes"]
+    assert not any(r["action"] == "rpa_rebuild"
+                   for r in changelog["records"])
+
+
+def test_dist_rpa_equal_size_keeps_original(tmp_path, monkeypatch):
+    """new_size == old_size 也必须走不替换分支（>= 边界）。"""
+    from shutil import copyfile
+
+    dist = tmp_path / "Game-pc"
+    game = dist / "game"
+    game.mkdir(parents=True)
+    src = game / "archive.rpa"
+    _rpa_rebuild_fixture(
+        src, _png_with_redundant_byte(tmp_path / "base.png"))
+    before = src.read_bytes()
+
+    def copy_unchanged(source, dest, replacements):
+        copyfile(source, dest)
+        return len(replacements), 501
+
+    monkeypatch.setattr(pipeline.rpa, "rebuild_archive", copy_unchanged)
+    result = pipeline.run_dist(
+        str(dist), _image_only_options(), str(tmp_path / "work"),
+        str(tmp_path / "out"))
+
+    rebuilt = Path(result["working_dir"]) / "game" / "archive.rpa"
+    assert rebuilt.read_bytes() == before
+    assert not list(Path(result["working_dir"]).rglob("*.rtools.tmp"))
+    assert result["saved_bytes"] <= 0
+    assert any("archive.rpa" in w and "未变小" in w
+               for w in result["warnings"])
+
+
+def test_dist_rpa_growth_keeps_renamed_loose_fallback(tmp_path):
+    """改名转换遇封包反涨：原包保留，WebP 散落副本与改写引用仍是兜底。"""
+    from PIL import Image
+
+    dist = tmp_path / "Game-pc"
+    game = dist / "game"
+    game.mkdir(parents=True)
+    # 渐变图转 WebP 收益很小（百余字节），会被 20000 条目的索引开销反超，
+    # 从而触发"封包未变小"分支；体积又大于 1KB，不会被体积门槛跳过。
+    Image.linear_gradient("L").resize((800, 800)).convert("RGB").save(
+        tmp_path / "base.png", "PNG", optimize=True)
+    image_data = (tmp_path / "base.png").read_bytes()
+    src = game / "archive.rpa"
+    _rpa_rebuild_fixture(src, image_data, filler_count=20_000)
+    # 转换产物要写到 game/images/bg.webp，转换前目标目录必须存在
+    (game / "images").mkdir()
+    script = game / "script.rpy"
+    script.write_text('image bg = "images/bg.png"\n', encoding="utf-8")
+    before = src.read_bytes()
+
+    result = pipeline.run_dist(
+        str(dist), _image_only_options(), str(tmp_path / "work"),
+        str(tmp_path / "out"))
+
+    working_game = Path(result["working_dir"]) / "game"
+    rebuilt = working_game / "archive.rpa"
+    loose = working_game / "images" / "bg.webp"
+    assert src.read_bytes() == before
+    assert rebuilt.read_bytes() == before
+    assert loose.is_file()
+    with Image.open(loose) as im:
+        im.verify()
+    assert 'images/bg.webp' in (working_game / "script.rpy").read_text(
+        encoding="utf-8")
+    arc = rpa.RpaArchive(str(rebuilt))
+    try:
+        assert "images/bg.png" in arc.names()
+        assert "images/bg.webp" not in arc.names()
+        assert arc.read("images/bg.png") == image_data
+    finally:
+        arc.close()
+    assert not list(Path(result["working_dir"]).rglob("*.rtools.tmp"))
+    assert result["saved_bytes"] <= 0
+    assert any("archive.rpa" in w and "未变小" in w
+               for w in result["warnings"])
+    changelog = json.loads(
+        (tmp_path / "out" / "changelog.json").read_text(encoding="utf-8"))
+    assert changelog["saved_bytes"] == result["saved_bytes"]
+    assert not any(r["action"] == "rpa_rebuild"
+                   for r in changelog["records"])
+
+
+def test_dist_rpa_rebuild_saved_matches_archive_delta(tmp_path):
+    """重建成功时 saved 必须按封包实际净变化记账，而非资产收益之和。"""
+    from PIL import Image
+
+    dist = tmp_path / "Game-pc"
+    game = dist / "game"
+    game.mkdir(parents=True)
+    image = tmp_path / "bg.png"
+    # 未优化的渐变图：同名压缩能确定省下字节，重建后封包才会变小
+    Image.linear_gradient("L").resize((800, 800)).convert("RGB").save(
+        image, "PNG", optimize=False)
+    src = game / "archive.rpa"
+    _rpa_rebuild_fixture(src, image.read_bytes())
+    before = src.stat().st_size
+
+    result = pipeline.run_dist(
+        str(dist), _image_only_options(), str(tmp_path / "work"),
+        str(tmp_path / "out"))
+
+    rebuilt = Path(result["working_dir"]) / "game" / "archive.rpa"
+    actual_saved = before - rebuilt.stat().st_size
+    assert actual_saved > 0
+    assert result["saved_bytes"] == actual_saved
+    changelog = json.loads(
+        (tmp_path / "out" / "changelog.json").read_text(encoding="utf-8"))
+    assert changelog["saved_bytes"] == actual_saved
+    assert any(r["action"] == "rpa_rebuild" for r in changelog["records"])
 
 
 def test_rpa_rejects_non_archive(tmp_path):
