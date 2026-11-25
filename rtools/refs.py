@@ -161,7 +161,6 @@ class RefIndex:
         返回修改记录（每个脚本文件一条，含改动数；逐行明细在 detail 里）。
         """
         records: list[ChangeRecord] = []
-        # 长路径优先，避免 "bg.png" 先替换掉 "images/bg.png" 的一部分
         normalized = {self._normalize(old): self._normalize(new)
                       for old, new in mapping.items()}
         # 长路径优先，避免短名先替换掉长路径的一部分
