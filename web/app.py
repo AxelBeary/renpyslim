@@ -53,7 +53,9 @@ async def guard_local_only(request: Request, call_next):
         return JSONResponse({"ok": False, "error": "非本机请求，已拒绝"},
                             status_code=403)
     # Origin 头只要存在就必须能解析出本机主机名：空串、"null"、
-    # 非法值一律拒绝（旧版解析不出主机就放行，可被绕过）
+    # 非法值一律拒绝（旧版解析不出主机就放行，可被绕过）。
+    # 不全局强制 Origin：普通本机 GET（地址栏导航、资源请求）可以没有它；
+    # /api/browse 这类特权动作另行核对 Fetch Metadata。
     if "origin" in request.headers:
         from urllib.parse import urlparse
         origin = request.headers.get("origin", "")
@@ -110,7 +112,9 @@ JOBS_LOCK = threading.Lock()
 # 只读分析不产出文件，不参与排队，随时可并发跑。
 _JOB_TASKS: dict[str, callable] = {}   # 排队中任务的可执行体，开跑时弹出
 _QUEUE: deque[str] = deque()           # 排队任务编号，先进先出
-_QUEUE_LOCK = threading.Lock()
+# 队列状态与 JOBS 状态必须按 _QUEUE_LOCK → JOBS_LOCK 的顺序获取。
+# 可重入是为了调度临界区内的确定性取消探针同步调用取消接口时不自锁。
+_QUEUE_LOCK = threading.RLock()
 _RUNNING = {"id": None}                # 当前正在跑的重任务编号
 
 # 任务历史心跳：jobstore 靠“心跳时间 + 进程判活”识别遗留任务，
@@ -259,23 +263,29 @@ def _scheduler_loop():
         if _RUNNING["id"] is not None:
             return   # 已有任务在跑（可能是唤醒间隙新提交的），让位
         job_id = None
+        fn = None
         while _QUEUE:
             cand = _QUEUE.popleft()
             with JOBS_LOCK:
                 job = JOBS.get(cand)
-            if job and job["status"] == "queued":
+                queued = bool(job and job["status"] == "queued")
+            if not queued:
+                _JOB_TASKS.pop(cand, None)   # 排队时被取消的，丢弃
+                continue
+            fn = _JOB_TASKS.pop(cand)
+            # 出队后再次核对：取消可能已在同一临界区内把状态改成
+            # canceled。只有 queued → running 这一步成功才点火，避免
+            # 已取消任务仍执行并被 wrapper 的 done 覆盖。
+            with JOBS_LOCK:
+                job = JOBS.get(cand)
+                if not job or job["status"] != "queued":
+                    continue
+                job["status"] = "running"
+                _RUNNING["id"] = cand
                 job_id = cand
                 break
-            _JOB_TASKS.pop(cand, None)   # 排队时被取消的，丢弃
-        if not job_id:
-            _RUNNING["id"] = None
-            return
-        _RUNNING["id"] = job_id
-        fn = _JOB_TASKS.pop(job_id)
-        with JOBS_LOCK:
-            job = JOBS.get(job_id)
-            if job and job["status"] == "queued":
-                job["status"] = "running"
+    if job_id is None:
+        return
     _run_in_thread(job_id, fn)
 
 
@@ -802,17 +812,28 @@ def api_job(job_id: str, since: int = 0):
 @app.post("/api/job/{job_id}/cancel")
 def api_job_cancel(job_id: str):
     queued_error: Optional[str] = None
-    with JOBS_LOCK:
-        job = JOBS.get(job_id)
-        if not job:
-            return JSONResponse({"ok": False, "error": "任务不存在"})
-        if job["status"] == "queued":
-            # 还在排队：直接退队，调度器见到非 queued 状态会自动跳过
-            job["status"] = "canceled"
-            job["error"] = "用户已取消（任务尚未开始）。"
-            queued_error = job["error"]
-        else:
-            job["cancel"] = True
+    # 与调度器共用队列锁，固定 _QUEUE_LOCK → JOBS_LOCK 锁序：排队取消
+    # 与 queued → running 的状态转换必须二选一，不能 canceled 后再点火。
+    with _QUEUE_LOCK:
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if not job:
+                return JSONResponse({"ok": False, "error": "任务不存在"})
+            if job["status"] == "queued":
+                # 还在排队：直接退队，调度器见到非 queued 状态会自动跳过
+                job["status"] = "canceled"
+                job["error"] = "用户已取消（任务尚未开始）。"
+                queued_error = job["error"]
+            else:
+                job["cancel"] = True
+        if queued_error is not None:
+            # 调度器可能刚弹出队首但尚未转换状态；同一把队列锁保证
+            # 此处要么移除仍在队列里的条目，要么让调度器重新核对后跳过。
+            _JOB_TASKS.pop(job_id, None)
+            try:
+                _QUEUE.remove(job_id)
+            except ValueError:
+                pass
     # 排队任务不会进 _run_in_thread，历史收尾要在这里补；
     # 写盘放在 JOBS_LOCK 外，失败只记警告
     if queued_error is not None:
@@ -1007,8 +1028,13 @@ def api_reveal(req: RevealReq):
 
 
 @app.get("/api/browse")
-def api_browse(kind: str = "file"):
+def api_browse(request: Request, kind: str = "file"):
     """在服务端弹出原生文件/文件夹选择框（本机工具的特权，网页做不到）。"""
+    # 跨站 GET 可以不带 Origin，但仍会携带 Fetch Metadata。只在这个
+    # 特权接口拒绝 cross-site，不破坏普通本机 GET 的无 Origin 用法。
+    if request.headers.get("sec-fetch-site", "").strip().lower() == "cross-site":
+        return JSONResponse({"ok": False, "error": "非本机来源，已拒绝"},
+                            status_code=403)
     token = _browse_try_acquire()
     if token is None:
         return JSONResponse({"ok": False,

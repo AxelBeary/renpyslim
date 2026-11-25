@@ -9,6 +9,7 @@ import time
 import pytest
 
 import web.app as app_mod
+from rtools import jobstore
 from web.app import JOBS, JOBS_LOCK, _dispatch_job, _new_job
 
 try:
@@ -84,6 +85,52 @@ def test_cancel_queued_job_skipped():
     time.sleep(0.3)                          # 给调度器跳过 j2 的时间
     assert _status(j2) == "canceled"
     assert app_mod._RUNNING["id"] is None    # 队列清空后收工
+
+
+def test_cancel_during_scheduler_dequeue_never_starts_task(monkeypatch):
+    """确定性复现：调度器出队后取消，任务不能执行也不能覆盖 canceled。"""
+    gate = threading.Event()
+    ran = threading.Event()
+    observations = {}
+
+    j1 = _new_job("optimize")
+    _dispatch_job(j1, lambda: gate.wait(5))
+    j2 = _new_job("slimapk")
+    _dispatch_job(j2, lambda: ran.set() or {"output": "should-not-exist"})
+
+    class CancelOnPop(dict):
+        triggered = False
+
+        def pop(self, key, *default):
+            value = super().pop(key, *default)
+            if key == j2 and not self.triggered:
+                self.triggered = True
+                # 精确放在调度器第一次 queued 检查之后、状态转换之前。
+                observations["before"] = _status(j2)
+                observations["response"] = app_mod.api_job_cancel(j2)
+                observations["after"] = _status(j2)
+            return value
+
+    monkeypatch.setattr(app_mod, "_JOB_TASKS", CancelOnPop(app_mod._JOB_TASKS))
+    try:
+        gate.set()
+        assert _wait(lambda: _status(j1) == "done")
+        assert _wait(lambda: _status(j2) == "canceled")
+        assert observations == {
+            "before": "queued", "response": {"ok": True}, "after": "canceled",
+        }
+        assert not ran.is_set()
+        assert JOBS[j2]["result"] is None
+        with app_mod._QUEUE_LOCK:
+            assert j2 not in app_mod._JOB_TASKS
+            assert j2 not in app_mod._QUEUE
+            assert app_mod._RUNNING["id"] is None
+        record = next(j for j in jobstore.list_jobs(50) if j["id"] == j2)
+        assert record["status"] == "canceled"
+    finally:
+        gate.set()
+        assert _wait(lambda: _status(j1) in ("done", "error", "canceled")
+                     and app_mod._RUNNING["id"] is None)
 
 
 def test_error_finish_still_advances_queue():
