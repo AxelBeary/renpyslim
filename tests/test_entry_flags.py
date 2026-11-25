@@ -102,3 +102,28 @@ def test_release_workflow_uploads_both_exes():
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
     assert "RenPySlim.exe" in workflow
     assert "RenPySlim-cli.exe" in workflow, "release.yml 没有上传控制台版 CLI exe"
+
+
+@pytest.mark.parametrize("value", ["70000", "-1", "0"])
+def test_pick_port_rejects_out_of_range_values(value, monkeypatch):
+    sys.path.insert(0, str(ROOT))
+    try:
+        import main as entry
+    finally:
+        sys.path.pop(0)
+
+    monkeypatch.setenv("RENPYTOOLS_PORT", value)
+    monkeypatch.setattr(entry, "_port_free", lambda port: port == entry.DEFAULT_PORT)
+    assert entry._pick_port() == entry.DEFAULT_PORT
+
+
+def test_runtime_port_out_of_range_is_ignored(monkeypatch):
+    sys.path.insert(0, str(ROOT))
+    try:
+        import main as entry
+    finally:
+        sys.path.pop(0)
+
+    assert entry._port_alive(70000) is False
+    monkeypatch.setattr(entry.runtime, "read_port", lambda: 70000)
+    assert entry._running_instance_port() is None

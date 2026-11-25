@@ -129,6 +129,8 @@ HOST = "127.0.0.1"
 
 
 def _port_free(port: int) -> bool:
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        return False
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind((HOST, port))
@@ -138,6 +140,8 @@ def _port_free(port: int) -> bool:
 
 
 def _port_alive(port: int) -> bool:
+    if not isinstance(port, int) or isinstance(port, bool) or not 1 <= port <= 65535:
+        return False
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         s.settimeout(1)
         try:
@@ -151,6 +155,8 @@ def _pick_port() -> int:
     try:
         preferred = int(os.environ.get("RENPYTOOLS_PORT", "") or DEFAULT_PORT)
     except ValueError:
+        preferred = DEFAULT_PORT
+    if not 1 <= preferred <= 65535:
         preferred = DEFAULT_PORT
     if _port_free(preferred):
         return preferred
