@@ -1,20 +1,26 @@
 """官方 SDK 打包调度：所有打包都委托给 Ren'Py 官方程序，绝不自制。
 
 已核实的官方命令（Ren'Py 8.x，见 SDK launcher/game/distribute.rpy 与 android.rpy）：
-- PC/Mac 发布包：  renpy.exe launcher distribute <工程路径> [--package 名] [--destination 目录]
-- Android APK：   renpy.exe launcher android_build <工程路径> [--destination 目录]
+- PC/Mac 发布包：  renpy.exe|renpy.sh launcher distribute <工程路径> [--package 名] [--destination 目录]
+- Android APK：   renpy.exe|renpy.sh launcher android_build <工程路径> [--destination 目录]
 """
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import time
 from pathlib import Path
 from typing import Optional
 
+from . import archives as archives_mod
+from . import sdk as sdk_mod
 from .procutil import run_quiet
 
+# 归档后缀识别走 archives.archive_suffix：.tar.bz2 这类双后缀必须按最长匹配，
+# Path.suffix 只会给出 .bz2。打包产物清单按同一口径判定，
+# 避免“产物明明生成了却不计数”（v0.18.0 / issue #26）。
 CONFIG_DIR = Path.home() / ".renpytools"
 CONFIG_FILE = CONFIG_DIR / "config.json"
 
@@ -139,22 +145,34 @@ def save_config(cfg: dict) -> None:
 
 def find_sdk(explicit: Optional[str] = None) -> Optional[str]:
     """定位 Ren'Py SDK：用户指定 > 配置文件 > 常见安装位置。"""
-    if explicit and (Path(explicit) / "renpy.exe").exists():
+    if explicit and sdk_mod.is_sdk_dir(explicit):
         _remember_sdk(explicit)
         return explicit
 
     cfg = load_config()
     remembered = cfg.get("sdk_path")
-    if remembered and (Path(remembered) / "renpy.exe").exists():
+    if remembered and sdk_mod.is_sdk_dir(remembered):
         return remembered
 
-    guesses = [
-        Path.home() / "renpy",
-        Path("C:/renpy"), Path("D:/renpy"), Path("E:/renpy"),
-        Path.home() / "Desktop" / "renpy",
-    ]
+    # 常见位置按平台给：Windows 的老猜测列表在 POSIX 上毫无意义，
+    # 反过来 Linux 的 ~/renpy 之类也不该塞进 Windows 的搜索顺序里。
+    if os.name == "nt":
+        guesses = [
+            Path.home() / "renpy",
+            Path("C:/renpy"), Path("D:/renpy"), Path("E:/renpy"),
+            Path.home() / "Desktop" / "renpy",
+        ]
+    else:
+        guesses = [
+            Path.home() / "renpy",
+            Path.home() / "renpy-sdk",
+            Path.home() / "Desktop" / "renpy",
+            Path.home() / "Applications" / "renpy",
+            Path("/opt/renpy"),
+            Path("/usr/local/renpy"),
+        ]
     for g in guesses:
-        if (g / "renpy.exe").exists():
+        if sdk_mod.is_sdk_dir(str(g)):
             _remember_sdk(str(g))
             return str(g)
     return None
@@ -167,8 +185,11 @@ def _remember_sdk(path: str) -> None:
 
 
 def sdk_version(sdk: str) -> str:
+    launcher = sdk_mod.find_launcher(sdk)
+    if not launcher:
+        return "未知版本"
     try:
-        out = subprocess.run([str(Path(sdk) / "renpy.exe"), "--version"],
+        out = subprocess.run([launcher, "--version"],
                              capture_output=True, timeout=60)
         return out.stdout.decode("utf-8", "replace").strip().splitlines()[0]
     except Exception:
@@ -210,9 +231,7 @@ def package_project(sdk: str, project_dir: str, platforms: list[str],
     platforms = validate_platforms(platforms)
     sdk = str(Path(sdk).resolve())
     project_dir = str(Path(project_dir).resolve())
-    renpy_exe = str(Path(sdk) / "renpy.exe")
-    if not Path(renpy_exe).exists():
-        raise FileNotFoundError(f"SDK 里找不到 renpy.exe：{renpy_exe}")
+    renpy_exe = sdk_mod.require_launcher(sdk)
 
     dest = str(Path(destination).resolve()) if destination \
         else str(Path(project_dir).parent / "dist-output")
@@ -306,7 +325,12 @@ def package_project(sdk: str, project_dir: str, platforms: list[str],
     artifacts = []
     if dest_p.exists():
         for f in sorted(dest_p.iterdir()):
-            if f.is_file() and f.suffix in (".zip", ".bz2", ".apk", ".aab", ".dmg"):
+            # v0.18.0：Linux 官方发布包是 .tar.bz2（部分平台给 .tgz/.tar.gz），
+            # 旧版只认 .zip/.bz2 名字，Linux 产物会不计数。按最长后缀认。
+            if f.is_file() and (
+                    archives_mod.archive_suffix(f.name)
+                    in (".zip", ".tar.bz2", ".tbz2", ".tgz", ".tar.gz",
+                        ".tar.xz", ".tar", ".apk", ".aab", ".dmg")):
                 stat = f.stat()
                 old_mtime = before.get(f.name)
                 # 新文件必报；同名文件只有 mtime 变大（或落在本次打包时间窗内，

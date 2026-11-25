@@ -1,0 +1,78 @@
+# Ubuntu 定向体检（issue #26 第一阶段：Linux 源码运行 + 本地 Web GUI）
+# Windows 主流程仍由 ci.yml 覆盖；这里是"非 Windows 不能坏"的护栏。
+name: CI (Linux)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 = Ubuntu 24.04 系统解释器（issue 报告者实测的环境）
+        # 3.13 = 与 Windows CI 对齐的上限，提前发现新语法/新行为问题
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v7
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        # 口径与 ci.yml 一致：装最新解析版当上游预警，不锁 lock。
+        run: pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Dependency graph check
+        run: python -m pip check
+
+      - name: Static check (real errors only)
+        run: ruff check --select F,E9 --exclude rtools/vendor rtools web cli.py main.py tests
+
+      # 无头环境（没有 DISPLAY）正好覆盖 issue 里的验收项：
+      # "无 DISPLAY 环境下服务仍可启动"
+      - name: Run regression tests (headless)
+        run: python -m pytest tests -q
+
+      # 冒烟：CLI 契约在 Linux 上必须与 Windows 同形（JSON 走 stdout）
+      - name: CLI smoke test
+        run: |
+          python cli.py --version
+          python cli.py env > env.json
+          python - <<'PY'
+          import json
+          data = json.load(open("env.json", encoding="utf-8"))
+          assert data["ok"] is True, data
+          # 契约：结果 JSON 顶层有 ok，环境明细在 environment 下
+          # （不能断言 sdk_path 在顶层——那是写错位置就会红的坑）
+          env = data["environment"]
+          for key in ("sdk_path", "sdk_version", "ffmpeg", "java",
+                      "rapt", "android_ready"):
+              assert key in env, (key, env)
+          print("env JSON ok:", sorted(env))
+          PY
+
+      # Web 服务在无图形会话下必须能起来，且 /api/env 正常返回
+      - name: Web starts headless
+        run: |
+          python -m uvicorn web.app:app --host 127.0.0.1 --port 5959 &
+          SERVER=$!
+          for i in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:5959/api/env -o env_web.json; then break; fi
+            sleep 0.5
+          done
+          python - <<'PY'
+          import json
+          data = json.load(open("env_web.json", encoding="utf-8"))
+          assert data["ok"] is True, data
+          assert "environment" in data, data
+          print("web /api/env ok")
+          PY
+          kill $SERVER

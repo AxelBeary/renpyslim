@@ -1601,11 +1601,17 @@ def run_dist_smart(path: str, options: OptimizeOptions,
                 f"（目标目录可能被其他程序占用）：{e}") from e
         result["working_dir"] = str(target)
 
-    # 瘦身后的成品重新打包；输出 zip 用原始压缩包名，好认
+    # 瘦身后的成品重新打包；输出沿用输入的压缩包格式与名字，好认
+    # v0.18.0（issue #26）：Linux 官方发布包默认是 .tar.bz2，旧版一律回成
+    # zip，等于把用户的东西换了壳。现在按 _archive_suffix 还回同格式；
+    # 格式拿不准（不认识的组合）时仍回 zip——zip 兼容性最好，是安全默认。
     _check_cancel(cancel)
-    p.emit("repack", "正在把瘦身成品重新打包成 zip……", code="repack_start")
-    out_zip = str(Path(output_dir) / f"{src_name}-瘦身版.zip")
-    archives.create_zip(result["working_dir"], out_zip)
+    in_suffix = archives.archive_suffix(path)
+    out_suffix = in_suffix if in_suffix else ".zip"
+    p.emit("repack", f"正在把瘦身成品重新打包成 {out_suffix}……",
+           code="repack_start", params={"ext": out_suffix})
+    out_zip = str(Path(output_dir) / f"{src_name}-瘦身版{out_suffix}")
+    archives.create_archive(result["working_dir"], out_zip)
     result["archive_output"] = out_zip
     result["archive_input"] = path
     # 审核修复（中-6）：回包成功后解压目录不再需要——不清理的话

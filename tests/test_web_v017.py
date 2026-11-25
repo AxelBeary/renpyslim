@@ -195,7 +195,9 @@ def test_reveal_failure_reports_generic_error(client, tmp_path, monkeypatch):
     monkeypatch.setattr(app_mod, "_open_in_explorer", boom)
     data = client.post("/api/reveal", json={"path": str(tmp_path)}).json()
     assert data["ok"] is False
-    assert "资源管理器" in data["error"]
+    # v0.18.0：文案按平台走（Windows 资源管理器 / macOS 访达 / Linux 文件管理器），
+    # 断言与实现同源，不再把 Windows 的说法写死进跨平台测试。
+    assert app_mod._DESKTOP_NAME in data["error"]
     # 异常细节只进服务端日志，不回传前端
     assert "explorer 挂了" not in data["error"]
 

@@ -599,7 +599,8 @@ def main(argv=None) -> int:
     p.add_argument("path")
     p.add_argument("--mode", choices=["project", "dist", "apk"], default=None)
     # 审核修复：--work-root 从未被 analyze 使用，死参数移除。
-    p.add_argument("--password", default=None, help="压缩包密码（如有）")
+    p.add_argument("--password", default=None,
+                   help="压缩包密码（如有；zip/7z 支持，tar 系无密码）")
     p.set_defaults(func=cmd_analyze)
 
     for name, func, help_ in (("optimize", cmd_optimize, "优化资源"),
@@ -636,7 +637,9 @@ def main(argv=None) -> int:
         p.add_argument("--extra-chars", default="", help="字体瘦身手动追加字符")
         p.add_argument("--fullwidth", action="store_true", help="保底集加全角符号")
         p.add_argument("--kana", action="store_true", help="保底集加日文假名")
-        p.add_argument("--password", default=None, help="压缩包密码（成品瘦身直接输压缩包时用）")
+        p.add_argument("--password", default=None,
+                       help="压缩包密码（成品瘦身直接输压缩包时用；"
+                            "zip/7z 支持，tar 系无密码）")
         if name == "full":
             p.add_argument("--platforms", default="pc")
             p.add_argument("--destination", default=None)

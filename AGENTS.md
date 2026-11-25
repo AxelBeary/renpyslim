@@ -9,7 +9,9 @@
 
 ## 关键事实（先读这个）
 
-- RenPySlim 是 Windows 专属工具（Ren'Py 游戏资源瘦身 + 打包），**无 Linux/macOS 支持**。
+- RenPySlim 以 **Windows 为一等公民**（发行版 exe 只有 Windows 一份），
+  **Linux 源码运行已支持**（issue #26 第一阶段，详见下节「Linux / macOS 源码运行」）；
+  macOS 尚未验证，二进制分发只认 Windows。
 - 有两个入口：图形界面（本地网页 127.0.0.1）和无头 CLI。**Agent 一律用无头 CLI，不要操作图形界面。**
 - 无头入口：仓库根目录的 `cli.py`（Python 源码方式运行）。
 - 发行版 exe 也认命令行：`RenPySlim.exe --version` / `--help` / `<子命令>`
@@ -40,13 +42,64 @@ FFmpeg（音频/视频）、Java JDK（安卓）。先跑一次体检确认环�
 python cli.py env [--sdk SDK路径]
 ```
 
+## Linux / macOS 源码运行
+
+> 口径：**Windows 是一等公民，Linux 源码运行已支持**（issue #26 第一阶段）。
+> 发行版 exe 仍然只有 Windows 一份；macOS 只做了代码层的通用化，**未在真机验证**。
+> 别把本节读成"全平台支持"。
+
+在 Linux / WSL Ubuntu 上按上面的「运行方式」装依赖、跑 `python cli.py ...` 即可。
+为了让它真的跑得起来，这一批改的是下面 7 处：
+
+1. **SDK 启动器统一解析**（`rtools/sdk.py`）：`renpy.exe`（Windows）与 `renpy.sh`
+   （Linux/macOS）都认，候选顺序固定、Windows 行为零变化。lint、distribute、
+   android_build、APK remap 全部走同一个入口，不再各写一套路径拼接；
+   `renpy.sh` 缺执行位时给出 `chmod +x <路径>` 的明确提示，而不是含糊的"找不到 SDK"。
+2. **Web 本地路径校验支持 POSIX**（`web/app.py::_local_path`）：旧版只靠盘符判定，
+   Linux 上所有绝对路径都被拒（Web 的文件类接口等于全废）。现在 POSIX 分支以 `/`
+   为根，相对路径 / NUL / 网络路径照旧拒绝，安全语义与 Windows 分支一致。
+3. **打开产物目录跨平台**（`/api/reveal`）：macOS 用 `open -R`（定位选中）/ `open`；
+   Linux 按桌面环境挑 nautilus / dolphin / thunar，再退回 `xdg-open` / `gio open`；
+   没有 `DISPLAY` / `WAYLAND_DISPLAY` 时**明确失败**，不假装成功。
+   提示文案按平台给：资源管理器 / 访达 / 文件管理器。
+4. **压缩包支持 tar 系**（`rtools/archives.py`）：`.tar` / `.tar.bz2` / `.tbz2` /
+   `.tar.gz` / `.tgz` / `.tar.xz`（官方 Linux 发布包默认就是 `.tar.bz2`）。
+   解压按"不信任包内容"的口径：拒绝绝对路径与 `..` 越界、不创建设备文件/FIFO、
+   符号链接与硬链接一律落成普通文件（不创建链接）；保留 Unix 执行位
+   （0755 启动脚本往返仍是 0755）与空目录。**回包格式跟随输入格式**。
+5. **POSIX 进程组终止**（`rtools/procutil.py`）：外部工具以独立会话启动，超时/取消时
+   对整个进程组 SIGTERM → 宽限期 → SIGKILL，不再遗留 `renpy.sh`→python、
+   `gradle`→java 这类孙进程继续占管道占文件。Windows 侧仍走 `taskkill /T`，行为不变。
+6. **Android 工具链 POSIX 发现**（`rtools/apk.py`）：build-tools 里认无后缀的
+   `zipalign` / `apksigner`（原来只认 `.exe` / `.bat`），`keytool` 会在
+   `/usr/lib/jvm` 等 JDK 安装位里找。
+7. **新增 Ubuntu CI**（`.github/workflows/ci-linux.yml`）：Python 3.12 与 3.13 矩阵，
+   跑 `pip check` / ruff / 全量 pytest / CLI 冒烟 / 无头 Web 启动（无 DISPLAY，
+   正好覆盖"没有图形会话也能起来"这条验收）。
+
+验证口径：新增 `tests/test_posix_support.py` 与 `tests/test_archives_tar.py`；
+Windows 与 WSL Ubuntu 双平台跑通（数量以 `pytest tests -q` 实际收集为准）。
+注意本机 WSL 若没装 node，三条 `node --check` 前端语法闸会 skip，并触发
+`tests/conftest.py` 的"未登记外部依赖跳过"守卫以退出码 1 收尾——
+那不是测试失败；stdout 里 `passed / failed` 计数才是判据。
+
+**已知边界（不要夸大）**
+
+- **macOS 二进制/签名公证、Linux AppImage/可执行包分发没有做**，issue 里也列为后续里程碑。
+  真实可用的分发形态仍只有 Windows exe（官方 Ren'Py 的 exe 形态）。
+- **分发打包（`full` / `package`）只打通了调用路径**：现在能识别官方 Linux SDK 的
+  `renpy.sh` 并正确拼接命令，但**没有在装有官方 SDK 的真实 Linux 机器上实跑过打包**。
+  要说"Linux 上能打包"，得先在一台装了官方 Linux SDK 的机器上验证一遍。
+- **Web GUI 无桌面环境可启动、接口可用**，但没有图形会话时"打开目录/定位文件"按钮
+  会返回明确失败提示（这是设计如此，不是坏掉）。
+
 ## 命令速查
 
 | 命令 | 用途 | 示例 |
 |---|---|---|
 | `env` | 环境体检 | `python cli.py env` |
-| `analyze` | 只读分析，出报告（.apk 自动预分析） | `python cli.py analyze <路径或.apk>` |
-| `optimize` | 瘦身优化 | `python cli.py optimize <路径> --preset balanced` |
+| `analyze` | 只读分析，出报告（.apk 自动预分析；压缩包按成品处理） | `python cli.py analyze <路径或.apk>` |
+| `optimize` | 瘦身优化 | `python cli.py optimize <路径或 .tar.bz2/.tgz/...> --preset balanced` |
 | `full` | 优化 + SDK 打包一条龙 | `python cli.py full <工程路径> --platforms pc,mac` |
 | `package` | 只打包（需 SDK） | `python cli.py package <工程路径> --platforms pc` |
 | `slimapk` | APK 瘦身 + 重签名 | `python cli.py slimapk <apk> --remap --gen-key` |
@@ -64,8 +117,11 @@ python cli.py env [--sdk SDK路径]
   汇总：`apk_size` / `total_entries` / `optimizable` / `size` / `script_count` /
   `signed` / `est_saving` / `est_saving_remap` / `remap_gain` / `has_renpy_layout`。
   对非 APK 路径传 `--mode apk` 会直接失败。
-- 直接输入 zip/7z/RAR 压缩包也可以（成品瘦身直进直出）；压缩包一律按成品（`dist`）处理，
-  显式传 `--mode project` 会打警告但仍走 `dist`。有密码就加 `--password`。
+- 直接输入 zip/7z/RAR 压缩包也可以（成品瘦身直进直出），tar 系同样认：
+  `.tar` / `.tar.bz2` / `.tbz2` / `.tar.gz` / `.tgz` / `.tar.xz`（官方 Linux 发布包
+  默认就是 `.tar.bz2`）。压缩包一律按成品（`dist`）处理，显式传 `--mode project`
+  会打警告但仍走 `dist`。有密码就加 `--password`（tar 不存在加密，该参数对它无意义）。
+  瘦身后的回包**跟随输入格式**：进来是 zip 回 zip，进来是 `.tar.bz2` 回 `.tar.bz2`。
 - `--platforms` 非空校验：`full` / `package` 的平台列表为空或含未知平台时，在查找 SDK、
   建工作目录、跑优化之前就报错（合法值：`pc` / `win` / `linux` / `mac` / `android`）。
 - `--preset` 三档：`conservative`（默认，画质优先）/ `balanced`（均衡）/ `aggressive`（体积优先）。
@@ -129,7 +185,8 @@ python cli.py env [--sdk SDK路径]
 |---|---|
 | 从源码启动提示缺依赖 | 工具会自检并点名缺哪个包；先 `pip install -r requirements.txt`（改代码再加 `-r requirements-dev.txt`）再重试（exe 版无此问题） |
 | `找不到 Ren'Py SDK` | 用 `--sdk` 指定 SDK 目录，或先 `env` 体检 |
-| 压缩包解不开 | 确认是否需要 `--password`；RAR 需要系统装有 unrar 类工具时看报错提示 |
+| 压缩包解不开 | 确认是否需要 `--password`；RAR 需要系统装有 unrar 类工具时看报错提示；tar 系不需要密码 |
+| `renpy.sh 没有执行权限` | 按提示跑 `chmod +x <SDK目录>/renpy.sh`（从 Windows 盘 / 备份里解出来的 SDK 常丢执行位） |
 | 音频没变小 | 检查 FFmpeg 是否在 PATH（`env` 可见） |
 | `磁盘空间不足` 报错 | 预检已给出所需/可用空间；清理目标磁盘，或用 `--work-root` / `--output` 指到空间充足的磁盘后重试（仅 `optimize` / `full` 支持这两个参数；`analyze` / `slimapk` 请清理空间或换盘） |
 | JSON 里中文乱码 | 是终端编码问题，不是工具问题；stdout 本身是 UTF-8 |
@@ -145,8 +202,10 @@ python cli.py env [--sdk SDK路径]
 
 ## Key facts (read first)
 
-- RenPySlim is a **Windows-only** tool (Ren'Py game asset slimming + packaging).
-  No Linux/macOS support.
+- RenPySlim treats **Windows as first-class** (the released exe is Windows-only),
+  and **running from source on Linux is supported** (issue #26, first milestone —
+  see "Running from source on Linux / macOS" below); macOS is unverified, and
+  binary distribution remains Windows-only.
 - Two entry points exist: a local web GUI and a headless CLI.
   **Agents must use the headless CLI only; never drive the GUI.**
 - Headless entry: `cli.py` at the repository root (run from source).
@@ -183,13 +242,80 @@ Check the environment first:
 python cli.py env [--sdk PATH_TO_SDK]
 ```
 
+## Running from source on Linux / macOS
+
+> Scope: **Windows stays first-class; running from source on Linux is supported**
+> (issue #26, first milestone). The released exe is still Windows-only; macOS has only
+> been made code-portable and is **not verified on real hardware**. Do not read this
+> section as "supports every platform".
+
+On Linux / WSL Ubuntu, install dependencies and run `python cli.py ...` exactly as in
+"Running" above. What this batch changed so that it actually works:
+
+1. **Unified SDK launcher resolution** (`rtools/sdk.py`): both `renpy.exe` (Windows)
+   and `renpy.sh` (Linux/macOS) are recognised, with a fixed candidate order so
+   Windows behaviour is unchanged. lint, distribute, android_build and APK remap all
+   go through this one entry point instead of each building its own path; a
+   non-executable `renpy.sh` produces an explicit `chmod +x <path>` hint instead of a
+   vague "SDK not found".
+2. **POSIX-aware local path validation in the Web layer** (`web/app.py::_local_path`):
+   the old code only checked for a drive letter, so on Linux **every** absolute path
+   was rejected (all file endpoints effectively dead). The POSIX branch now treats
+   `/` as the root; relative paths / NUL / network paths are still rejected, with the
+   same safety semantics as the Windows branch.
+3. **Cross-platform "open artifact folder"** (`/api/reveal`): macOS uses
+   `open -R` (reveal and select) / `open`; Linux picks nautilus / dolphin / thunar by
+   desktop environment, then falls back to `xdg-open` / `gio open`. Without
+   `DISPLAY` / `WAYLAND_DISPLAY` it **fails explicitly** instead of pretending to
+   succeed. The wording follows the platform: Explorer / Finder / file manager.
+4. **tar-family archives** (`rtools/archives.py`): `.tar` / `.tar.bz2` / `.tbz2` /
+   `.tar.gz` / `.tgz` / `.tar.xz` (the official Linux release package defaults to
+   `.tar.bz2`). Extraction treats archive contents as untrusted: absolute paths and
+   `..` escapes are rejected, device files / FIFOs are never created, and symlinks /
+   hardlinks are materialised as regular files (no links are created). Unix exec bits
+   survive (a 0755 launcher round-trips as 0755), as do empty directories.
+   **The repacked output keeps the input format.**
+5. **POSIX process-group termination** (`rtools/procutil.py`): external tools are
+   started in their own session; on timeout/cancel the whole process group gets
+   SIGTERM, then SIGKILL after a grace period, so grandchild processes such as
+   `renpy.sh`→python and `gradle`→java no longer survive and keep holding pipes and
+   files. Windows still uses `taskkill /T`, unchanged.
+6. **POSIX Android toolchain discovery** (`rtools/apk.py`): `zipalign` / `apksigner`
+   without a suffix are recognised inside build-tools (previously only `.exe` /
+   `.bat`), and `keytool` is also looked up under `/usr/lib/jvm` and similar JDK
+   install locations.
+7. **New Ubuntu CI** (`.github/workflows/ci-linux.yml`): a Python 3.12 + 3.13 matrix
+   running `pip check` / ruff / the full pytest suite / a CLI smoke test / a headless
+   Web start (no DISPLAY, which is exactly the "starts without a graphical session"
+   acceptance item).
+
+Verification: `tests/test_posix_support.py` and `tests/test_archives_tar.py` were
+added; both Windows and WSL Ubuntu pass (the count is whatever `pytest tests -q`
+actually collects). Note: if the local WSL has no node, the three `node --check`
+frontend syntax gates skip and the "unregistered external skip" guard in
+`tests/conftest.py` ends the session with exit code 1 — that is not a test
+failure; the `passed / failed` counts are the real signal.
+
+**Known limits (do not overstate)**
+
+- **macOS binaries / signing and notarisation, and Linux AppImage / executable-package
+  distribution are not done**; the issue lists them as later milestones. The only real
+  distribution form is still the Windows exe.
+- **Packaging (`full` / `package`) only has its call path wired up**: the official
+  Linux SDK's `renpy.sh` is now recognised and the command is assembled correctly, but
+  packaging **has not been run end-to-end on a real Linux machine with the official
+  SDK**. Claiming "packaging works on Linux" requires that verification first.
+- **The Web GUI starts and its API works without a desktop**, but with no graphical
+  session the open-folder / reveal button returns an explicit failure message. That is
+  by design, not a defect.
+
 ## Command reference
 
 | Command | Purpose | Example |
 |---|---|---|
 | `env` | Environment check | `python cli.py env` |
-| `analyze` | Read-only analysis report (.apk auto pre-analysis) | `python cli.py analyze <path or .apk>` |
-| `optimize` | Slim/optimize assets | `python cli.py optimize <path> --preset balanced` |
+| `analyze` | Read-only analysis report (.apk auto pre-analysis; archives treated as built games) | `python cli.py analyze <path or .apk>` |
+| `optimize` | Slim/optimize assets | `python cli.py optimize <path or .tar.bz2/.tgz/...> --preset balanced` |
 | `full` | Optimize + SDK packaging | `python cli.py full <project> --platforms pc,mac` |
 | `package` | Package only (needs SDK) | `python cli.py package <project> --platforms pc` |
 | `slimapk` | APK slim + re-sign | `python cli.py slimapk <apk> --remap --gen-key` |
@@ -212,8 +338,12 @@ Notes:
   `est_saving_remap` / `remap_gain` / `has_renpy_layout`. Passing
   `--mode apk` for a non-APK path fails immediately.
 - zip/7z/RAR archives are accepted directly and are always treated as a built
-  game (`dist`); passing `--mode project` explicitly only triggers a warning
-  while the run still uses `dist`. Add `--password` if protected.
+  game (`dist`); the tar family is accepted too: `.tar` / `.tar.bz2` / `.tbz2` /
+  `.tar.gz` / `.tgz` / `.tar.xz` (the official Linux release package defaults to
+  `.tar.bz2`). Passing `--mode project` explicitly only triggers a warning while
+  the run still uses `dist`. Add `--password` if protected (tar has no encryption,
+  so the flag is meaningless for it). The repacked output **keeps the input
+  format**: zip in, zip out; `.tar.bz2` in, `.tar.bz2` out.
 - `--platforms` is validated as non-empty: `full` / `package` fail before SDK
   lookup, work-directory creation or optimization when the platform list is
   empty or contains unknown names (valid: `pc` / `win` / `linux` / `mac` /
@@ -298,7 +428,8 @@ commands mirror `.github/workflows/ci.yml` verbatim:
 |---|---|
 | Startup reports missing dependencies | The tool self-checks and names the missing packages; run `pip install -r requirements.txt` first (add `-r requirements-dev.txt` for code work; exe builds never hit this) |
 | `找不到 Ren'Py SDK` | Pass `--sdk <dir>` or run `env` first |
-| Archive won't extract | Check whether `--password` is needed; for RAR, ensure an unrar-compatible tool is installed and follow the error prompt |
+| Archive won't extract | Check whether `--password` is needed; for RAR, ensure an unrar-compatible tool is installed and follow the error prompt; tar has no encryption |
+| `renpy.sh is not executable` | Run `chmod +x <sdk>/renpy.sh` as the message says (SDKs copied from a Windows disk or a backup often lose the exec bit) |
 | Audio unchanged | Ensure FFmpeg is on PATH (visible in `env`) |
 | `磁盘空间不足` / "not enough disk space" | The pre-check reports required vs available; clean that disk, or pass `--work-root` / `--output` pointing at a roomier disk and retry (only `optimize` / `full` accept them; for `analyze` / `slimapk`, clean up or switch drives) |
 | Garbled Chinese in JSON | Terminal encoding issue only; stdout is UTF-8 |

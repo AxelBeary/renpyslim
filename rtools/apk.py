@@ -25,6 +25,7 @@ from typing import Optional
 from . import analyzer as analyzer_mod
 from . import charset as charset_mod
 from . import remap as remap_mod
+from . import sdk as sdk_mod
 from .audio_optimizer import convert_audio, reencode_audio
 from .backup import BackupError, ensure_free_space
 from .config import PRESETS, DEFAULT_PRESET, CharsetOptions
@@ -71,8 +72,8 @@ def game_rel_to_apk_entry(rel: str) -> str:
 
 def compile_remap_rpyc(script_text: str, sdk: str) -> Optional[bytes]:
     """用 SDK 把重映射脚本编译成 rpyc 字节（APK 里只认编译产物）。"""
-    renpy_exe = Path(sdk) / "renpy.exe"
-    if not renpy_exe.exists():
+    renpy_exe = sdk_mod.find_launcher(sdk)
+    if not renpy_exe:
         return None
     proj = Path(tempfile.mkdtemp(prefix="renpyslim_rpyc_"))
     try:
@@ -80,7 +81,7 @@ def compile_remap_rpyc(script_text: str, sdk: str) -> Optional[bytes]:
         game.mkdir()
         (game / remap_mod.REMAP_SCRIPT_NAME).write_text(script_text,
                                                         encoding="utf-8")
-        run_quiet([str(renpy_exe), str(proj), "compile"],
+        run_quiet([renpy_exe, str(proj), "compile"],
                   capture_output=True, timeout=300, cwd=str(sdk))
         rpyc = game / (remap_mod.REMAP_SCRIPT_NAME + "c")
         return rpyc.read_bytes() if rpyc.exists() else None
@@ -88,6 +89,14 @@ def compile_remap_rpyc(script_text: str, sdk: str) -> Optional[bytes]:
         return None
     finally:
         shutil.rmtree(proj, ignore_errors=True)
+
+
+# 同一份 build-tools 里两种命名可能并存（跨平台 SDK 备份很常见），
+# 按“本平台优先”排列：Windows 先找 .exe/.bat，POSIX 先找无后缀版本。
+_ZIPALIGN_NAMES = (("zipalign.exe", "zipalign") if os.name == "nt"
+                   else ("zipalign", "zipalign.exe"))
+_APKSIGNER_NAMES = (("apksigner.bat", "apksigner") if os.name == "nt"
+                    else ("apksigner", "apksigner.bat"))
 
 
 def _bt_version(d: Path) -> Optional[tuple]:
@@ -111,13 +120,18 @@ def find_build_tools(sdk: str) -> tuple[Optional[str], Optional[str]]:
         # 可解析的 (1, 版本元组) 优先；解析失败的 (0, ()) 排最后
         return (1, v) if v is not None else (0, ())
 
+    # build-tools 的产物名按宿主平台不同：Windows 是 zipalign.exe +
+    # apksigner.bat，Linux/macOS 是无后缀的 zipalign + apksigner（shell 脚本）。
+    # 逐版本找“同一目录里两者都齐”的那一份，缺一个就继续往下找。
     versions = sorted((d for d in bt_root.iterdir() if d.is_dir()),
                       key=_key, reverse=True)
     for d in versions:
-        za = d / "zipalign.exe"
-        signer = d / "apksigner.bat"
-        if za.exists() and signer.exists():
-            return str(za), str(signer)
+        zipalign = next((d / n for n in _ZIPALIGN_NAMES if (d / n).exists()),
+                        None)
+        signer = next((d / n for n in _APKSIGNER_NAMES if (d / n).exists()),
+                      None)
+        if zipalign is not None and signer is not None:
+            return str(zipalign), str(signer)
     return None, None
 
 
@@ -179,6 +193,10 @@ def _apksigner_cmd(signer: str) -> list:
     审核修复（中-14）：优先 java -jar 直调——apksigner.bat 由 cmd.exe
     解释命令行，密码/路径含 \" % & 等字符会拆断参数甚至命令注入；
     java -jar 无 shell 层，参数按列表直传。
+
+    POSIX 上同理：build-tools 里的 apksigner 是 shell 脚本，直接执行要
+    依赖它自己的解释器与 shebang；能拿到 java + apksigner.jar 就走直调，
+    一条路径两端一致，换平台不换语义。
     """
     jar = Path(signer).parent / "lib" / "apksigner.jar"
     java = _find_java()
@@ -198,6 +216,16 @@ def find_keytool() -> Optional[str]:
         cand = Path(java_home) / "bin" / name
         if cand.exists():
             return str(cand)
+    if os.name != "nt":
+        # POSIX：按发行版惯例找一遍 JDK 安装位（有 keytool 的就是 JDK，
+        # 光有 jre 不算）。找不到就返回 None，由调用方给“请先装 JDK”的提示。
+        for base in (Path("/usr/lib/jvm"), Path("/usr/java"),
+                     Path("/opt/java"), Path("/opt/jdk")):
+            if base.is_dir():
+                for exe in sorted(base.rglob("keytool")):
+                    if exe.is_file():
+                        return str(exe)
+        return None
     for base in (Path(r"C:\Program Files\Eclipse Adoptium"),
                  Path(r"C:\Program Files\Java"),
                  Path(r"C:\Program Files (x86)\Java")):
@@ -461,7 +489,7 @@ def slim_apk(apk_path: str, preset_name: str,
 
         # 3. 逐个同名优化（开了 remap_convert 则图/音先试换格式）
         remap_usable = remap_convert and bool(sdk) \
-            and (Path(sdk) / "renpy.exe").exists()
+            and sdk_mod.find_launcher(sdk) is not None
         if remap_convert and not remap_usable:
             warnings.append("未找到 Ren'Py SDK，无法编译重映射脚本，"
                             "图片/音频降级为同名压缩。")

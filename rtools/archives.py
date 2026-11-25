@@ -1,9 +1,14 @@
-"""压缩包支持：zip / 7z / RAR 的识别、解压与重新打包。
+"""压缩包支持：zip / 7z / RAR / tar 系的识别、解压与重新打包。
 
 - zip：Python 标准库直接搞定，支持密码
 - 7z：纯 Python 库 py7zr，支持密码
 - RAR：格式不开源，必须借助本机 7-Zip（7z.exe）；找不到时给出明确指引
-重新打包统一输出 zip（兼容性最好）。
+- tar 系（.tar/.tar.bz2/.tbz2/.tar.gz/.tgz/.tar.xz）：官方 Linux 发布包
+  默认就是 .tar.bz2（Issue #26），标准库 tarfile 直接处理；tar 不存在
+  加密，password 对它无意义。解压一律按"不信任包内容"的口径校验，
+  细节见 _extract_tar 的文档字符串
+重新打包默认仍输出 zip（兼容性最好）；需要按后缀出 tar 系时用
+create_archive，它会把 mode 一起写进成员，保证 0755 启动脚本可执行。
 """
 from __future__ import annotations
 
@@ -12,6 +17,7 @@ import logging
 import os
 import shutil
 import stat
+import tarfile
 import zipfile
 from pathlib import Path
 from typing import Optional
@@ -20,15 +26,43 @@ from .procutil import run_quiet
 
 logger = logging.getLogger(__name__)
 
-ARCHIVE_EXTS = {".zip", ".7z", ".rar"}
+# 支持的 tar 系后缀：官方 Linux 发布包的默认格式就是 .tar.bz2（Issue #26）。
+# 长的放前面只是可读性考虑，_archive_suffix 做的是 endswith 匹配。
+_TAR_SUFFIXES = (".tar.bz2", ".tar.gz", ".tar.xz", ".tbz2", ".tgz", ".tar")
+
+ARCHIVE_EXTS = {".zip", ".7z", ".rar", *_TAR_SUFFIXES}
 
 
 class ArchiveError(Exception):
     pass
 
 
+def _archive_suffix(path: str) -> str:
+    """取压缩包后缀（tar 系按最长后缀匹配）。
+
+    为什么不直接用 Path(path).suffix：它只返回最后一段，
+    Path("game.tar.bz2").suffix 是 ".bz2"——直接拿去比对会把官方
+    Linux 发布包当成不认识的格式。这里先试 .tar.bz2 这类双后缀，
+    再退回单后缀；统一转小写，Windows 上 .ZIP / .TAR.GZ 很常见。
+    """
+    name = Path(str(path)).name.lower()
+    for suffix in _TAR_SUFFIXES:      # 双后缀在前，命中即返回
+        if name.endswith(suffix):
+            return suffix
+    return Path(name).suffix
+
+
+def archive_suffix(path: str) -> str:
+    """公开入口：按最长后缀认压缩包格式（返回空串表示认不出）。
+
+    pipeline / packager 也要按后缀认格式（回包沿用输入格式、统计打包
+    产物），它们不该去摸私有名字，所以这里留一个一层转发的公开别名。
+    """
+    return _archive_suffix(path)
+
+
 def is_archive(path: str) -> bool:
-    return Path(path).suffix.lower() in ARCHIVE_EXTS
+    return _archive_suffix(path) in ARCHIVE_EXTS
 
 
 def find_7zip() -> Optional[str]:
@@ -84,11 +118,14 @@ def extract_archive(src: str, dest_dir: str,
 
     密码错误、格式损坏、缺 7-Zip 等情况都抛 ArchiveError，
     错误信息是给最终用户看的人话。
+
+    tar 系走 _extract_tar：tar 格式本身不支持加密，password 参数对
+    它无意义——忽略而不报错（顺手填了给 zip 用的密码不该被拒）。
     """
     src_p = Path(src)
     dest_p = Path(dest_dir)
     dest_p.mkdir(parents=True, exist_ok=True)
-    ext = src_p.suffix.lower()
+    ext = _archive_suffix(str(src_p))
     pwd = password.encode("utf-8") if password else None
 
     try:
@@ -193,6 +230,18 @@ def extract_archive(src: str, dest_dir: str,
                         f"RAR 解压失败。如果这个压缩包有密码，请在高级选项里"
                         f"填写后重试。（{err}）")
                 raise ArchiveError(f"RAR 解压失败（密码错误或文件损坏）：{err}")
+        elif ext in _TAR_SUFFIXES:
+            # 官方 Linux 发布包（.tar.bz2）分支：安全策略全在 _extract_tar 里
+            try:
+                _extract_tar(src, dest_p)
+            except tarfile.FilterError as exc:
+                # 标准库 data 过滤器拦下的条目（穿越 / 绝对路径 / 特殊文件）：
+                # 包内容确实不安全，直接报人话，别交出半个解压结果
+                raise ArchiveError(
+                    f"tar 压缩包里有不安全的条目（{exc}），"
+                    "为避免写到目标目录之外，已中止解压。") from exc
+            except tarfile.TarError as exc:
+                raise ArchiveError(f"tar 压缩包损坏或格式异常：{exc}") from exc
         else:
             raise ArchiveError(f"不支持的压缩包类型：{ext}")
     except ArchiveError:
@@ -302,3 +351,277 @@ def _zip_add_dir(zf: zipfile.ZipFile, dirpath: Path, rel: Path) -> None:
                 has_content = True
     if not has_content:
         zf.writestr(zipfile.ZipInfo(rel.as_posix() + "/"), b"")
+
+
+# ---------------------------------------------------------------------------
+# tar 系：官方 Linux 发布包默认就是 .tar.bz2（Issue #26）
+#
+# 安全口径——tar 成员名由打包方随意书写，一律当不可信数据处理：
+# - 名字是绝对路径、或 realpath 收敛后跑出 dest_dir 的，动手之前就跳过；
+# - 符号链接 / 硬链接一律**不创建链接**，改为把链接目标的内容按普通文件
+#   写出（理由写在 _tar_write_link_as_file 里）；
+# - 设备文件 / FIFO / socket 跳过并告警，绝不按流打开（可能阻塞或写坏系统）；
+# - 3.12+ 会让标准库 data 过滤器再过一层，它拦下的条目跳过并告警；真出错时
+#   的 FilterError 由 extract_archive 转成人话，不交出半个解压结果。
+# ---------------------------------------------------------------------------
+
+def _member_output_path(dest_real: str, name: str) -> Optional[str]:
+    """把 tar 成员名收敛成 dest_dir 内的落地路径；不安全返回 None。
+
+    两道判据缺一不可：
+    1. 名字本身不是绝对路径（含 Windows 的 C:/ 与 UNC）、不带 ".."，
+       也不含 NUL——这些是路径穿越的典型写法；
+    2. 松手用 os.path.realpath 收敛后（解掉 "a/../b"、"./"、"//" 这些
+       花样），结果必须仍在 dest_dir 之内。这里按路径分量比而不是
+       str.startswith：否则 "dest_evil" 这种同前缀的兄弟目录会被放过去。
+       realpath 同时解掉了父目录里已存在的符号链接，防止"包外链接 +
+       包内路径"的组合拳。
+    """
+    if not name or "\x00" in name:
+        return None
+    normalized = name.replace("\\", "/")
+    if normalized.startswith("/") or os.path.isabs(normalized):
+        return None
+    if ".." in normalized.split("/"):
+        return None
+    target = os.path.realpath(os.path.join(dest_real, normalized))
+    if target != dest_real and not target.startswith(dest_real + os.sep):
+        return None
+    return target
+
+
+def _tar_set_mode(path: str, mode: Optional[int], is_dir: bool) -> None:
+    """按 tar 成员的 mode 还原权限位（核心诉求：renpy.sh 解压后仍是 0755）。
+
+    tar 是 Unix 格式，官方 Linux 包的启动脚本 renpy.sh 必须可执行，
+    否则解压出来根本跑不起来；而 zip 存不住 Unix 权限位，这也是
+    Linux 发布包偏爱 tar 的原因。
+
+    只搬权限那 12 位（S_IMODE），不碰文件类型位；目录的 mode 不还原
+    （临时目录得让当前进程继续往里写，保持默认更省事）。
+
+    失败一律静默：Windows 的 os.chmod 只认只读位（S_IWRITE），对 0755
+    可能直接抛错或只生效一半——这不是错误，不该让整次解压失败。
+    """
+    if is_dir or not mode:          # mode 为 None 或极端包里的全 0，跳过
+        return
+    try:
+        os.chmod(path, stat.S_IMODE(mode))
+    except OSError:
+        pass
+
+
+def _tar_link_source(dest_real: str, member: tarfile.TarInfo,
+                     member_path: str) -> Optional[str]:
+    """算出链接成员"指向的内容"在 dest_dir 内的真实路径；不安全返回 None。
+
+    解析规则按 tar 规范：
+    - 符号链接（SYMTYPE）的目标相对**链接所在目录**；
+    - 硬链接（LNKTYPE）的目标相对**包根**。
+
+    解析后同样用 realpath 收敛再确认仍在 dest_dir 之内——安全红线是
+    "绝不跟随链接写到 dest_dir 之外"，读也一样：只从包内读。
+    """
+    link = (member.linkname or "").replace("\\", "/")
+    if not link or link.startswith("/") or os.path.isabs(link):
+        return None
+    base = os.path.dirname(member_path) if member.issym() else dest_real
+    source = os.path.realpath(os.path.join(base, link))
+    if source != dest_real and not source.startswith(dest_real + os.sep):
+        return None
+    return source
+
+
+def _tar_write_link_as_file(tf: tarfile.TarFile, member: tarfile.TarInfo,
+                            member_path: str, dest_real: str) -> bool:
+    """把链接成员按普通文件写出（复制目标内容），返回是否写出。
+
+    策略选择：**不创建链接，改为复制目标内容**，而不是一跳了之。
+    理由：
+    - 安全红线是"绝不跟随链接写到 dest_dir 之外"。复制时我们只从包内
+      已校验过的路径读、写到成员自己（已校验）的名字上，全程不调用
+      os.symlink / os.link，从根上没有"跟随外链写出去"这条路；
+    - 官方 Linux 发布包里带链接是常态（发行流程里给解释器/库做软链），
+      直接跳过会解出缺文件、跑不起来的半成品；复制能保住"能跑"，
+      代价只是多占一份空间；
+    - 硬链接在 Windows 上还要额外权限，复制是唯一跨平台行为一致的选择。
+    目标不在包里或还没解出来（链接排在目标前面）时告警跳过：
+    宁可缺这一项，也不去猜内容。
+    """
+    source = _tar_link_source(dest_real, member, member_path)
+    if source is None:
+        logger.warning("tar 包里的链接 '%s' -> '%s' 指向目标目录之外"
+                       "（或目标为空），已跳过：绝不跟随包外路径读写。",
+                       member.name, member.linkname)
+        return False
+    try:
+        if member.issym():
+            if not os.path.isfile(source):
+                raise OSError("目标不是已解压出来的普通文件")
+            with open(source, "rb") as fsrc, open(member_path, "wb") as fdst:
+                shutil.copyfileobj(fsrc, fdst)
+        else:                       # 硬链接：内容就在包里的另一个成员
+            src_member = tf.getmember(member.linkname)
+            if not src_member.isreg():
+                raise OSError("硬链接目标不是普通文件")
+            fsrc = tf.extractfile(src_member)
+            if fsrc is None:
+                raise OSError("硬链接目标读不出内容")
+            with fsrc, open(member_path, "wb") as fdst:
+                shutil.copyfileobj(fsrc, fdst)
+    except (OSError, KeyError, tarfile.TarError) as exc:
+        logger.warning("tar 包里的链接 '%s' -> '%s' 没能还原内容（%s），"
+                       "已跳过；需要时请从原始压缩包重新解压该文件。",
+                       member.name, member.linkname, exc)
+        return False
+    _tar_set_mode(member_path, member.mode, False)
+    return True
+
+
+def _extract_tar(src: str, dest_dir: Path) -> None:
+    """解压 tar / tar.bz2 / tar.gz / tar.xz 到 dest_dir（策略见本节头部注释）。
+
+    为什么逐成员自己走，而不是一句 tarfile.extractall(filter="data")：
+    data 过滤器是 3.12 才有的（3.11 上回退时照样得手写同样的校验），
+    而且它对链接只要求"目标不许指向包外"，仍会真的把链接创建出来；
+    我们要的是更保守的口径——内容落地成普通文件、绝不创建链接。
+    在 3.12+ 上仍然先让标准库 data 过滤器过一遍（双层校验：它顺带剥掉
+    group/other 写位、清掉属主信息），被它拦下的条目跳过并告警；
+    3.11 没有这个参数（强传只会 TypeError），就只跑我们自己的校验。
+    """
+    dest_real = os.path.realpath(str(dest_dir))
+    with tarfile.open(src, "r:*") as tf:     # "r:*" 让标准库自己嗅探压缩方式
+        supports_filter = hasattr(tarfile, "data_filter")
+        for member in tf:
+            raw_name = member.name
+            if supports_filter:
+                try:
+                    filtered = tarfile.data_filter(member, dest_real)
+                except tarfile.FilterError as exc:
+                    logger.warning(
+                        "tar 包里的条目 '%s' 没通过标准库 data 过滤器（%s），"
+                        "已跳过。", raw_name, exc)
+                    continue
+                if filtered is None:         # 过滤器返回 None 表示整条跳过
+                    continue
+                member = filtered
+            # 路径校验放在任何写盘动作之前：先判后动
+            member_path = _member_output_path(dest_real, raw_name)
+            if member_path is None:
+                logger.warning(
+                    "tar 包里的条目 '%s' 是绝对路径或会写到目标目录之外，"
+                    "已跳过（不创建任何文件）。", raw_name)
+                continue
+            try:
+                if member.isdir():
+                    os.makedirs(member_path, exist_ok=True)
+                elif member.isreg():
+                    parent = os.path.dirname(member_path)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    fsrc = tf.extractfile(member)
+                    if fsrc is None:         # 空成员：照样落一个空文件
+                        Path(member_path).write_bytes(b"")
+                    else:
+                        with fsrc, open(member_path, "wb") as fdst:
+                            shutil.copyfileobj(fsrc, fdst)
+                    _tar_set_mode(member_path, member.mode, False)
+                elif member.issym() or member.islnk():
+                    parent = os.path.dirname(member_path)
+                    if parent:
+                        os.makedirs(parent, exist_ok=True)
+                    _tar_write_link_as_file(tf, member, member_path, dest_real)
+                else:
+                    # 设备文件 / FIFO 等特殊条目：绝不按流打开（可能阻塞或
+                    # 写坏系统）。3.12+ 的 data 过滤器已经拦过一次，3.11 兜底
+                    logger.warning("tar 包里的条目 '%s' 是设备文件 / FIFO 等"
+                                   "特殊条目，已跳过。", raw_name)
+            except (OSError, tarfile.TarError) as exc:
+                logger.warning("tar 包里的条目 '%s' 解压失败（%s），已跳过。",
+                               raw_name, exc)
+
+
+# tar 后缀 -> tarfile 写入模式。放在这里而不是藏进函数里，方便一眼对账
+_TAR_WRITE_MODES = {
+    ".tar": "w",
+    ".tar.bz2": "w:bz2",
+    ".tbz2": "w:bz2",
+    ".tar.gz": "w:gz",
+    ".tgz": "w:gz",
+    ".tar.xz": "w:xz",
+}
+
+
+def create_archive(src_dir: str, dest_archive: str) -> str:
+    """把目录打包成 dest_archive：.zip 走 create_zip，tar 系走 tarfile。
+
+    Issue #26：官方 Linux 发布包就是 .tar.bz2，回包再一律给 zip 会跟用户
+    原来的发布流程对不上（Linux 玩家下下来发现不是 tar.bz2）。这里按后缀
+    分派，认不出的后缀直接报错——不猜。
+
+    tar 系会把源文件权限写进 tar 成员（tarinfo.mode），保证 0755 的启动
+    脚本往返一次还是 0755（zip 格式存不住 Unix 权限位，解出来没有执行位）。
+    链接 / junction 沿用 create_zip 的口径：跳过并告警，不跟随打包。
+    """
+    suffix = _archive_suffix(str(dest_archive))
+    if suffix == ".zip":
+        return create_zip(src_dir, dest_archive)    # zip 行为保持不变
+    if suffix in _TAR_SUFFIXES:
+        return _create_tar(src_dir, dest_archive, suffix)
+    raise ArchiveError(f"不支持的打包格式：{dest_archive}")
+
+
+def _create_tar(src_dir: str, dest_archive: str, suffix: str) -> str:
+    """tar 系打包入口：按后缀选压缩方式，递归加目录。"""
+    src = Path(src_dir)
+    out = Path(dest_archive)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    with tarfile.open(str(out), _TAR_WRITE_MODES[suffix]) as tf:
+        _tar_add_dir(tf, src, Path(src.name))
+    return str(out)
+
+
+def _tar_member_mode(st: os.stat_result) -> int:
+    """把源文件权限搬进 tarinfo.mode。
+
+    Linux/macOS 上老实用 stat 的权限位（0755 的脚本原样搬走）；
+    Windows 上 stat 那一套是假的（恒 0666/0777，没有执行位可言），
+    照搬会让所有文件都"看起来可执行"，所以按 Unix 惯例给 0644 兜底——
+    需要可执行的是脚本，而脚本本来就得在 Unix 上打出来。
+    """
+    if os.name == "nt":
+        return 0o644
+    return stat.S_IMODE(st.st_mode) or 0o644
+
+
+def _tar_add_dir(tf: tarfile.TarFile, dirpath: Path, rel: Path) -> None:
+    """递归把一个目录加入 tar：跳过符号链接/junction，空目录保留条目。
+
+    与 _zip_add_dir 同口径（os.scandir 自行递归，不跟随链接），
+    区别只在于 tar 成员带上 mode/mtime，权限才能往返。
+    """
+    has_content = False
+    with os.scandir(dirpath) as it:
+        for entry in sorted(it, key=lambda e: e.name):
+            if _is_link_or_junction(entry):
+                logger.warning("打包跳过 '%s'：符号链接或 junction，"
+                               "不跟随，避免成环或拷贝范围外内容。", entry.path)
+                continue
+            if entry.is_dir(follow_symlinks=False):
+                _tar_add_dir(tf, Path(entry.path), rel / entry.name)
+                has_content = True
+            elif entry.is_file(follow_symlinks=False):
+                st = entry.stat(follow_symlinks=False)
+                info = tarfile.TarInfo((rel / entry.name).as_posix())
+                info.size = st.st_size
+                info.mode = _tar_member_mode(st)
+                info.mtime = int(st.st_mtime)
+                with open(entry.path, "rb") as fh:
+                    tf.addfile(info, fh)
+                has_content = True
+    if not has_content:
+        # 空目录（或内容全被跳过）：写一个目录成员，解压后仍然存在
+        info = tarfile.TarInfo(rel.as_posix() + "/")
+        info.type = tarfile.DIRTYPE
+        info.mode = 0o755
+        tf.addfile(info)

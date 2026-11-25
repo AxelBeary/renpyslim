@@ -9,6 +9,7 @@ import re
 import subprocess
 from pathlib import Path
 
+from . import sdk as sdk_mod
 from .procutil import run_quiet
 
 # 错误行特征：带 "game/xxx.rpy:行号" 位置前缀。
@@ -37,8 +38,10 @@ def lint_project(sdk: str, project_dir: str, timeout: int = 600) -> dict:
     审核修复（高-1）：所有返回分支统一带 suspects 键，
     超时/异常分支缺键曾让流水线收尾 KeyError 崩溃。
     """
-    renpy_exe = Path(sdk) / "renpy.exe"
-    if not renpy_exe.exists():
+    # v0.18.0：改用统一启动器解析——Linux/macOS 的官方 SDK 只带 renpy.sh，
+    # 旧版写死 renpy.exe 会让非 Windows 永远判“SDK 不可用”。
+    renpy_exe = sdk_mod.find_launcher(sdk)
+    if not renpy_exe:
         return {"ran": False, "ok": False, "summary": "SDK 不可用，跳过验证",
                 "output": "", "suspects": []}
     # 审核补修：lint 以 SDK 目录为工作目录执行，相对路径会被当成
@@ -46,7 +49,7 @@ def lint_project(sdk: str, project_dir: str, timeout: int = 600) -> dict:
     # 一律转绝对路径再传入
     project_dir = str(Path(project_dir).resolve())
     try:
-        proc = run_quiet([str(renpy_exe), project_dir, "lint"],
+        proc = run_quiet([renpy_exe, project_dir, "lint"],
                          capture_output=True, timeout=timeout, cwd=sdk)
     except subprocess.TimeoutExpired:
         return {"ran": True, "ok": False, "summary": "lint 超时",

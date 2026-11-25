@@ -39,7 +39,9 @@ rtools/            核心引擎（不依赖 Web/CLI，可独立调用与测试�
   cleanup.py       垃圾清理（限已知安全位置）、重复检测、无引用检测、隔离区
   verifier.py      官方 lint 验证（全分支 suspects 键、cp936 解码回退）
   rpa.py           RPA 封包读写（白名单反序列化，新旧格式自适应，改名替换重建）
-  archives.py      zip/7z/RAR 解压（GBK 中文名还原、密码编码重试）、成品定位、回包
+  sdk.py           SDK 启动器解析（renpy.exe / renpy.sh 统一口径、执行位人话提示）
+  archives.py      zip/7z/RAR/tar 系解压（GBK 中文名还原、密码编码重试、安全解压）、
+                   成品定位、回包（跟随输入格式）
   packager.py      SDK 发现、官方打包调度（平台非空/合法校验）、RPA 归档配置注入、用户配置
   apk.py           APK 瘦身（x- 前缀体系、重打包保字节、重映射注入、三种签名）
                    与只读预分析 analyze_apk（读 ZIP 条目表，不解包不改原包）
@@ -55,7 +57,8 @@ rtools/            核心引擎（不依赖 Web/CLI，可独立调用与测试�
                    并行任务调度（_run_jobs）与取消支持
   utils.py         fmt_size 等公共小工具
   runtime.py       端口登记文件、干净退出
-  procutil.py      run_quiet：Windows 下外部调用不弹黑框
+  procutil.py      run_quiet：外部调用统一收口（Windows 不弹黑框；
+                   POSIX 独立会话 + 进程组终止）
 tests/             pytest：conftest.py 统一 sys.path；按功能分文件
 docs/              BACKLOG.md（需求事实源）、本文件
 assets/            图标资源（icon.ico/icon.png，exe 与托盘共用）
@@ -114,6 +117,48 @@ has_renpy_layout）。全程不解包、不建工作目录、不改原包；CLI 
   或未知平台在查 SDK、建工作目录、跑优化之前报错（CLI JSON 失败，Web 400）。
 - 磁盘预检：`backup.ensure_free_space` 在复制工作副本、写 in_place 备份、
   APK 解包/回写前检查目标盘空间（另加 10% 余量），不足时抛人话错误。
+
+### 平台分层（Windows / POSIX，v0.18.0 / issue #26 第一阶段）
+
+口径：**Windows 仍是一等公民**（发行版 exe 只有 Windows 一份，签名与分发形态不变），
+**Linux 源码运行已支持**；macOS 只做了代码层通用化，未上真机验证。
+所有平台差异集中在下面三处，业务模块不再各写一套 if：
+
+- **SDK 启动器解析：`rtools/sdk.py`**——唯一的"先找启动器再执行"入口。
+  `LAUNCHER_NAMES = ("renpy.exe", "renpy.sh")` 顺序固定，同一 SDK 目录里两者只有其一，
+  所以 Windows 行为零变化。`find_launcher()` 只判"存在"（discovery 口径），
+  `require_launcher()` 才判 renpy.sh 的执行位并抛人话错误（提示 `chmod +x`）——
+  把"有没有 SDK"和"能不能执行"分开，避免跨平台备份目录里的 renpy.exe 被误判成无 SDK。
+  lint（verifier）、distribute / android_build（packager）、APK remap（apk）全部收口。
+- **进程组：`rtools/procutil.py`**——POSIX 上外部工具普遍是"壳脚本 + 真进程"
+  （`renpy.sh`→python、`gradle`→java、`apksigner`→java），只杀直接子进程会留下孙进程
+  继续占管道与文件，表现为"超时/取消后卡住不返回"。因此 `run_quiet` 在 POSIX 上默认
+  `start_new_session=True` 让子进程自成进程组，终止时对**整个进程组**发 SIGTERM，
+  宽限期后 SIGKILL；只对"本模块自己起的会话"按组杀（`_OWN_SESSION_PIDS` 登记，
+  拿不准就单杀，绝不误伤自己所在的进程组）。Windows 侧保持 `taskkill /T` 不变。
+- **压缩包：`rtools/archives.py`**——zip / 7z / RAR 之外新增 tar 系
+  （`.tar` / `.tar.bz2` / `.tbz2` / `.tar.gz` / `.tgz` / `.tar.xz`），
+  后缀按**最长匹配**识别（`Path("x.tar.bz2").suffix` 只是 `.bz2`，不能直接用）。
+  两条策略值得记：
+  - **解压按"不信任包内容"**：成员名先拒绝对路径 / `..` / NUL，再用 realpath 收敛、
+    按**路径分量**比对是否仍在目标目录内（不用 `str.startswith`，否则 `dest_evil`
+    这种同前缀兄弟目录会被放过去）；不创建设备文件 / FIFO；3.12+ 额外先过标准库
+    `data_filter` 做双层校验，3.11 只跑自家校验。
+  - **链接落成普通文件**：符号链接与硬链接都不创建链接，而是复制目标内容
+    （`_tar_write_link_as_file`）。这样从根上没有"跟随包外链接写出去"这条路，
+    同时保住官方 Linux 包里常见的解释器/库软链，不会解出跑不起来的半成品；
+    目标不在包内或尚未解出时告警跳过，绝不猜内容。
+  - **执行位与空目录保留**：0755 启动脚本往返仍是 0755，空目录不丢；
+    回包**跟随输入格式**，zip 进 zip 出、`.tar.bz2` 进 `.tar.bz2` 出。
+
+Web 侧另有两处平台分支，都在 `web/app.py`：`_local_path` 的 POSIX 分支以 `/`
+为根（相对路径 / NUL / 网络路径照旧拒绝）；`_open_in_desktop` 在 macOS 用
+`open -R` / `open`、Linux 按桌面环境挑文件管理器再退回 `xdg-open` / `gio open`，
+无 `DISPLAY` / `WAYLAND_DISPLAY` 时明确失败。两者都**只走参数列表、不经 shell**。
+
+**安全红线不因平台分层而改变**——工作副本、没变小不替换、引用门控、引擎目录保护
+（`renpy/`、`lib/`、`assets/x-renpy/`）四条的判定与实现与平台无关，
+POSIX 分支只是把"根"和"怎么调用外部程序"换了个写法，没有放宽任何一条。
 
 ## 4. 安全红线（修改任何代码前先读这里）
 
@@ -177,7 +222,14 @@ build_exe.bat                                # 产出 dist\RenPySlim.exe
   test_archives、test_font_tool、test_progress、test_empty_shell、test_rpy_dist；
   v0.17 批次另有 test_jobstore、test_cli_history、test_apk_analysis、
   test_backup_space、test_packager_platforms、test_web_v017、test_frontend_*、
-  test_log_codes。测试数量以 `pytest tests -q` 实际收集为准，文档不写死。
+  test_log_codes；v0.18.0（issue #26）新增 test_posix_support（启动器解析、本地路径
+  POSIX 分支、桌面文案与 reveal、进程组终止）与 test_archives_tar（tar 系解压/回包、
+  执行位、越界与特殊条目拦截）。测试数量以 `pytest tests -q` 实际收集为准，文档不写死。
+- 平台 CI 双跑：`ci.yml` 覆盖 Windows 主流程；`.github/workflows/ci-linux.yml` 在
+  ubuntu-latest 上跑 Python 3.12 / 3.13 矩阵（`pip check` + ruff + 全量 pytest +
+  CLI 冒烟 + 无头 Web 启动），是"非 Windows 不能坏"的护栏。
+  Linux 的源码运行说明见 AGENTS.md「Linux / macOS 源码运行」；
+  打包路径尚未在装有官方 Linux SDK 的真机上实跑过，别把 CI 绿灯当成打包已验证。
 - 真实样本 E2E 惯例：优化 → lint/启动验证 → 对比体积，产物路径在 _sample/
 - exe 首次启动慢属杀软扫描正常现象，勿误判为卡死
 

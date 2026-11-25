@@ -1,8 +1,76 @@
-# RenPySlim 交接状态（截至 2026-11-23 v0.17.4 发版收口）
+# RenPySlim 交接状态（截至 2026-11-26：v0.18.0 进行中；已发布版本仍是 v0.17.4）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.17.4（新增控制台版 `RenPySlim-cli.exe`：CLI 在 PowerShell / ConPTY / 计划任务里稳定输出；能力面同 v0.17.3；v0.10.0 起 AGPL-3.0）
+## 当前版本：v0.17.4（已发布）· v0.18.0（未发布 / 进行中）
+
+> **v0.18.0 尚未发版**，本节只记录已落地的代码与验证结果，发版流水线与资产校验留到真正发布时再补。
+> 版本号 `rtools/__init__.py` 目前仍是 `0.17.4`，随发版一起改。
+
+### v0.18.0（未发布 / 进行中）：issue #26 第一阶段 · Linux 源码运行
+
+口径：**Windows 仍是一等公民**（发行版 exe 只有 Windows 一份），
+**Linux 源码运行已打通**。**不写成"全平台支持"**——macOS 未上真机验证，
+二进制分发、签名公证都还没做。
+
+1. **SDK 启动器统一解析**（新增 `rtools/sdk.py`）：`renpy.exe`（Windows）与
+   `renpy.sh`（Linux/macOS）都认，候选顺序固定，Windows 行为零变化；
+   lint / distribute / android_build / APK remap 全部收口到
+   `find_launcher()` / `require_launcher()`。`renpy.sh` 缺执行位时给
+   `chmod +x <路径>` 的明确提示，而不是含糊的"找不到 SDK"。
+2. **Web 本地路径校验支持 POSIX**（`web/app.py::_local_path`）：旧版只按盘符判定，
+   Linux 上**所有**绝对路径都被拒（Web 文件类接口等于全废）。新增 POSIX 分支以 `/`
+   为根；相对路径 / NUL / 网络路径照旧拒绝，安全语义与 Windows 分支一致。
+3. **打开产物目录跨平台**（`/api/reveal` → `_open_in_desktop`）：macOS 用
+   `open -R`（定位选中）/ `open`；Linux 按 `$XDG_CURRENT_DESKTOP` 选
+   nautilus / dolphin / thunar，再退回 `xdg-open` / `gio open`；没有
+   `DISPLAY` / `WAYLAND_DISPLAY` 时**明确失败**（不假装成功）。提示文案按平台给：
+   资源管理器 / 访达 / 文件管理器（`_DESKTOP_NAME`）。
+4. **压缩包支持 tar 系**（`rtools/archives.py`）：`.tar` / `.tar.bz2` / `.tbz2` /
+   `.tar.gz` / `.tgz` / `.tar.xz`（官方 Linux 发布包默认就是 `.tar.bz2`）。
+   解压按"不信任包内容"的口径：拒绝绝对路径与 `..` 越界（realpath 收敛后按路径分量
+   比，防同前缀兄弟目录）、不创建设备文件/FIFO、符号链接与硬链接一律落成普通文件
+   （不创建任何链接）；保留 Unix 执行位（0755 启动脚本往返仍是 0755）与空目录。
+   回包**跟随输入格式**：zip 进 zip 出，`.tar.bz2` 进 `.tar.bz2` 出。
+5. **POSIX 进程组终止**（`rtools/procutil.py`）：外部工具以 `start_new_session=True`
+   独立启动，超时/取消时对整个进程组 SIGTERM → 3 秒宽限 → SIGKILL，不再遗留
+   `renpy.sh`→python、`gradle`→java 这类孙进程占管道占文件。Windows 侧仍走
+   `taskkill /T`，行为不变；只对"本模块自己起的会话"按组杀（拿不准就单杀）。
+6. **Android 工具链 POSIX 发现**（`rtools/apk.py`）：build-tools 里认无后缀的
+   `zipalign` / `apksigner`（原来只认 `.exe` / `.bat`），`keytool` 追加在
+   `/usr/lib/jvm`、`/usr/java` 等 JDK 安装位里找。
+7. **新增 Ubuntu CI**（`.github/workflows/ci-linux.yml`）：Python **3.12 + 3.13** 矩阵，
+   依次跑 `pip check` / ruff（F,E9）/ 全量 `pytest` / CLI 冒烟（`--version` +
+   `env` 的 JSON 契约）/ 无头 Web 启动（没有 DISPLAY，正好覆盖 issue 的
+   "无图形会话也能起来"验收项）。
+8. **测试**：新增两个测试文件（用例数随参数化变化，以实际收集为准）——
+   `tests/test_posix_support.py`：本地路径校验（绝对/相对/NUL/网络路径）、桌面文案、
+   reveal 的图形会话判定、进程组终止、启动器解析与执行位提示；
+   `tests/test_archives_tar.py`：后缀识别、各 tar 变体解压与回包往返、执行位与空目录、
+   路径穿越/绝对路径/包外链接/特殊条目拦截。
+
+**验证**（2026-11-26 复跑）：
+
+- Windows（Python 3.13.14）：`python -m pytest tests -q` → **378 passed / 9 skipped**，
+  无失败；ruff `--select F,E9` 与 `pip check` 均无问题。
+- WSL Ubuntu（Python 3.12.3）：`pytest tests -q` → **376 passed / 11 skipped / 0 failed**。
+  本机 WSL 没装 node，三条 `node --check` 前端语法闸按设计 skip，触发
+  `tests/conftest.py` 的"未登记外部依赖跳过"守卫而以退出码 1 收尾——
+  GitHub 的 ubuntu-latest runner 自带 node，`ci-linux.yml` 上不会触发这条守卫。
+- 平台分工：Windows 主流程仍由 `ci.yml` 覆盖，Linux 由新增的 `ci-linux.yml` 覆盖。
+
+数量以实际收集为准，不在文档里写死后续增量。
+
+**已知边界（如实记录，别当已支持）**
+
+- **macOS 二进制/签名公证、Linux AppImage/可执行包分发没有做**，issue 里列为后续里程碑。
+- **分发打包（`full` / `package`）只打通了调用路径**：现在能识别官方 Linux SDK 的
+  `renpy.sh` 并正确拼命令，但**没有在装有官方 Linux SDK 的真实机器上实跑过打包**。
+  Windows exe 分发仍是官方发布形态。
+- **Web GUI 无桌面环境能启动、接口可用**，但没有图形会话时"打开目录/定位文件"
+  按钮会给明确失败提示（设计如此）。
+
+## 当前已发布版本：v0.17.4（新增控制台版 `RenPySlim-cli.exe`：CLI 在 PowerShell / ConPTY / 计划任务里稳定输出；能力面同 v0.17.3；v0.10.0 起 AGPL-3.0）
 
 仓库：https://github.com/AxelBeary/renpyslim （公开，AGPL-3.0；v0.10 起由 Apache-2.0 改签，
 用户拍板；第三方声明见 THIRD_PARTY_NOTICES.md）

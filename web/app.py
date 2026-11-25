@@ -6,6 +6,8 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
+import sys
 import threading
 import time
 import traceback
@@ -20,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from rtools import (analyzer, apk, archives, charset, font_tool, jobstore,
-                    packager, pipeline, scanner)
+                    packager, pipeline, scanner, sdk as sdk_mod)
 from rtools.config import (CharsetOptions, OptimizeOptions, PRESETS,
                            DEFAULT_PRESET, default_options)
 from rtools.models import Progress
@@ -65,6 +67,12 @@ async def guard_local_only(request: Request, call_next):
                                 status_code=403)
     return await call_next(request)
 
+# 桌面环境的说法按平台给：Windows 叫资源管理器，macOS 叫访达，Linux 叫文件管理器。
+# 前端只显示 error 文本，这里直接给对，避免 Linux 用户看到“资源管理器”。
+_DESKTOP_NAME = ("资源管理器" if sys.platform == "win32"
+                 else "访达" if sys.platform == "darwin" else "文件管理器")
+
+
 # ---------------------------------------------------------------------------
 # 请求路径校验
 # ---------------------------------------------------------------------------
@@ -74,7 +82,16 @@ async def guard_local_only(request: Request, call_next):
 def _local_path(raw: Optional[str], *, must_exist: bool,
                 allow_network: bool = True
                 ) -> tuple[Optional[Path], Optional[str]]:
-    """校验并规范化请求里的路径；不合法时返回 (None, 给人看的提示)。"""
+    """校验并规范化请求里的路径；不合法时返回 (None, 给人看的提示)。
+
+    v0.18.0（issue #26）：补 POSIX 分支。旧版靠 `os.path.splitdrive()` 取盘符
+    再要求非空，这在 Linux/macOS 上必然为空，于是**所有** POSIX 绝对路径都被
+    拒（"只接受本机绝对路径"），Web 的文件类接口在非 Windows 上等于全废。
+
+    两条分支的安全语义保持一致，只是“根”的定义不同：
+    - Windows：根 = 盘符 + 分隔符（"C:\\"），UNC/共享是盘符开头的 "\\\\"，照旧拒绝。
+    - POSIX：根 = "/"；realpath 已折叠 ".."，校验收敛到同一个根之下即可。
+    """
     text = (raw or "").strip()
     if not text:
         return None, "路径为空"
@@ -85,14 +102,20 @@ def _local_path(raw: Optional[str], *, must_exist: bool,
     if not os.path.isabs(text):
         return None, f"只接受绝对路径：{text}"
     resolved = os.path.realpath(text)
-    drive, _ = os.path.splitdrive(resolved)
-    if not drive:
-        return None, f"只接受本机绝对路径：{text}"
-    if not allow_network and drive.startswith(("\\\\", "//")):
-        return None, "不支持网络/共享路径，只允许本机路径"
-    root = drive + os.sep
-    if not resolved.startswith(root):
-        return None, f"路径无法定位到所在磁盘：{text}"
+    if os.name == "nt":
+        drive, _ = os.path.splitdrive(resolved)
+        if not drive:
+            return None, f"只接受本机绝对路径：{text}"
+        if not allow_network and drive.startswith(("\\\\", "//")):
+            return None, "不支持网络/共享路径，只允许本机路径"
+        root = drive + os.sep
+        if not resolved.startswith(root):
+            return None, f"路径无法定位到所在磁盘：{text}"
+    else:
+        # POSIX：唯一合法根是 "/"。realpath 之后仍不以 "/" 开头说明是相对路径
+        # 或畸形输入（含 NUL 已在上方拦截），直接拒绝，不放行任何越界形态。
+        if not resolved.startswith("/"):
+            return None, f"只接受本机绝对路径：{text}"
     path = Path(resolved)
     if must_exist and not path.exists():
         return None, f"路径不存在：{text}"
@@ -697,8 +720,8 @@ def _sdk_override(raw: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     path, error = _local_path(raw, must_exist=True)
     if error:
         return None, error
-    if not (path / "renpy.exe").exists():
-        return None, "该目录下找不到 renpy.exe，请检查 SDK 路径"
+    if not sdk_mod.is_sdk_dir(str(path)):
+        return None, sdk_mod.launcher_error(str(path))
     return str(path), None
 
 
@@ -947,12 +970,71 @@ def _browse_open_dialog(kind: str) -> str:
     return p or ""
 
 
+def _open_in_desktop(target: Path, *, select: bool) -> None:
+    """按平台打开文件管理器（Linux/macOS 分支）；失败抛 OSError。
+
+    - macOS：`open -R` 定位选中，`open` 打开目录。均走参数列表，不经 shell。
+    - Linux：文件管理器没有统一的“定位选中”接口，退化为打开所在目录
+      （select=True 时打开 target 的父目录）。优先按 $XDG_CURRENT_DESKTOP
+      挑一个可用的文件管理器，其次 xdg-open，最后 gio open。
+    无图形会话（没有 DISPLAY/WAYLAND_DISPLAY）时直接失败，由调用方转成
+    人话提示——不要在没有桌面时假装成功。
+    """
+    import subprocess
+
+    if not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")):
+        raise OSError("当前没有图形会话，无法打开文件管理器")
+
+    if sys.platform == "darwin":
+        # open -R <file> 在 Finder 里选中；打开目录用 open <dir>
+        if select:
+            subprocess.run(["open", "-R", str(target)], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=20)
+        else:
+            subprocess.run(["open", str(target)], check=True,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                           timeout=20)
+        return
+
+    folder = target if target.is_dir() else target.parent
+    desktop = (os.environ.get("XDG_CURRENT_DESKTOP") or "").lower()
+    # 各桌面环境的文件管理器；命中第一个存在的就用它打开目录。
+    candidates = []
+    if "gnome" in desktop or "unity" in desktop:
+        candidates.append(["nautilus", str(folder)])
+    if "kde" in desktop:
+        candidates.append(["dolphin", str(folder)])
+    if "xfce" in desktop:
+        candidates.append(["thunar", str(folder)])
+    candidates += [["xdg-open", str(folder)], ["gio", "open", str(folder)]]
+
+    last_error: Optional[Exception] = None
+    for cmd in candidates:
+        if not shutil.which(cmd[0]):
+            continue
+        try:
+            subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL,
+                           stderr=subprocess.DEVNULL, timeout=20)
+            return
+        except (OSError, subprocess.SubprocessError) as exc:
+            last_error = exc
+            continue
+    raise OSError(f"没有可用的文件管理器：{last_error}")
+
+
 def _open_in_explorer(target: Path, *, select: bool) -> None:
     """用 Windows Shell 打开目录；select=True 时在资源管理器中选中 target。
 
     不拼 explorer.exe 命令行：用户路径不进入命令行解析，避免参数注入。
     文件只用于“定位选中”，不会被 Shell 执行。
+
+    v0.18.0：非 Windows 转 _open_in_desktop——Web GUI 在 Linux/macOS 上
+    也要能把产物目录打开，不再直接调 ctypes.windll 崩掉。
     """
+    if os.name != "nt":
+        _open_in_desktop(target, select=select)
+        return
     import ctypes
     from ctypes import wintypes
 
@@ -1021,9 +1103,10 @@ def api_reveal(req: RevealReq):
             return JSONResponse({"ok": False,
                                  "error": "该路径不是文件夹或普通文件"})
     except Exception:
-        _LOG.warning("打开资源管理器失败：%s", _log_safe(p), exc_info=True)
+        _LOG.warning("打开%s失败：%s", _DESKTOP_NAME, _log_safe(p),
+                     exc_info=True)
         return JSONResponse({"ok": False,
-                             "error": "无法打开资源管理器，请稍后重试"})
+                             "error": f"无法打开{_DESKTOP_NAME}，请稍后重试"})
     return {"ok": True}
 
 
@@ -1091,9 +1174,11 @@ def api_add_recent(body: dict):
 @app.post("/api/sdk")
 def api_set_sdk(body: dict):
     sdk_dir, error = _local_path(body.get("sdk_path", ""), must_exist=True)
-    if error or not (sdk_dir / "renpy.exe").exists():
+    if error:
+        return JSONResponse({"ok": False, "error": error})
+    if not sdk_mod.is_sdk_dir(str(sdk_dir)):
         return JSONResponse({"ok": False,
-                             "error": "该目录下找不到 renpy.exe，请检查路径"})
+                             "error": sdk_mod.launcher_error(str(sdk_dir))})
     cfg = packager.load_config()
     cfg["sdk_path"] = str(sdk_dir)
     packager.save_config(cfg)

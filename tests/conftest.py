@@ -85,6 +85,7 @@ def cjk_font(tmp_path_factory):
 _EMBEDDED_SKIP_REASONS = {
     "缺少测试客户端依赖": None,      # httpx 未安装（TestClient 不可用）
     "Windows 专属": None,            # 平台性 skipif（非外部依赖）
+    "POSIX 专属": None,              # 平台性 skipif：非 Windows 才成立的语义
     "junction 是 Windows 专属概念": None,
     "本机不支持创建符号链接": 1,
     "本机不支持创建目录符号链接": 1,
