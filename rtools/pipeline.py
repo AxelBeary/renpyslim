@@ -339,7 +339,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
            params={"files": len(assets), "chars": len(chars)})
 
     # --- 第 4 步：优化 ---
-    ref_index = RefIndex(game_dir)
+    ref_index = RefIndex(game_dir, (a.rel for a in assets))
     rename_map: dict[str, str] = {}
     saved = 0
     min_bytes = preset.min_size_kb * 1024
@@ -929,7 +929,19 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     if has_rpy:
         p.emit("analyze", f"检测到成品里带有 {len(rpy_files)} 个 .rpy 源码，"
                           "已解锁格式转换能力")
-        ref_index = RefIndex(str(game_dir_p))
+        # RefIndex 的裸名判定需要完整资产清单：散文件去掉 game/ 前缀，
+        # 封包内资源本身就是相对 game/ 的路径，不能只统计磁盘文件。
+        ref_asset_names: list[str] = []
+        for a in all_assets:
+            if a.in_rpa:
+                ref_asset_names.append(a.rel)
+                continue
+            try:
+                ref_asset_names.append(
+                    Path(a.rel).relative_to("game").as_posix())
+            except ValueError:
+                pass
+        ref_index = RefIndex(str(game_dir_p), ref_asset_names)
     if dec_stats is not None:
         report.warnings.append(
             "已启用实验性功能：反编译了编译脚本以解锁格式转换，转换后的资源"
