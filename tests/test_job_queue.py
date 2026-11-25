@@ -116,6 +116,11 @@ def test_cancel_during_scheduler_dequeue_never_starts_task(monkeypatch):
         gate.set()
         assert _wait(lambda: _status(j1) == "done")
         assert _wait(lambda: _status(j2) == "canceled")
+        # pop() 跑在调度线程里：_status(j2) 一变成 canceled 主线程就放行，
+        # 而那时 api_job_cancel 可能还卡在 record_finish 写盘上（CI 上慢），
+        # observations 会缺 response/after 两项。等探针写满再断言，
+        # 否则这条"确定性复现"用例自己就是竞态的，会偶发红。
+        assert _wait(lambda: observations.get("after") == "canceled")
         assert observations == {
             "before": "queued", "response": {"ok": True}, "after": "canceled",
         }
