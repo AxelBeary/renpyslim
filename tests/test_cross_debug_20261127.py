@@ -305,6 +305,25 @@ def test_cli_package_reports_failure_when_sdk_packaging_fails(
     assert "打包失败" in payload["error"]
 
 
+def test_cli_package_partial_platform_failure_is_not_success(monkeypatch, capsys):
+    """pc 成功、android 失败：任一所请求平台失败都必须 ok:false。"""
+    import argparse
+    import cli
+
+    monkeypatch.setattr(cli.packager, "find_sdk", lambda _arg: "/tmp/fake-sdk")
+    monkeypatch.setattr(
+        cli.packager, "package_project",
+        lambda *a, **k: {"built": ["pc"], "errors": ["安卓打包失败（退出码 7）"],
+                         "destination": "/tmp/out", "artifacts": []})
+    args = argparse.Namespace(platforms="pc,android", sdk=None,
+                              path="/tmp/Game", destination=None,
+                              archive_rpa=False)
+    code = cli.cmd_package(args)
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1 and payload["ok"] is False
+    assert "安卓" in payload["error"] and "pc" in payload["error"]
+
+
 # ---------------------------------------------------------------------------
 # 反编译降级不得污染 stdout
 # ---------------------------------------------------------------------------
