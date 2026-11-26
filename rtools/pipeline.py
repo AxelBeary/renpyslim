@@ -1715,6 +1715,16 @@ def _find_unreferenced(working_p: Path, loose: list) -> list[str]:
             text = charset.read_rpyc_text(p)
             if text:
                 blobs.append(text.encode("utf-8", "ignore"))
+    # 带源码的成品（或刚反编译过）也必须计入：只搜 rpyc 会把 rpy 里
+    # 明确引用的资源误判成无引用，--delete-unreferenced 一开就丢文件。
+    for pat in ("*.rpy", "*.rpym"):
+        for p in working_p.rglob(pat):
+            try:
+                text = charset.read_text_robust(p)
+            except Exception:
+                continue
+            if text:
+                blobs.append(text.encode("utf-8", "ignore"))
     if not blobs:
         return []
 

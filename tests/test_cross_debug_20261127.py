@@ -207,6 +207,29 @@ def test_unique_dir_never_reuses_existing_directory(tmp_path):
     assert (existing / "important.txt").read_text(encoding="utf-8") == "keep"
 
 
+def test_unreferenced_scan_includes_source_scripts(tmp_path):
+    """带源码的成品：rpy 里明确引用的资源不能被判成无引用。"""
+    from rtools.models import AssetInfo, AssetKind
+
+    game = tmp_path / "game"
+    (game / "audio").mkdir(parents=True)
+    (game / "audio" / "used.ogg").write_bytes(b"OggS")
+    (game / "audio" / "orphan.ogg").write_bytes(b"OggS")
+    (game / "script.rpy").write_text(
+        'play music "audio/used.ogg"\n', encoding="utf-8")
+    (game / "other.rpyc").write_bytes(b"not a real rpyc")
+
+    loose = [
+        AssetInfo(path=str(game / "audio" / "used.ogg"),
+                  rel="game/audio/used.ogg", kind=AssetKind.AUDIO, size=4),
+        AssetInfo(path=str(game / "audio" / "orphan.ogg"),
+                  rel="game/audio/orphan.ogg", kind=AssetKind.AUDIO, size=4),
+    ]
+    flagged = pipeline._find_unreferenced(tmp_path, loose)
+    assert "game/audio/used.ogg" not in flagged
+    assert "game/audio/orphan.ogg" in flagged
+
+
 # ---------------------------------------------------------------------------
 # APK
 # ---------------------------------------------------------------------------
@@ -322,6 +345,28 @@ def test_cli_package_partial_platform_failure_is_not_success(monkeypatch, capsys
     payload = json.loads(capsys.readouterr().out)
     assert code == 1 and payload["ok"] is False
     assert "安卓" in payload["error"] and "pc" in payload["error"]
+
+
+def test_analyze_archive_forces_dist_mode(tmp_path, capsys):
+    """压缩包一律按成品分析：自动与显式 project 都必须落 dist。"""
+    import argparse
+    import cli
+
+    z = tmp_path / "source.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        zf.writestr("Game/game/script.rpy", "label start:\n    'hi'\n")
+
+    code = cli.cmd_analyze(argparse.Namespace(path=str(z), mode=None,
+                                              password=None))
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 0 and payload["report"]["mode"] == "dist"
+
+    code = cli.cmd_analyze(argparse.Namespace(path=str(z), mode="project",
+                                              password=None))
+    captured = capsys.readouterr()
+    assert code == 0
+    assert json.loads(captured.out)["report"]["mode"] == "dist"
+    assert "压缩包" in captured.err and "dist" in captured.err
 
 
 # ---------------------------------------------------------------------------

@@ -339,7 +339,9 @@ def cmd_analyze(args) -> int:
 
     # 压缩包直接进：解压到临时目录，分析完清理
     cleanup_dir = None
+    archive_input = False
     if archives.is_archive(str(path)):
+        archive_input = True
         import tempfile
         cleanup_dir = tempfile.mkdtemp(prefix="rtools_unpack_")
         try:
@@ -359,9 +361,17 @@ def cmd_analyze(args) -> int:
             raise
 
     try:
-        # 工程有 .rpy 源码，成品只有 .rpyc，以此自动区分
+        # 工程有 .rpy 源码，成品只有 .rpyc，以此自动区分。
+        # 压缩包一律按成品（dist）：包内可能带源码，但输入形态是发布包，
+        # 口径必须与 optimize 一致（AGENTS「压缩包一律按成品处理」）。
         mode = args.mode
-        if not mode:
+        if archive_input:
+            if mode and mode != "dist":
+                print(f"警告：{path.name} 是压缩包，按成品（dist）分析，"
+                      f"--mode {mode} 不适用，已自动改用 dist。",
+                      file=sys.stderr, flush=True)
+            mode = "dist"
+        elif not mode:
             game = path / "game"
             mode = "project" if (game.is_dir()
                                  and any(game.rglob("*.rpy"))) else "dist"
