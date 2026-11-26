@@ -12,6 +12,8 @@ POSIX（v0.18.0 / issue #26）：外部工具普遍是“壳脚本 + 真进程�
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import os
 import signal
 import subprocess
@@ -25,13 +27,42 @@ _NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)  # 仅 Windows 有
 _KILL_GRACE = 3.0
 
 # 审核修复（中-3）：登记运行中的子进程，用户取消时可整体杀掉，
-# 否则 ThreadPoolExecutor 退出要等 ffmpeg 自然跑完（视频上限 7200s）
-_ACTIVE: set = set()
+# 否则 ThreadPoolExecutor 退出要等 ffmpeg 自然跑完（视频上限 7200s）。
+# 2026-11-27 交叉审计：登记时带上“任务归属”令牌——取消一个任务只能
+# 杀它自己的子进程，不能误伤并发的只读分析（scan_assets 的 ffprobe）。
+_ACTIVE: dict = {}
 _ACTIVE_LOCK = threading.Lock()
+
+# 当前任务令牌；Web 每个 job 进入时设一个，pipeline 的取消收尾按它筛选。
+_SCOPE: contextvars.ContextVar = contextvars.ContextVar(
+    "renpyslim_proc_scope", default=None)
 
 # POSIX：由本模块以“新会话”启动的子进程 pid 集合——只有这些才允许
 # os.killpg。拿不准就别按组杀，否则可能连自己所在的进程组一起端了。
 _OWN_SESSION_PIDS: set = set()
+
+# kill_children() 的默认哨兵：不传 scope 时保持“全杀”的旧语义
+_ALL_SCOPES = object()
+
+
+@contextlib.contextmanager
+def task_scope():
+    """给一段任务代码打上令牌，期间启动的外部进程都归这个任务。
+
+    不设令牌（CLI、直接调用 rtools）时所有进程归属 None，
+    kill_children(scope=None) 就是旧行为（全杀）。
+    """
+    token = object()
+    reset = _SCOPE.set(token)
+    try:
+        yield token
+    finally:
+        _SCOPE.reset(reset)
+
+
+def current_scope():
+    """当前线程/上下文的任务令牌，没有则为 None。"""
+    return _SCOPE.get()
 
 
 def _kill_tree(proc) -> None:
@@ -48,10 +79,12 @@ def _kill_tree(proc) -> None:
                 ["taskkill", "/T", "/F", "/PID", str(proc.pid)],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 creationflags=_NO_WINDOW, timeout=15)
+        elif proc.pid in _OWN_SESSION_PIDS:
+            # 直接子进程可能已退出、孙进程仍活着占着管道；poll() 非空
+            # 也不能提前返回，否则超时收尾会把管道一直挂住。
+            _kill_process_group(proc.pid)
         elif proc.poll() is not None:
             return                      # 已经退出，无需再杀
-        elif proc.pid in _OWN_SESSION_PIDS:
-            _kill_process_group(proc.pid)
         else:
             proc.kill()
     except Exception:
@@ -106,7 +139,7 @@ def run_quiet(cmd, **kwargs) -> subprocess.CompletedProcess:
     timeout = kwargs.pop("timeout", None)
     with subprocess.Popen(cmd, **kwargs) as proc:
         with _ACTIVE_LOCK:
-            _ACTIVE.add(proc)
+            _ACTIVE[proc] = _SCOPE.get()
             if own_session:
                 _OWN_SESSION_PIDS.add(proc.pid)
         try:
@@ -115,23 +148,47 @@ def run_quiet(cmd, **kwargs) -> subprocess.CompletedProcess:
             # 第二波修复：只杀直接进程会留下链式孤儿（apksigner.bat→cmd→java）
             # 继续占文件跑满时长，改与 kill_children 相同的杀树逻辑
             _kill_tree(proc)
-            out, err = proc.communicate()
+            # 孙进程若仍持管道，无超时的 communicate 会一直挂着——
+            # 收尾也必须带超时，拿不到输出就按空处理（上面已 raise）。
+            try:
+                out, err = proc.communicate(timeout=_KILL_GRACE * 2)
+            except subprocess.TimeoutExpired:
+                if proc.poll() is None:
+                    proc.kill()
+                try:
+                    proc.wait(timeout=_KILL_GRACE)
+                except subprocess.TimeoutExpired:
+                    pass
+                out, err = b"", b""
+            raise
+        except BaseException:
+            # Ctrl+C / SystemExit 等也要把外部工具收掉，否则 SDK/ffmpeg
+            # 会在后台继续写产物，用户以为任务已停。
+            _kill_tree(proc)
+            try:
+                proc.communicate(timeout=_KILL_GRACE)
+            except Exception:
+                pass
             raise
         finally:
             with _ACTIVE_LOCK:
-                _ACTIVE.discard(proc)
+                _ACTIVE.pop(proc, None)
                 _OWN_SESSION_PIDS.discard(proc.pid)
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 
-def kill_children() -> None:
-    """杀掉本工具启动的全部外部程序（取消任务时调用）。
+def kill_children(scope=_ALL_SCOPES) -> None:
+    """杀掉本工具启动的外部程序（取消任务时调用）。
+
+    scope 缺省 = 旧行为（全杀，CLI 单任务足够）；
+    Web 传当前任务令牌时只杀该任务自己的子进程，并发只读分析不被误伤。
 
     Windows 上用 taskkill /T 杀整棵进程树：.bat→cmd→java 这类
     链式启动只杀父进程会留下孤儿继续占用文件（审核修复 中-3/中-15）。
     POSIX 上对每个自建会话的进程组发信号，`renpy.sh` → python 同款处理。
     """
     with _ACTIVE_LOCK:
-        procs = list(_ACTIVE)
+        procs = [proc for proc, owner in _ACTIVE.items()
+                 if scope is _ALL_SCOPES or owner == scope]
     for proc in procs:
         _kill_tree(proc)

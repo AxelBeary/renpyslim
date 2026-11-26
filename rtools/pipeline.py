@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import shutil
@@ -119,6 +120,21 @@ def _check_cancel(cancel: Callable[[], bool] | None) -> None:
         raise PipelineCancelled()
 
 
+def _unique_dir(path: Path) -> Path:
+    """返回一个尚不存在的兄弟目录名，绝不删除已存在目录。
+
+    交付目录名来自压缩包内的顶层文件夹名（不可信）。旧版遇到同名目录
+    直接 rmtree——恶意/手滑的包能删掉 work_root 下任何同名目录；没有
+    顶层 wrapper 的包里目标甚至就是解压目录本身，删完连工作副本一起丢。
+    """
+    for i in range(2, 1000):
+        candidate = path.with_name(f"{path.name}-{i}")
+        if not candidate.exists():
+            return candidate
+    return path.with_name(
+        f"{path.name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}")
+
+
 def _worker_count(n_jobs: int) -> int:
     """并行度决策（用户拍板放开多核）。
 
@@ -158,6 +174,11 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
     """
     if not jobs:
         return []
+    # 不经过 Web 的直接调用方也要有独立令牌：否则两个并发流水线的
+    # scope 都是 None，取消其中一个仍会按“全杀”误伤另一个。
+    if procutil.current_scope() is None:
+        with procutil.task_scope():
+            return _run_jobs(p, stage, jobs, cancel)
     workers = _worker_count(len(jobs))
     results: list = []
     state = {"done": 0, "saved": 0}
@@ -169,8 +190,9 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
         for rest in futures:
             rest.cancel()
         # 审核修复（中-3）：杀掉正在跑的外部程序（ffmpeg 等），
-        # 否则线程池退出要等它们自然跑完，取消形同虚设
-        procutil.kill_children()
+        # 否则线程池退出要等它们自然跑完，取消形同虚设。
+        # 2026-11-27：只杀本任务名下的进程，别误伤并发只读分析的 ffprobe。
+        procutil.kill_children(scope=procutil.current_scope())
         for rest in pending:
             if rest.done() and not rest.cancelled():
                 try:
@@ -184,7 +206,10 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
         raise PipelineCancelled(results)
 
     with ThreadPoolExecutor(max_workers=workers) as ex:
-        futures = [ex.submit(fn) for _label, fn in jobs]
+        # 每个 worker 复制一份当前 context，任务令牌才能跟着进入子线程，
+        # 取消时按令牌筛选自己启动的外部进程（2026-11-27 交叉审计）。
+        futures = [ex.submit(contextvars.copy_context().run, fn)
+                   for _label, fn in jobs]
         try:
             # 第二波修复：旧版阻塞在 as_completed 上，单个长任务（视频可达 7200s）
             # 没完成前根本轮不到取消检查；改为短超时轮询，
@@ -226,7 +251,8 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
         except PipelineCancelled as e:
             for rest in futures:
                 rest.cancel()
-            procutil.kill_children()   # 审核修复（中-3）：同取消分支
+            # 审核修复（中-3）：同取消分支，只杀本任务名下的进程
+            procutil.kill_children(scope=procutil.current_scope())
             # 已完成的成果尽量留下，不强删；并随异常上抛供上层落清单
             raise PipelineCancelled(e.partial_results or results) from None
     return results
@@ -1561,7 +1587,13 @@ def run_dist_smart(path: str, options: OptimizeOptions,
                               / f"{src_name}-解压-{uuid.uuid4().hex[:8]}")
     p.emit("unpack", f"正在解压压缩包 {Path(path).name}……",
            code="unpack_start", params={"name": Path(path).name})
-    archives.extract_archive(path, extract_dir, password)
+    try:
+        archives.extract_archive(path, extract_dir, password)
+    except BaseException:
+        # 损坏/密码错误时不留半截解压目录：下次运行会把它当残留重建，
+        # 白占空间也可能混入扫描。
+        shutil.rmtree(extract_dir, ignore_errors=True)
+        raise
     try:
         # 审核修复（高-4）：取全部候选成品根——旧版只拿第一个，
         # 多平台发布包（PC+Mac 三合一等）里其余平台被静默丢弃
@@ -1621,13 +1653,13 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     if wd.name != proper_name:
         target = wd.parent / proper_name
         if target.exists():
-            _shutil.rmtree(target, ignore_errors=True)
-            if target.exists():
-                # 第二波：rmtree 静默失败时先检测残留——旧目标删不掉就绝不能
-                # 硬改名（会直接报 FileExistsError），给明确错误提示。
-                raise PipelineError(
-                    f"无法删除旧的目标目录 {target.name}"
-                    "（可能被其他程序占用），请关闭相关程序后重试。")
+            # 安全修复（2026-11-27 交叉审计）：proper_name 取自压缩包内容，
+            # 不可信。绝不删已存在目录，改用一个不撞名的交付目录名。
+            alt = _unique_dir(target)
+            p.emit("repack",
+                   f"{target.name} 已存在，为免覆盖已有内容，"
+                   f"交付目录改用 {alt.name}")
+            target = alt
         try:
             wd.rename(target)
         except OSError as e:
@@ -1642,7 +1674,11 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     # 格式拿不准（不认识的组合）时仍回 zip——zip 兼容性最好，是安全默认。
     _check_cancel(cancel)
     in_suffix = archives.archive_suffix(path)
-    out_suffix = in_suffix if in_suffix else ".zip"
+    out_suffix = archives.repack_suffix(in_suffix) if in_suffix else ".zip"
+    if in_suffix and out_suffix != in_suffix:
+        p.emit("repack",
+               f"{in_suffix} 只支持解包、不支持回写，"
+               f"交付包改用 {out_suffix} 输出；瘦身内容不变。")
     p.emit("repack", f"正在把瘦身成品重新打包成 {out_suffix}……",
            code="repack_start", params={"ext": out_suffix})
     out_zip = str(Path(output_dir) / f"{src_name}-瘦身版{out_suffix}")
@@ -1650,8 +1686,13 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     result["archive_output"] = out_zip
     result["archive_input"] = path
     # 审核修复（中-6）：回包成功后解压目录不再需要——不清理的话
-    # _rtools_work 每次运行都会累积一份全量解压拷贝
-    _shutil.rmtree(extract_dir, ignore_errors=True)
+    # _rtools_work 每次运行都会累积一份全量解压拷贝。
+    # 安全修复（2026-11-27）：没有顶层 wrapper 时工作副本会被改名到
+    # extract_dir 这个位置，此时删解压目录等于删掉刚产出的工作副本。
+    extract_p = Path(extract_dir).resolve()
+    work_p = Path(result["working_dir"]).resolve()
+    if extract_p != work_p and extract_p not in work_p.parents:
+        _shutil.rmtree(extract_dir, ignore_errors=True)
     p.emit("done", f"交付包已生成：{out_zip}",
            code="repack_done", params={"path": out_zip})
     return result

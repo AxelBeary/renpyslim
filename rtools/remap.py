@@ -99,15 +99,25 @@ def check_remap_support(game_root: Path) -> tuple[bool, str]:
         v_show = ".".join(str(x) for x in version)
         return False, f"引擎版本 {v_show} 低于 remap 要求的 8.0.0，已拒绝注入"
 
-    # 回调冲突扫描：只看 .rpy 明文脚本，跳过本工具自己注入的脚本
-    for p in game_root.rglob("*.rpy"):
-        if not p.is_file() or p.name == REMAP_SCRIPT_NAME:
+    # 回调冲突扫描：明文 .rpy 直接查；编译脚本（rpyc/rpymc）里标识符
+    # 以字符串常量形式存在，按原始字节查特征串——无源码成品同样能拦住。
+    for p in game_root.rglob("*"):
+        if not p.is_file():
+            continue
+        suffix = p.suffix.lower()
+        if suffix not in (".rpy", ".rpyc", ".rpymc"):
+            continue
+        if p.name == REMAP_SCRIPT_NAME or p.name == REMAP_SCRIPT_NAME + "c":
             continue
         try:
-            text = p.read_text(encoding="utf-8", errors="ignore")
+            data = p.read_bytes()
         except OSError:
             continue
-        if "file_open_callback" in text or "loadable_callback" in text:
+        if suffix == ".rpy":
+            text = data.decode("utf-8", "ignore")
+            if "file_open_callback" in text or "loadable_callback" in text:
+                return False, "检测到游戏自身设置了文件加载回调，remap 可能冲突"
+        elif b"file_open_callback" in data or b"loadable_callback" in data:
             return False, "检测到游戏自身设置了文件加载回调，remap 可能冲突"
     return True, ""
 

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import contextlib
 import ctypes
 import json
 import logging
@@ -37,6 +38,61 @@ def _store_path() -> Path:
     env = os.environ.get("RENPYSLIM_HOME")
     home = Path(env) if env else Path.home() / ".renpyslim"
     return home / "jobs.json"
+
+
+@contextlib.contextmanager
+def _file_lock():
+    """跨进程互斥：Web 与 CLI 可能同时写同一份 jobs.json。
+
+    进程内 _LOCK 只能挡住本进程的线程；两个进程各自“读旧表→改→写回”
+    会让后写者覆盖先写者（实测 30 条并发写只剩 21 条）。这里对
+    同目录的 jobs.json.lock 加建议锁，锁住整个读-改-写临界区。
+    加锁失败（文件系统不支持等）只降级为不加锁，不阻断任务记录。
+    """
+    path = _store_path()
+    handle = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = path.with_name(path.name + ".lock")
+        handle = open(lock_path, "a+b")
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+            except OSError:
+                logger.warning("任务历史文件锁不可用（%s），本次不跨进程加锁",
+                               lock_path)
+                yield
+                return
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            try:
+                if os.name == "nt":
+                    import msvcrt
+                    handle.seek(0)
+                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                else:
+                    import fcntl
+                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+            except OSError:
+                pass
+    except OSError as exc:
+        logger.warning("无法创建任务历史文件锁（%s），本次不跨进程加锁：%s",
+                       path, exc)
+        yield
+        return
+    finally:
+        if handle is not None:
+            handle.close()
 
 
 def _jsonable(value: Any, depth: int = 0) -> Any:
@@ -217,7 +273,7 @@ def record_start(job_id: str, kind: str, title: str = "",
         "summary": {},
         "error": None,
     }
-    with _LOCK:
+    with _LOCK, _file_lock():
         jobs = [job for job in _load_unlocked() if job["id"] != record["id"]]
         jobs.insert(0, record)
         _save_unlocked(jobs)
@@ -226,7 +282,7 @@ def record_start(job_id: str, kind: str, title: str = "",
 
 def set_title(job_id: str, title: str) -> bool:
     """给任务补标题（如游戏名）；找不到任务返回 False。"""
-    with _LOCK:
+    with _LOCK, _file_lock():
         jobs = _load_unlocked()
         for job in jobs:
             if job["id"] == str(job_id):
@@ -239,7 +295,7 @@ def set_title(job_id: str, title: str) -> bool:
 def heartbeat(job_id: str, force: bool = False) -> bool:
     """刷新任务心跳；默认 5 秒内的重复调用不写盘，force=True 强制写。"""
     now = time.time()
-    with _LOCK:
+    with _LOCK, _file_lock():
         jobs = _load_unlocked()
         for job in jobs:
             if job["id"] == str(job_id):
@@ -255,7 +311,7 @@ def heartbeat(job_id: str, force: bool = False) -> bool:
 def record_finish(job_id: str, status: str, summary: Any = None,
                   error: Any = None) -> dict:
     """登记任务结束。找不到开始记录时补一条，保证历史不断档。"""
-    with _LOCK:
+    with _LOCK, _file_lock():
         jobs = _load_unlocked()
         for job in jobs:
             if job["id"] == str(job_id):
@@ -291,7 +347,7 @@ def list_jobs(limit: int = DEFAULT_LIMIT) -> list[dict]:
         limit = max(0, min(int(limit), MAX_JOBS))
     except (TypeError, ValueError):
         limit = DEFAULT_LIMIT
-    with _LOCK:
+    with _LOCK, _file_lock():
         jobs = _load_unlocked()
         changed = False
         now = time.time()
@@ -312,7 +368,7 @@ def list_jobs(limit: int = DEFAULT_LIMIT) -> list[dict]:
 
 def clear() -> int:
     """清空任务历史，返回清掉的条数。"""
-    with _LOCK:
+    with _LOCK, _file_lock():
         jobs = _load_unlocked()
         _save_unlocked([])
         return len(jobs)

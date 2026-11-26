@@ -57,7 +57,10 @@ def find_launcher(sdk: Optional[str]) -> Optional[str]:
     """
     if not sdk:
         return None
-    base = Path(sdk)
+    # 统一 resolve 成绝对路径：调用点普遍以 SDK 目录为 cwd 执行启动器，
+    # 相对 SDK（如 `--sdk sdk`）会让 "sdk/renpy.sh" 在 cwd=sdk 下再套一层，
+    # 变成 sdk/sdk/renpy.sh 而报 Errno 2。
+    base = Path(sdk).resolve()
     for name in LAUNCHER_NAMES:
         cand = base / name
         if cand.is_file():

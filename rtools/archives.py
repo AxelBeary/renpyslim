@@ -65,6 +65,20 @@ def is_archive(path: str) -> bool:
     return _archive_suffix(path) in ARCHIVE_EXTS
 
 
+# 本工具能**写出**的格式。7z / RAR 只用于解包（RAR 没有可写实现，
+# 7z 写入要外部工具），回包时不能沿用它们的后缀。
+_WRITABLE_SUFFIXES = frozenset({".zip", ".tar", *_TAR_SUFFIXES})
+
+
+def repack_suffix(input_suffix: str) -> str:
+    """回包该用什么后缀：能原样写回的沿用，只读格式（.7z/.rar）回 zip。
+
+    不这么做的话，7z/RAR 输入会在优化全部跑完后、最后打包一步才抛
+    “不支持的打包格式”，用户白等一场。zip 兼容性最好，是安全默认。
+    """
+    return input_suffix if input_suffix in _WRITABLE_SUFFIXES else ".zip"
+
+
 def find_7zip() -> Optional[str]:
     """找本机 7-Zip（用于解 RAR）。"""
     exe = shutil.which("7z")
@@ -159,11 +173,18 @@ def extract_archive(src: str, dest_dir: str,
                         # 大小写不敏感撞名、完全重复条目、GBK/UTF-8 回解后
                         # 收敛为同名），先到条目照原样解压，后到条目改名带
                         # .dup{N} 后缀保留内容并告警，避免静默覆盖丢数据。
-                        # 归一化名 -> 先到条目原名（告警时引用）
+                        # 归一化名 -> 先到条目原名（告警时引用）。
+                        # 只有大小写不敏感的文件系统（Windows）才需要 casefold；
+                        # POSIX 上 Logo.png 与 logo.png 是两个合法文件，
+                        # 强行改名成 .dup1 等于让游戏缺资源。
+                        def _norm(name: str) -> str:
+                            normalized = name.replace("\\", "/")
+                            return (normalized.casefold() if os.name == "nt"
+                                    else normalized)
                         seen: dict[str, str] = {}
                         for info in infos:
                             _repair_zip_name(info)
-                            norm = info.filename.replace("\\", "/").casefold()
+                            norm = _norm(info.filename)
                             first = seen.get(norm)
                             if first is None:
                                 seen[norm] = info.filename
@@ -177,12 +198,12 @@ def extract_archive(src: str, dest_dir: str,
                             n = 1
                             while True:
                                 cand_name = f"{info.filename}.dup{n}"
-                                if cand_name.replace("\\", "/").casefold() not in seen:
+                                if _norm(cand_name) not in seen:
                                     break
                                 n += 1
                             dup_info = copy.copy(info)
                             dup_info.filename = cand_name
-                            seen[cand_name.replace("\\", "/").casefold()] = cand_name
+                            seen[_norm(cand_name)] = cand_name
                             logger.warning(
                                 "压缩包撞名：条目 '%s' 与已解压条目 '%s' 冲突，"
                                 "后到内容保留为 '%s'。", info.filename, first, cand_name)
@@ -406,7 +427,10 @@ def _tar_set_mode(path: str, mode: Optional[int], is_dir: bool) -> None:
     if is_dir or not mode:          # mode 为 None 或极端包里的全 0，跳过
         return
     try:
-        os.chmod(path, stat.S_IMODE(mode))
+        # 只还原普通读写执行位，绝不还原 setuid/setgid/sticky：
+        # 不可信包不能往用户目录里写 setuid 文件；3.12 的 data_filter
+        # 也只保留 0o755，两个版本口径必须一致。
+        os.chmod(path, stat.S_IMODE(mode) & 0o755)
     except OSError:
         pass
 

@@ -36,10 +36,15 @@ def test_zip_case_collision_keeps_both(tmp_path):
     files = {p.name: p.read_bytes() for p in (out / "a").iterdir()}
     assert set(files.values()) == {b"UPPER", b"lower"}, "两份内容都必须保留"
     assert len(files) == 2
-    # 先到条目原名落盘，后到条目改名保留
-    assert files["CG.txt"] == b"UPPER"
-    dup = [name for name in files if ".dup" in name]
-    assert len(dup) == 1 and files[dup[0]] == b"lower"
+    if os.name == "nt":
+        # Windows 大小写不敏感：先到条目原名落盘，后到条目改名保留
+        assert files["CG.txt"] == b"UPPER"
+        dup = [name for name in files if ".dup" in name]
+        assert len(dup) == 1 and files[dup[0]] == b"lower"
+    else:
+        # POSIX 大小写敏感：两个名字都是合法文件，不能改名（否则游戏缺资源）
+        assert files["CG.txt"] == b"UPPER"
+        assert files["cg.txt"] == b"lower"
 
 
 def test_zip_duplicate_entries_keeps_both(tmp_path):

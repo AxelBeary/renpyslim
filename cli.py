@@ -483,6 +483,10 @@ def cmd_package(args) -> int:
         # 审核修复（中-32）：不只捕 FileNotFoundError，权限/超时等
         # 同样要以 JSON 出口收场
         return _fail(str(e))
+    if result.get("errors") and not result.get("built"):
+        # 官方 SDK 非零退出时 package_project 只把错误放进 errors；
+        # 旧版仍返回 ok:true，自动化会把失败当成功。
+        return _fail("打包失败：" + "；".join(result["errors"])[:800])
     return _ok({"sdk": sdk, "result": result})
 
 
@@ -525,6 +529,10 @@ def cmd_full(args) -> int:
                                               archive_rpa=args.archive_rpa)
     except Exception as e:
         return _fail(f"优化已完成但打包失败：{e}")
+    if pkg_result.get("errors") and not pkg_result.get("built"):
+        # 同 cmd_package：官方打包非零退出不能报 ok:true
+        return _fail("优化已完成，但打包失败："
+                     + "；".join(pkg_result["errors"])[:800])
     opt_result.pop("report_dict", None)
     opt_result["report"] = str(opt_result["report"])
     opt_result["changelog"] = str(opt_result["changelog"])

@@ -147,8 +147,9 @@ def run_font_slim(font_path: str, text_sources: list[str],
                params={"error": "no_outputs"})
         raise FontSlimError("没有任何字重瘦身成功，请检查字体文件。")
 
-    # 第 3 步：导出字符清单
-    charlist = write_charlist(chars, str(out_dir / f"{fp.stem}-字符清单.txt"))
+    # 第 3 步：导出字符清单（同名文件加序号，绝不覆盖用户已有清单）
+    charlist = write_charlist(
+        chars, str(_unique_path(out_dir / f"{fp.stem}-字符清单.txt")))
     p.emit("done", f"完成：生成 {len(outputs)} 个瘦身字体 + 字符清单",
            code="font_done", params={"n": len(outputs)})
 

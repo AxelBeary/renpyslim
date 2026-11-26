@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+import multiprocessing
+import sys
 from pathlib import Path
 
 from rtools.decompile import _import_unrpyc, decompile_scripts
@@ -22,6 +24,25 @@ def _make_rpyc(path: Path, data: bytes = b"not a real rpyc payload") -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(data)
     return path
+
+
+def test_unrpyc_import_falls_back_when_lock_raises_oserror(monkeypatch):
+    """IPC/semaphore 不可用时降级单线程，而不是让整个反编译功能崩溃。"""
+    previous = sys.modules.pop("unrpyc", None)
+
+    def broken_lock():
+        raise OSError("semaphore unavailable")
+
+    monkeypatch.setattr(multiprocessing, "Lock", broken_lock)
+    try:
+        unrpyc = _import_unrpyc()
+        assert unrpyc.cpu_count() == 1
+        with unrpyc.Pool() as pool:
+            assert list(pool.imap(lambda value: value + 1, [1, 2])) == [2, 3]
+    finally:
+        sys.modules.pop("unrpyc", None)
+        if previous is not None:
+            sys.modules["unrpyc"] = previous
 
 
 def test_failed_decompile_cleans_partial_output(tmp_path, monkeypatch):
