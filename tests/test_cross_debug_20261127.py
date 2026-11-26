@@ -40,7 +40,7 @@ def test_repack_suffix_downgrades_readonly_formats():
     assert archives.repack_suffix("") == ".zip"
 
 
-@pytest.mark.skipif(os.name == "nt", reason="setuid 语义仅 POSIX")
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 专属：setuid 语义")
 def test_tar_extraction_strips_setuid_bits(tmp_path):
     tar_path = tmp_path / "evil.tar"
     payload = tmp_path / "payload.sh"
@@ -58,7 +58,7 @@ def test_tar_extraction_strips_setuid_bits(tmp_path):
     assert mode & 0o111
 
 
-@pytest.mark.skipif(os.name == "nt", reason="POSIX 大小写敏感")
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 专属：大小写敏感文件系统")
 def test_zip_case_variants_are_not_renamed_on_posix(tmp_path):
     zpath = tmp_path / "case.zip"
     with zipfile.ZipFile(zpath, "w") as zf:
@@ -121,7 +121,7 @@ def _wait_active(count: int, timeout: float = 10.0) -> None:
     raise AssertionError("外部进程未登记到 _ACTIVE")
 
 
-@pytest.mark.skipif(os.name == "nt", reason="依赖 POSIX 进程组语义")
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 专属：进程组信号语义")
 def test_kill_children_only_touches_same_scope():
     holder: dict = {}
     errors: list = []
@@ -190,7 +190,7 @@ def test_working_copy_skips_symlinks(tmp_path):
     try:
         link.symlink_to(outside)
     except (OSError, NotImplementedError):
-        pytest.skip("当前环境不允许创建符号链接")
+        pytest.skip("本机不支持创建符号链接")
 
     dest = backup.make_working_copy(str(project), str(tmp_path / "work"))
     copied = Path(dest) / "game" / "leak.txt"
@@ -291,7 +291,7 @@ def _make_rpyc2(text: str) -> bytes:
     return b"RENPY RPC2" + slot1 + slot0 + payload
 
 
-@pytest.mark.skipif(os.name == "nt", reason="执行位语义仅 POSIX")
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 专属：执行位语义")
 def test_find_build_tools_skips_non_executable_latest(tmp_path):
     bt = tmp_path / "rapt" / "Sdk" / "build-tools"
     for version, mode in (("35.0.0", 0o644), ("34.0.0", 0o755)):
