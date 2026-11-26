@@ -65,9 +65,10 @@
 **已知边界（如实记录，别当已支持）**
 
 - **macOS 二进制/签名公证、Linux AppImage/可执行包分发没有做**，issue 里列为后续里程碑。
-- **分发打包（`full` / `package`）的 Linux 路径已在 proot 环境实测**：Ubuntu 24.04 /
-  aarch64（proot）+ 官方 ARM64 SDK 跑通 `package --platforms linux`，产出 tar.bz2。
-  但非物理机/WSL 真机、未运行产物；Windows/macOS/Android 打包仍未实跑。
+- **分发打包（`full` / `package`）的 Linux 路径已实测**：官方 SDK 在 proot Ubuntu
+  24.04 / aarch64（ARM64 SDK 8.6.1）与 WSL Ubuntu 24.04.5 / x86_64（x86_64 SDK 8.6.1）
+  上都跑通 `package --platforms linux` 并产出 tar.bz2；WSL 侧另验了 lint 与 `--version`。
+  但**产物没有启动运行过**，物理机与 macOS 未测；Windows/Android 打包仍未实跑。
   Windows exe 分发仍是官方发布形态。
 - **Web GUI 无桌面环境能启动、接口可用**，但没有图形会话时"打开目录/定位文件"
   按钮会给明确失败提示（设计如此）。

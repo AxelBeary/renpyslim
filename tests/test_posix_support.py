@@ -169,7 +169,8 @@ def _make_sdk(tmp_path: Path, name: str, *, mode: int = 0o755) -> Path:
     return sdk_dir
 
 
-def test_find_launcher_prefers_exe(tmp_path):
+def test_find_launcher_accepts_exe_only(tmp_path):
+    """只有 renpy.exe 的目录照样算 SDK（跨平台备份/挂载盘常见）。"""
     sdk_dir = _make_sdk(tmp_path, "renpy.exe")
     assert Path(sdk.find_launcher(str(sdk_dir))).name == "renpy.exe"
 

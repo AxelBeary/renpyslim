@@ -53,8 +53,9 @@ python cli.py env [--sdk SDK路径]
 
 1. **SDK 启动器统一解析**（`rtools/sdk.py`）：`renpy.exe`（Windows）与 `renpy.sh`
    （Linux/macOS）都认，候选顺序按平台（Windows exe 优先、POSIX sh 优先），
-   Windows 行为零变化。lint、distribute、android_build、APK remap 全部走同一个入口，不再各写一套路径拼接；
-   `renpy.sh` 缺执行位时给出 `chmod +x <路径>` 的明确提示，而不是含糊的"找不到 SDK"。
+   Windows 行为零变化。lint、distribute、android_build、APK remap 全部走
+   同一个入口，不再各写一套路径拼接；`renpy.sh` 缺执行位时给出
+   `chmod +x <路径>` 的明确提示，而不是含糊的"找不到 SDK"。
 2. **Web 本地路径校验支持 POSIX**（`web/app.py::_local_path`）：旧版只靠盘符判定，
    Linux 上所有绝对路径都被拒（Web 的文件类接口等于全废）。现在 POSIX 分支以 `/`
    为根，相对路径 / NUL / 网络路径照旧拒绝，安全语义与 Windows 分支一致。
@@ -87,10 +88,12 @@ Windows 与 WSL Ubuntu 双平台跑通（数量以 `pytest tests -q` 实际收�
 
 - **macOS 二进制/签名公证、Linux AppImage/可执行包分发没有做**，issue 里也列为后续里程碑。
   真实可用的分发形态仍只有 Windows exe（官方 Ren'Py 的 exe 形态）。
-- **分发打包（`full` / `package`）的 Linux 路径已在 proot 环境实测**：在 Ubuntu 24.04
-  / aarch64 的 proot 上装官方 ARM64 SDK 跑通 `package --platforms linux`，产出 tar.bz2。
-  但这不是物理机/WSL 真机，也没有运行产物；Windows/macOS/Android 打包仍未实跑，
-  macOS 签名公证与 Linux AppImage 分发仍不在范围内。
+- **分发打包（`full` / `package`）的 Linux 路径已实测**：官方 SDK 在两种环境跑通
+  `package --platforms linux` 并产出 tar.bz2——Ubuntu 24.04 / aarch64 的 proot（官方
+  ARM64 SDK 8.6.1），以及 WSL Ubuntu 24.04.5 / x86_64（官方 x86_64 SDK 8.6.1，同时验了
+  lint 与 `--version`）。但**打包产物没有实际运行过**（没启动游戏验证可玩性），
+  物理机与 macOS 未测；Windows/Android 打包仍未实跑，macOS 签名公证与 Linux AppImage
+  分发不在范围内。
 - **Web GUI 无桌面环境可启动、接口可用**，但没有图形会话时"打开目录/定位文件"按钮
   会返回明确失败提示（这是设计如此，不是坏掉）。
 
@@ -256,9 +259,9 @@ On Linux / WSL Ubuntu, install dependencies and run `python cli.py ...` exactly 
 1. **Unified SDK launcher resolution** (`rtools/sdk.py`): both `renpy.exe` (Windows)
    and `renpy.sh` (Linux/macOS) are recognised, with a platform-dependent candidate
    order (exe first on Windows, sh first on POSIX) so Windows behaviour is unchanged.
-   lint, distribute, android_build and APK remap all go through this one entry point instead of each building its own path; a
-   non-executable `renpy.sh` produces an explicit `chmod +x <path>` hint instead of a
-   vague "SDK not found".
+   lint, distribute, android_build and APK remap all go through this one entry
+   point instead of each building its own path; a non-executable `renpy.sh`
+   produces an explicit `chmod +x <path>` hint instead of a vague "SDK not found".
 2. **POSIX-aware local path validation in the Web layer** (`web/app.py::_local_path`):
    the old code only checked for a drive letter, so on Linux **every** absolute path
    was rejected (all file endpoints effectively dead). The POSIX branch now treats
@@ -302,11 +305,13 @@ failure; the `passed / failed` counts are the real signal.
 - **macOS binaries / signing and notarisation, and Linux AppImage / executable-package
   distribution are not done**; the issue lists them as later milestones. The only real
   distribution form is still the Windows exe.
-- **Packaging (`full` / `package`) on Linux has been smoke-tested in a proot
-  environment**: with the official ARM64 SDK on Ubuntu 24.04 / aarch64 (proot),
-  `package --platforms linux` produced a tar.bz2. This is not a physical machine or
-  WSL, and the built game was not run; Windows/macOS/Android packaging remains
-  untested, as do macOS signing/notarisation and Linux AppImage distribution.
+- **Packaging (`full` / `package`) on Linux has been smoke-tested**: the official
+  SDK produced a tar.bz2 from `package --platforms linux` in two environments —
+  Ubuntu 24.04 / aarch64 under proot (official ARM64 SDK 8.6.1) and WSL Ubuntu
+  24.04.5 / x86_64 (official x86_64 SDK 8.6.1, where lint and `--version` were
+  checked too). **The packaged game was never launched**, and no physical machine
+  or macOS host was tested; Windows/Android packaging remains untested, as do
+  macOS signing/notarisation and Linux AppImage distribution.
 - **The Web GUI starts and its API works without a desktop**, but with no graphical
   session the open-folder / reveal button returns an explicit failure message. That is
   by design, not a defect.
