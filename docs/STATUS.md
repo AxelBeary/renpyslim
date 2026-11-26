@@ -68,8 +68,16 @@
 - **分发打包（`full` / `package`）的 Linux 路径已实测**：官方 SDK 在 proot Ubuntu
   24.04 / aarch64（ARM64 SDK 8.6.1）与 WSL Ubuntu 24.04.5 / x86_64（x86_64 SDK 8.6.1）
   上都跑通 `package --platforms linux` 并产出 tar.bz2；WSL 侧另验了 lint 与 `--version`。
-  但**产物没有启动运行过**，物理机与 macOS 未测；Windows/Android 打包仍未实跑。
+  产物已由 issue 报告者在 aarch64 上实测**能启动到游戏主循环**（用 SDK 的
+  `renpy` 启动器 + `SDL_VIDEODRIVER=dummy`）；本工具自身未复跑该启动验证。
+  物理机与 macOS 未测；Windows/Android 打包仍未实跑。
   Windows exe 分发仍是官方发布形态。
+- **Linux 产物启动失败的一个已知自伤原因**：工程没设 `build.name` / `config.name`
+  时，官方 distribute 产出的 `.sh` 没有名字，lib 里也没有同名启动器，双击报
+  "not found / may not support this platform"。这**不是 Ren'Py bug**（默认配置即如此，
+  只设 `config.name` 也不够，得设 `build.name`），也不是本工具拼错命令。
+  已加打包前提示（`packager.unnamed_project_warning`），并补回归
+  `tests/test_packager_naming.py`。
 - **Web GUI 无桌面环境能启动、接口可用**，但没有图形会话时"打开目录/定位文件"
   按钮会给明确失败提示（设计如此）。
 

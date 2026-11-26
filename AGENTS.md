@@ -91,9 +91,14 @@ Windows 与 WSL Ubuntu 双平台跑通（数量以 `pytest tests -q` 实际收�
 - **分发打包（`full` / `package`）的 Linux 路径已实测**：官方 SDK 在两种环境跑通
   `package --platforms linux` 并产出 tar.bz2——Ubuntu 24.04 / aarch64 的 proot（官方
   ARM64 SDK 8.6.1），以及 WSL Ubuntu 24.04.5 / x86_64（官方 x86_64 SDK 8.6.1，同时验了
-  lint 与 `--version`）。但**打包产物没有实际运行过**（没启动游戏验证可玩性），
+  lint 与 `--version`）。产物由 issue 报告者在 aarch64 上实测**能启动到主循环**
+  （SDK 的 `renpy` 启动器 + `SDL_VIDEODRIVER=dummy`），本工具未复跑该启动验证。
   物理机与 macOS 未测；Windows/Android 打包仍未实跑，macOS 签名公证与 Linux AppImage
   分发不在范围内。
+- **Linux 产物启动失败的一个已知自伤原因**：工程没设 `build.name` 时，官方产物里的
+  `.sh` 没有名字、lib 里也没有同名启动器，报 "not found / may not support this
+  platform"。这不是 Ren'Py bug（默认配置如此；只设 `config.name` 不够，要 `build.name`），
+  打包前已加提示。
 - **Web GUI 无桌面环境可启动、接口可用**，但没有图形会话时"打开目录/定位文件"按钮
   会返回明确失败提示（这是设计如此，不是坏掉）。
 
@@ -309,9 +314,17 @@ failure; the `passed / failed` counts are the real signal.
   SDK produced a tar.bz2 from `package --platforms linux` in two environments —
   Ubuntu 24.04 / aarch64 under proot (official ARM64 SDK 8.6.1) and WSL Ubuntu
   24.04.5 / x86_64 (official x86_64 SDK 8.6.1, where lint and `--version` were
-  checked too). **The packaged game was never launched**, and no physical machine
-  or macOS host was tested; Windows/Android packaging remains untested, as do
-  macOS signing/notarisation and Linux AppImage distribution.
+  checked too). The issue reporter then confirmed the built package **starts and
+  reaches the main loop** on aarch64 (SDK's own `renpy` launcher with
+  `SDL_VIDEODRIVER=dummy`); this tool has not re-run that launch check. No physical
+  machine or macOS host was tested; Windows/Android packaging remains untested, as
+  do macOS signing/notarisation and Linux AppImage distribution.
+- **One known self-inflicted cause of a Linux package that will not start**: if the
+  project never sets `build.name`, the official output's `.sh` has no name and the
+  lib directory has no matching launcher, so it reports "not found / may not support
+  this platform". That is not a Ren'Py bug (it is the default behaviour; setting only
+  `config.name` is not enough — `build.name` is what matters). A pre-package hint
+  was added.
 - **The Web GUI starts and its API works without a desktop**, but with no graphical
   session the open-folder / reveal button returns an explicit failure message. That is
   by design, not a defect.

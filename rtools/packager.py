@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -219,6 +220,46 @@ def _clean_build_log(text: str, keep: int = 40) -> str:
     return "\n".join(useful[-keep:])
 
 
+# Linux/aarch64 打包提示（issue #26 第三阶段实测发现）。
+#
+# 背景：官方 `distribute` 产出的 .sh 启动脚本按「自己的文件名」去找
+# `lib/py3-linux-<arch>/<同名文件>`，找不到再回退到 `lib/.../renpy`。
+# 而 Ren'Py 打包时是用 `build.executable_name` 给启动器命名的——工程既没设
+# `build.name` 也没设 `config.name` 时 executable_name 为空，产物里就会出现
+# 一个名字是 ".sh"、lib 里也没有对应文件的怪包，双击直接报
+# 「<...>/.sh not found / may not support the linux-aarch64 platform」。
+#
+# 这不是 Ren'Py 的 bug（官方默认就长这样），也不是本工具拼错命令，而是
+# 「工程少了命名」导致的自伤。这里在真正打包前给出可操作提示，不阻断。
+_NO_NAME_HINT = (
+    "工程没有设置 build.name / config.name，打包产物里的 Linux 启动脚本"
+    "会没有名字（例如只剩 \".sh\"），自带的启动器也找不到对应文件。"
+    "请在 game/options.rpy 里加一行 define build.name = \"你的游戏名\" 后重新打包。"
+)
+
+
+def unnamed_project_warning(project_dir: str) -> Optional[str]:
+    """工程未设置 build.name / config.name 时返回提示文案，否则 None。
+
+    只做静态判断：从 game/*.rpy 里找 `define build.name` / `define config.name`。
+    读不到或没设就提示——宁可口径保守（多提示一次），也不要让用户拿到一个
+    名字为空、跑不起来的 Linux 包才发现问题。
+    """
+    game = Path(project_dir) / "game"
+    if not game.is_dir():
+        return None
+    # 必须把所有 .rpy 都看完再下结论：选项散落在哪个文件不确定，
+    # 见到第一个没有 define 的文件就返回会误报（脚本文件通常都没有）。
+    for rpy in game.glob("*.rpy"):
+        try:
+            text = rpy.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if re.search(r"^\s*define\s+(?:build|config)\.name\s*=", text, re.M):
+            return None
+    return _NO_NAME_HINT
+
+
 def package_project(sdk: str, project_dir: str, platforms: list[str],
                     destination: Optional[str] = None,
                     log=print, archive_rpa: bool = False) -> dict:
@@ -264,6 +305,11 @@ def package_project(sdk: str, project_dir: str, platforms: list[str],
     try:
         pc_platforms = [p for p in platforms if p in PLATFORM_PACKAGES]
         if pc_platforms:
+            # issue #26：未命名工程打出的 Linux 包启动不了（官方行为，非 bug）。
+            # 提示写在真正打包之前，不阻断——用户可能只是没设名字仍要包。
+            name_hint = unnamed_project_warning(project_dir)
+            if name_hint:
+                log(name_hint)
             cmd = [renpy_exe, "launcher", "distribute", project_dir,
                    "--destination", dest]
             for p in pc_platforms:
