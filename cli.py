@@ -346,7 +346,16 @@ def cmd_analyze(args) -> int:
         cleanup_dir = tempfile.mkdtemp(prefix="rtools_unpack_")
         try:
             archives.extract_archive(str(path), cleanup_dir, args.password)
-            path = Path(archives.find_dist_root(cleanup_dir))
+            roots = archives.find_dist_roots(cleanup_dir)
+            if len(roots) > 1:
+                import shutil
+                names = "；".join(Path(x).name for x in roots)
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
+                cleanup_dir = None
+                return _fail(
+                    f"压缩包里找到 {len(roots)} 个成品目录（{names}）。"
+                    "本工具一次只分析一个成品，请把各平台拆开分别分析。")
+            path = Path(roots[0])
         except archives.ArchiveError as e:
             # 审核修复（中-32）：解压失败路径以前直接 return，
             # 泄漏临时目录（外层 try/finally 尚未进入）

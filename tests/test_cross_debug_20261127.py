@@ -230,6 +230,55 @@ def test_unreferenced_scan_includes_source_scripts(tmp_path):
     assert "game/audio/orphan.ogg" in flagged
 
 
+def test_av1_requires_engine_8(tmp_path):
+    assert not pipeline._av1_allowed(tmp_path)          # 缺版本文件
+    (tmp_path / "script_version.txt").write_text("(7, 4, 0)", encoding="utf-8")
+    assert not pipeline._av1_allowed(tmp_path)
+    (tmp_path / "script_version.txt").write_text("(8, 0, 0)", encoding="utf-8")
+    assert pipeline._av1_allowed(tmp_path)
+    (tmp_path / "script_version.txt").write_text("(8, 3, 2)", encoding="utf-8")
+    assert pipeline._av1_allowed(tmp_path)
+
+
+def test_analyze_rejects_multi_root_archive(tmp_path, capsys):
+    import argparse
+    import cli
+
+    z = tmp_path / "multi.zip"
+    with zipfile.ZipFile(z, "w") as zf:
+        for platform in ("PC", "Mac"):
+            zf.writestr(f"{platform}/Game/game/script.rpyc", b"fake")
+            zf.writestr(f"{platform}/Game/game/gui/logo.png", b"png")
+    code = cli.cmd_analyze(argparse.Namespace(path=str(z), mode=None,
+                                              password=None))
+    payload = json.loads(capsys.readouterr().out)
+    assert code == 1 and payload["ok"] is False
+    assert "2 个成品目录" in payload["error"]
+
+
+def test_archive_config_restores_user_file(tmp_path):
+    from rtools import packager
+
+    project = tmp_path / "Game"
+    game = project / "game"
+    game.mkdir(parents=True)
+    user_cfg = game / packager.ARCHIVE_CONFIG_NAME
+    original = "init python:\n    build.archive('custom', 'all')\n"
+    user_cfg.write_text(original, encoding="utf-8")
+
+    cfg, backed_up = packager.inject_archive_config(str(project))
+    assert backed_up is True
+    assert Path(cfg).read_text(encoding="utf-8") != original
+    assert user_cfg.with_name(
+        user_cfg.name + packager.USER_BACKUP_SUFFIX).exists()
+
+    packager.remove_archive_config(str(project))
+    assert user_cfg.exists(), "用户原有配置被删掉了"
+    assert user_cfg.read_text(encoding="utf-8") == original
+    assert not user_cfg.with_name(
+        user_cfg.name + packager.USER_BACKUP_SUFFIX).exists()
+
+
 # ---------------------------------------------------------------------------
 # APK
 # ---------------------------------------------------------------------------

@@ -71,5 +71,11 @@ def lint_project(sdk: str, project_dir: str, timeout: int = 600) -> dict:
     summary = "通过，未发现错误" if ok else \
         (f"发现 {len(suspects)} 处疑似错误" if suspects
          else f"lint 退出码 {proc.returncode}")
+    # output 只留末 6000 字符给 UI；早段错误可能被截掉，所以把
+    # 疑似错误行附在末尾，落盘的 validation.txt 才不会漏掉真正的错误。
+    output = text[-6000:]
+    if suspects:
+        output += ("\n\n=== 疑似错误行（完整）===\n"
+                   + "\n".join(suspects))
     return {"ran": True, "ok": ok, "summary": summary,
-            "suspects": suspects[:20], "output": text[-6000:]}
+            "suspects": suspects[:20], "output": output}

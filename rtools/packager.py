@@ -124,6 +124,11 @@ def remove_archive_config(project_dir: str) -> None:
         text = cfg_path.read_text(encoding="utf-8", errors="ignore")
         if ARCHIVE_TEMPLATE_MARKER in text:
             cfg_path.unlink()
+            # 用户原本就有同名文件：注入前备份成 .user.bak，这里必须
+            # 放回原位，否则用户的活跃配置文件被无声删除。
+            bak_path = cfg_path.with_name(cfg_path.name + USER_BACKUP_SUFFIX)
+            if bak_path.exists():
+                os.replace(bak_path, cfg_path)
     except OSError:
         pass
 

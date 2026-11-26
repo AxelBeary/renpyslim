@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import ast
 import contextvars
 import json
 import os
@@ -306,6 +307,16 @@ def _font_slim_plan(rel: str, build_chars: set, buckets: dict,
     return build_chars, "global"
 
 
+def _av1_allowed(game_dir) -> bool:
+    """AV1 只有 Ren'Py 8.0+ 能播放；版本不明一律按不支持处理。"""
+    try:
+        raw = (Path(game_dir) / "script_version.txt").read_text(
+            encoding="utf-8", errors="ignore").strip()
+        return tuple(int(x) for x in ast.literal_eval(raw)) >= (8, 0, 0)
+    except Exception:
+        return False
+
+
 def run_project(project_dir: str, options: OptimizeOptions,
                 work_root: str, output_dir: str,
                 progress: Progress | None = None,
@@ -339,6 +350,11 @@ def run_project(project_dir: str, options: OptimizeOptions,
                code="copy_done", params={"path": working})
 
     game_dir = str(_find_game_dir(working))
+    # 工程模式：多半还没有 script_version.txt（它通常在打包后生成），
+    # 没有该文件时尊重用户显式开关；一旦有版本文件就按 8.0+ 门控。
+    _sv = Path(game_dir) / "script_version.txt"
+    use_av1 = options.experimental_av1 and (
+        not _sv.exists() or _av1_allowed(game_dir))
 
     # --- 第 2 步：扫描 + 分析 ---
     p.emit("analyze", "正在扫描资源文件……", code="scan_start")
@@ -608,7 +624,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
             out = {"records": [], "saved": 0, "rename": None, "warn": None,
                    "failed": False, "skipped": False}
             h = cache.hash_file(a.path) if options.use_cache else None
-            key = f"vid|{options.preset}|{int(options.experimental_av1)}|{a.ext}"
+            key = f"vid|{options.preset}|{int(use_av1)}|{a.ext}"
             hit = cache.lookup_hash(h, key) if h else None
             if hit and cache.apply_cached(hit, a.path):
                 new_sz = Path(a.path).stat().st_size
@@ -620,7 +636,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 return out
             try:
                 res = compress_video(a.path, a.path, options.preset,
-                                     use_av1=options.experimental_av1)
+                                     use_av1=use_av1)
             except RuntimeError as e:
                 out["warn"] = str(e)
                 return out
@@ -693,7 +709,11 @@ def run_project(project_dir: str, options: OptimizeOptions,
             report.warnings.append(
                 "视频压缩为实验性功能：同名重编码，若个别播放器出现兼容问题，"
                 "请在高级选项关闭后重跑。")
-            if options.experimental_av1:
+            if options.experimental_av1 and not use_av1:
+                report.warnings.append(
+                    "AV1 视频编码已跳过：无法确认引擎为 Ren'Py 8.0+，"
+                    "为免老引擎播放失败，本次按普通编码处理。")
+            elif use_av1:
                 report.warnings.append(
                     "已启用 AV1 视频编码（实验性）：官方支持且体积更小，"
                     "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。")
@@ -918,6 +938,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     # 反编译出 rpy 后，既有的引用改写/格式转换机制全部解锁；
     # 引擎启动时发现 rpy 比 rpyc 新会自动重编译，玩家无感
     game_dir_p = working_p / "game"
+    use_av1 = options.experimental_av1 and _av1_allowed(game_dir_p)
     dec_stats = None
     if options.experimental_decompile and game_dir_p.is_dir():
         from . import decompile as _decompile
@@ -990,7 +1011,11 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     remap_map: dict[str, str] = {}   # 实验性运行时重映射（BACKLOG B9）
     if options.do_videos and not find_ffmpeg():
         report.warnings.append("未找到 FFmpeg，视频压缩已跳过。")
-    if options.do_videos and options.experimental_av1 and find_ffmpeg():
+    if options.do_videos and options.experimental_av1 and not use_av1:
+        report.warnings.append(
+            "AV1 视频编码已跳过：无法确认引擎为 Ren'Py 8.0+，"
+            "为免老引擎播放失败，本次按普通编码处理。")
+    elif options.do_videos and use_av1 and find_ffmpeg():
         report.warnings.append(
             "已启用 AV1 视频编码（实验性）：官方支持且体积更小，"
             "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。")
@@ -1195,7 +1220,7 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                 if options.do_videos and a.ext in (".mp4", ".webm", ".ogv") and find_ffmpeg():
                     try:
                         res = compress_video(a.path, a.path, options.preset,
-                                             use_av1=options.experimental_av1)
+                                             use_av1=use_av1)
                     except RuntimeError as e:
                         res = None
                         out["warn"] = str(e)
