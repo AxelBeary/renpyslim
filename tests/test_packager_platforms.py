@@ -5,8 +5,11 @@ package_project 是 CLI 与 Web 的共同出口，校验必须在最前面——
 """
 from __future__ import annotations
 
-import pytest
+import os
+from pathlib import Path
 from unittest.mock import patch
+
+import pytest
 
 from rtools import packager
 
@@ -21,6 +24,20 @@ def _fake_sdk(tmp_path):
     sdk = tmp_path / "sdk"
     sdk.mkdir()
     (sdk / "renpy.exe").write_bytes(b"FAKE")
+    return sdk
+
+
+def _fake_sdk_both(tmp_path):
+    """官方 Linux SDK 的真实布局：renpy.exe 与 renpy.sh 并存。"""
+    sdk = tmp_path / "sdk"
+    sdk.mkdir()
+    (sdk / "renpy.exe").write_bytes(b"FAKE")
+    sh = sdk / "renpy.sh"
+    sh.write_text("#!/bin/sh\n", encoding="utf-8")
+    try:
+        os.chmod(sh, 0o755)
+    except OSError:
+        pass
     return sdk
 
 
@@ -114,3 +131,21 @@ def test_padded_platform_name_not_misjudged(tmp_path):
                                           log=lambda m: None)
     assert result["built"] == ["pc"]
     assert result["errors"] == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX 专属：两启动器并存时不能选 exe")
+def test_both_launchers_uses_sh_in_package_command(tmp_path):
+    """官方 Linux SDK 两启动器并存，打包命令必须用 renpy.sh（否则 EACCES）。"""
+    sdk, proj = _fake_sdk_both(tmp_path), _fake_proj(tmp_path)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return _FakeProc()
+
+    with patch.object(packager, "run_quiet", side_effect=fake_run):
+        result = packager.package_project(str(sdk), str(proj), ["pc"],
+                                          destination=str(tmp_path / "dest"),
+                                          log=lambda m: None)
+    assert result["built"] == ["pc"]
+    assert calls and Path(calls[0][0]).name == "renpy.sh"

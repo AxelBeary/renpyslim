@@ -14,7 +14,8 @@
 二进制分发、签名公证都还没做。
 
 1. **SDK 启动器统一解析**（新增 `rtools/sdk.py`）：`renpy.exe`（Windows）与
-   `renpy.sh`（Linux/macOS）都认，候选顺序固定，Windows 行为零变化；
+   `renpy.sh`（Linux/macOS）都认，候选顺序按平台（Windows exe 优先、POSIX sh 优先），
+   Windows 行为零变化；
    lint / distribute / android_build / APK remap 全部收口到
    `find_launcher()` / `require_launcher()`。`renpy.sh` 缺执行位时给
    `chmod +x <路径>` 的明确提示，而不是含糊的"找不到 SDK"。
@@ -64,8 +65,9 @@
 **已知边界（如实记录，别当已支持）**
 
 - **macOS 二进制/签名公证、Linux AppImage/可执行包分发没有做**，issue 里列为后续里程碑。
-- **分发打包（`full` / `package`）只打通了调用路径**：现在能识别官方 Linux SDK 的
-  `renpy.sh` 并正确拼命令，但**没有在装有官方 Linux SDK 的真实机器上实跑过打包**。
+- **分发打包（`full` / `package`）的 Linux 路径已在 proot 环境实测**：Ubuntu 24.04 /
+  aarch64（proot）+ 官方 ARM64 SDK 跑通 `package --platforms linux`，产出 tar.bz2。
+  但非物理机/WSL 真机、未运行产物；Windows/macOS/Android 打包仍未实跑。
   Windows exe 分发仍是官方发布形态。
 - **Web GUI 无桌面环境能启动、接口可用**，但没有图形会话时"打开目录/定位文件"
   按钮会给明确失败提示（设计如此）。
