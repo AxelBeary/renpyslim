@@ -436,11 +436,15 @@ def _check_apk_remap_support(game_root: Path) -> tuple[bool, str]:
         if p.name == remap_mod.REMAP_SCRIPT_NAME or \
                 p.name == remap_mod.REMAP_SCRIPT_NAME + "c":
             continue
-        try:
-            data = p.read_bytes()
-        except OSError:
-            continue
-        if b"file_open_callback" in data or b"loadable_callback" in data:
+        if p.suffix.lower() == ".rpy":
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+        else:
+            # rpyc 文本在 zlib 槽里，必须解压后再找特征串
+            text = charset_mod.read_rpyc_text(p)
+        if "file_open_callback" in text or "loadable_callback" in text:
             return False, "检测到游戏自身设置了文件加载回调，remap 可能冲突"
     return True, ""
 

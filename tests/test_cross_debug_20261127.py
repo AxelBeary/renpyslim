@@ -10,17 +10,19 @@ from __future__ import annotations
 import json
 import os
 import stat
+import struct
 import subprocess
 import sys
 import tarfile
 import threading
 import time
 import zipfile
+import zlib
 from pathlib import Path
 
 import pytest
 
-from rtools import apk, archives, backup, jobstore, pipeline, procutil, sdk
+from rtools import apk, archives, backup, jobstore, pipeline, procutil, remap, sdk
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -209,6 +211,14 @@ def test_unique_dir_never_reuses_existing_directory(tmp_path):
 # APK
 # ---------------------------------------------------------------------------
 
+def _make_rpyc2(text: str) -> bytes:
+    """构造最小 RPYC2：头 + 槽位表 + zlib 压缩文本槽（与官方格式一致）。"""
+    payload = zlib.compress(text.encode("utf-8"))
+    slot1 = struct.pack("III", 1, 34, len(payload))
+    slot0 = struct.pack("III", 0, 0, 0)
+    return b"RENPY RPC2" + slot1 + slot0 + payload
+
+
 @pytest.mark.skipif(os.name == "nt", reason="执行位语义仅 POSIX")
 def test_find_build_tools_skips_non_executable_latest(tmp_path):
     bt = tmp_path / "rapt" / "Sdk" / "build-tools"
@@ -239,9 +249,27 @@ def test_apk_remap_support_rejects_compiled_callback(tmp_path):
     (root / "x-script_version.txt").write_text("(8, 1, 0)", encoding="utf-8")
     (root / "x-scripts").mkdir()
     (root / "x-scripts" / "x-extra.rpyc").write_bytes(
-        b"RENPY RPC2\x00config.file_open_callback")
+        _make_rpyc2("config.file_open_callback = custom_loader\n"))
     ok, reason = apk._check_apk_remap_support(root)
     assert not ok and "回调" in reason
+
+
+def test_remap_support_rejects_compressed_rpyc_callback(tmp_path):
+    """真实 rpyc 文本在 zlib 槽里：必须解压后再找特征串。"""
+    (tmp_path / "script_version.txt").write_text("(8, 1, 0)", encoding="utf-8")
+    (tmp_path / "script.rpyc").write_bytes(
+        _make_rpyc2("label start:\n    pass\n"
+                    "config.file_open_callback = custom_loader\n"))
+    ok, reason = remap.check_remap_support(tmp_path)
+    assert not ok and "回调" in reason
+
+
+def test_remap_support_accepts_clean_compressed_rpyc(tmp_path):
+    (tmp_path / "script_version.txt").write_text("(8, 1, 0)", encoding="utf-8")
+    (tmp_path / "script.rpyc").write_bytes(
+        _make_rpyc2("label start:\n    'hi'\n"))
+    ok, reason = remap.check_remap_support(tmp_path)
+    assert ok and reason == ""
 
 
 def test_apk_remap_support_accepts_clean_package(tmp_path):
