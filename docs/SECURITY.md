@@ -38,3 +38,35 @@
 - 隔离区只移不删
 
 若你发现可绕过以上任一项的构造，请务必按上述渠道报告。
+
+## 路径注入守卫的写法约束 / Guard shape for path validation
+
+`_local_path()`（[web/app.py](../web/app.py)）是 Web 层所有请求路径的唯一入口。
+它的代码形态受一条硬约束限制，改之前请先读完本节：
+
+**两个平台各自决定"根"，但必须共用同一条 `startswith(root)` 校验语句收口。**
+
+CodeQL 的 `py/path-injection` 只认「`os.path.realpath()` 之后紧跟一个
+`startswith(root)` 判定」这一种净化形态。v0.18.0 初版为了支持 Linux 把守卫拆成
+按平台各写一套 `return`，语义完全等价（当时逐例比对过），但 CodeQL 认不出这是
+守卫，把整条调用链重新报成注入——2026-11-26 那次 `35fa573` 一次性新增 7 条 high
+警报就是这么来的。
+
+因此：
+
+- 新增平台分支时，只让分支决定 `root` 的值，**不要**在分支里提前 return。
+- 改完跑一次本地 CodeQL 核对（见下），别只看单元测试——语义对了 CodeQL 仍可能报。
+- 历史上这批警报按"本地单用户工具"的威胁模型 close 过（见
+  [STATUS.md](STATUS.md) 工具链一节），但那不等于可以放任形态退化。
+
+本地核对（需要 CodeQL CLI）：
+
+```
+codeql database create /tmp/db --language=python --source-root=.
+codeql database analyze /tmp/db \
+  codeql/python-queries:codeql-suites/python-code-scanning.qls \
+  --format=sarif-latest --output=/tmp/res.sarif
+```
+
+`python-code-scanning.qls` 就是 GitHub default setup 用的那套查询；
+比对 `/tmp/res.sarif` 里 `py/path-injection` 的条数应为 0。

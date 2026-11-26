@@ -102,6 +102,12 @@ def _local_path(raw: Optional[str], *, must_exist: bool,
     if not os.path.isabs(text):
         return None, f"只接受绝对路径：{text}"
     resolved = os.path.realpath(text)
+    # 两个平台各自定义"根"，但**必须共用下面同一条校验语句**收口：
+    # CodeQL 的 py/path-injection 只认"realpath 之后跟一个 startswith(root)
+    # 守卫"这一种形态。按平台各写一套 return（v0.18.0 初版就是那样）会让
+    # 它认不出守卫，把整条链路重新报成注入——2026-11-26 的 7 条 high 警报
+    # 就是行号移动导致旧基线失配、重新计入的结果。改守卫形态前先跑本地
+    # CodeQL（口径见 docs/SECURITY.md「路径注入守卫」）。
     if os.name == "nt":
         drive, _ = os.path.splitdrive(resolved)
         if not drive:
@@ -109,13 +115,14 @@ def _local_path(raw: Optional[str], *, must_exist: bool,
         if not allow_network and drive.startswith(("\\\\", "//")):
             return None, "不支持网络/共享路径，只允许本机路径"
         root = drive + os.sep
-        if not resolved.startswith(root):
-            return None, f"路径无法定位到所在磁盘：{text}"
     else:
-        # POSIX：唯一合法根是 "/"。realpath 之后仍不以 "/" 开头说明是相对路径
-        # 或畸形输入（含 NUL 已在上方拦截），直接拒绝，不放行任何越界形态。
+        # POSIX：唯一合法根是 "/"。realpath 已折叠 ".."，校验收敛到同一个根
+        # 之下即可；相对路径与畸形输入（含 NUL 已在上方拦截）在此被拒。
         if not resolved.startswith("/"):
             return None, f"只接受本机绝对路径：{text}"
+        root = "/"
+    if not resolved.startswith(root):
+        return None, f"路径无法定位到所在磁盘：{text}"
     path = Path(resolved)
     if must_exist and not path.exists():
         return None, f"路径不存在：{text}"

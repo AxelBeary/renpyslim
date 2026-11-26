@@ -667,6 +667,13 @@ RenPyToolbox.spec 是旧名遗留配方（产物名/hiddenimports 均不同）�
   备忘为拍板过的产品设计，带理由关闭。再遇 path-injection 警报先按此
   模型核实；dismiss API 参数是 dismissed_reason/dismissed_comment，
   且 comment 限 280 字符
+- **2026-11-26 第二批 path-injection（7 条 high）**：`35fa573` 为支持 Linux 把
+  `_local_path()` 的守卫按平台拆成两套 return，语义等价但 CodeQL 认不出这是守卫，
+  整条链路重新计入；又因行号移动与旧基线失配，旧 dismiss 不再覆盖。
+  **修法（改代码而非关警报）**：两平台只决定 `root`，共用同一条
+  `startswith(root)` 收口。本地 CodeQL 复现（2.27.6，与 GitHub 逐条一致）：
+  修前 default suite 10 条 path-injection → 修后 0 条。约束写进 docs/SECURITY.md
+  「路径注入守卫的写法约束」，防止再退化
 
 ## Cadaver 样本实测战绩（用户提供的真实游戏，全部实测通过）
 
