@@ -50,6 +50,38 @@
    `tests/test_archives_tar.py`：后缀识别、各 tar 变体解压与回包往返、执行位与空目录、
    路径穿越/绝对路径/包外链接/特殊条目拦截。
 
+### 交叉审计批次（2026-11-27，未发布）
+
+多路只读审计 + 逐条复现后落地的修复批次（不改变版本号，交由维护者决定随哪个版本发布）：
+
+1. **取消与并发**：外部子进程按任务令牌登记（`procutil.task_scope()` /
+   `kill_children(scope)`），取消一个任务不再误杀并发只读分析的 ffprobe；
+   超时/Ctrl+C 收尾带超时并清理孙进程；Web 在提交后、点火前被取消的任务
+   直接落终态；打包阶段取消后不再报 done，SDK 进程随 scope 一起停。
+2. **任务历史**：`jobs.json` 读-改-写加跨进程文件锁，Web 与 CLI 并发写
+   不再丢记录（实测 30/30）。
+3. **不可信输入**：交付目录名来自压缩包时撞名只换唯一序号、绝不 rmtree；
+   无顶层 wrapper 的包不再删掉刚产出的工作副本；解压失败清理半截目录；
+   tar 剥离 setuid/setgid；工作副本与备份不跟随符号链接/junction；
+   7z/RAR 回包降级 zip；拒绝把工作目录嵌进输入工程。
+4. **跨平台**：`--sdk` 相对路径统一解析为绝对路径（修复 lint/打包 ENOENT）；
+   POSIX 不再把大小写不同的 zip 条目改名；build-tools 要求可执行并回退旧版。
+5. **APK**：只改 `assets/x-game/`；remap 增加引擎版本与回调预检（rpyc 解压后
+   检索）、已有映射不叠加；钥匙备忘/keystore 权限 0600。
+6. **契约**：官方打包任一平台失败（含部分成功）返回 `ok:false` / 退出码 1；
+   analyze 对压缩包强制 dist、多成品包与其他入口一样拒绝；
+   `--archive-rpa` 打包后恢复用户原有同名配置；validation.txt 附完整
+   suspects；无引用检测纳入 `.rpy` 源码；AV1 按 `script_version.txt` 门控。
+
+新增回归：`tests/test_cross_debug_20261127.py` 及 `test_fix_decompile.py`
+的降级用例；`unrpyc` 的 `multiprocessing.Lock()` 失败不再中断反编译，
+降级提示走 stderr 以保持 CLI stdout 只有 JSON。
+
+**验证**（2026-11-27）：Ubuntu 24.04 / Python 3.12（proot）上
+`python -m pytest tests -q` → **460 passed / 8 skipped**；ruff `F,E9`、
+`pip check`、`node --check` 均通过。Windows 未在本轮复跑，由 CI 覆盖。
+本批次未改依赖清单，无需 lock/依赖表同步。
+
 **验证**（2026-11-26 复跑）：
 
 - Windows（Python 3.13.14）：`python -m pytest tests -q` → **378 passed / 9 skipped**，

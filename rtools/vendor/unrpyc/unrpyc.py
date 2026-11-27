@@ -42,10 +42,12 @@ try:
     import _multiprocessing
     Lock()
 
-except ImportError:
-    traceback.print_exc(file=sys.stdout)
+except (ImportError, OSError):
+    # Local patch: 降级提示写 stderr。RenPySlim 的 CLI 约定 stdout 只放
+    # 结果 JSON，导入期把 traceback 打到 stdout 会污染调用方解析。
+    traceback.print_exc(file=sys.stderr)
     print("The multiprocessing module is not available or broken! Proceeding with single threaded "
-          "decompilation. This will be slow.\n")
+          "decompilation. This will be slow.\n", file=sys.stderr)
 
     # Mock the parts of multiprocessing that we need
     def cpu_count():

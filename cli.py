@@ -339,12 +339,23 @@ def cmd_analyze(args) -> int:
 
     # 压缩包直接进：解压到临时目录，分析完清理
     cleanup_dir = None
+    archive_input = False
     if archives.is_archive(str(path)):
+        archive_input = True
         import tempfile
         cleanup_dir = tempfile.mkdtemp(prefix="rtools_unpack_")
         try:
             archives.extract_archive(str(path), cleanup_dir, args.password)
-            path = Path(archives.find_dist_root(cleanup_dir))
+            roots = archives.find_dist_roots(cleanup_dir)
+            if len(roots) > 1:
+                import shutil
+                names = "；".join(Path(x).name for x in roots)
+                shutil.rmtree(cleanup_dir, ignore_errors=True)
+                cleanup_dir = None
+                return _fail(
+                    f"压缩包里找到 {len(roots)} 个成品目录（{names}）。"
+                    "本工具一次只分析一个成品，请把各平台拆开分别分析。")
+            path = Path(roots[0])
         except archives.ArchiveError as e:
             # 审核修复（中-32）：解压失败路径以前直接 return，
             # 泄漏临时目录（外层 try/finally 尚未进入）
@@ -359,9 +370,17 @@ def cmd_analyze(args) -> int:
             raise
 
     try:
-        # 工程有 .rpy 源码，成品只有 .rpyc，以此自动区分
+        # 工程有 .rpy 源码，成品只有 .rpyc，以此自动区分。
+        # 压缩包一律按成品（dist）：包内可能带源码，但输入形态是发布包，
+        # 口径必须与 optimize 一致（AGENTS「压缩包一律按成品处理」）。
         mode = args.mode
-        if not mode:
+        if archive_input:
+            if mode and mode != "dist":
+                print(f"警告：{path.name} 是压缩包，按成品（dist）分析，"
+                      f"--mode {mode} 不适用，已自动改用 dist。",
+                      file=sys.stderr, flush=True)
+            mode = "dist"
+        elif not mode:
             game = path / "game"
             mode = "project" if (game.is_dir()
                                  and any(game.rglob("*.rpy"))) else "dist"
@@ -483,6 +502,14 @@ def cmd_package(args) -> int:
         # 审核修复（中-32）：不只捕 FileNotFoundError，权限/超时等
         # 同样要以 JSON 出口收场
         return _fail(str(e))
+    if result.get("errors"):
+        # 官方 SDK 非零退出时 package_project 只把错误放进 errors；
+        # 任一所请求平台失败都必须 ok:false——部分成功（built 非空）
+        # 也一样，否则自动化会把半失败当成功。
+        partial = ("（已成功：" + "、".join(result["built"]) + "）"
+                   if result.get("built") else "")
+        return _fail("打包失败" + partial + "："
+                     + "；".join(result["errors"])[:800])
     return _ok({"sdk": sdk, "result": result})
 
 
@@ -525,6 +552,12 @@ def cmd_full(args) -> int:
                                               archive_rpa=args.archive_rpa)
     except Exception as e:
         return _fail(f"优化已完成但打包失败：{e}")
+    if pkg_result.get("errors"):
+        # 同 cmd_package：任一所请求平台失败都不能报 ok:true
+        partial = ("（已成功：" + "、".join(pkg_result["built"]) + "）"
+                   if pkg_result.get("built") else "")
+        return _fail("优化已完成，但打包失败" + partial + "："
+                     + "；".join(pkg_result["errors"])[:800])
     opt_result.pop("report_dict", None)
     opt_result["report"] = str(opt_result["report"])
     opt_result["changelog"] = str(opt_result["changelog"])

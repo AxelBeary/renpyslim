@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from rtools import (analyzer, apk, archives, charset, font_tool, jobstore,
-                    packager, pipeline, scanner, sdk as sdk_mod)
+                    packager, pipeline, procutil, scanner, sdk as sdk_mod)
 from rtools.config import (CharsetOptions, OptimizeOptions, PRESETS,
                            DEFAULT_PRESET, default_options)
 from rtools.models import Progress
@@ -263,23 +263,48 @@ def _dispatch_job(job_id: str, fn) -> None:
     过 JSON 接口，callable 塞不进去）。
     busy 判断与 _RUNNING 占位在同一把 _QUEUE_LOCK 内原子完成，
     杜绝“两个提交都看到空闲、双双开跑”的竞态窗口。
+    提交与真正开跑之间被取消的（库里还来不及排队/点火），直接落终态，
+    既不入队也不执行。
     """
+    canceled = False
     with _QUEUE_LOCK:
-        busy = _RUNNING["id"] is not None
-        if not busy:
-            _RUNNING["id"] = job_id
+        with JOBS_LOCK:
+            job = JOBS.get(job_id)
+            if job and (job["cancel"] or job["status"] == "canceled"):
+                canceled = True
+                job["status"] = "canceled"
+                job["error"] = "用户已取消（任务尚未开始）。"
+        if canceled:
+            _JOB_TASKS.pop(job_id, None)
+            try:
+                _QUEUE.remove(job_id)
+            except ValueError:
+                pass
+        else:
+            busy = _RUNNING["id"] is not None
+            if not busy:
+                _RUNNING["id"] = job_id
+                with JOBS_LOCK:
+                    job = JOBS.get(job_id)
+                    if job:
+                        job["status"] = "running"
+                _run_in_thread(job_id, fn)
+                return
             with JOBS_LOCK:
                 job = JOBS.get(job_id)
                 if job:
-                    job["status"] = "running"
-            _run_in_thread(job_id, fn)
+                    job["status"] = "queued"
+            _JOB_TASKS[job_id] = fn
+            _QUEUE.append(job_id)
             return
-        with JOBS_LOCK:
-            job = JOBS.get(job_id)
-            if job:
-                job["status"] = "queued"
-        _JOB_TASKS[job_id] = fn
-        _QUEUE.append(job_id)
+    # 取消落终态：历史收尾在锁外，写盘失败不影响队列推进
+    try:
+        jobstore.record_finish(job_id, "canceled",
+                              error="用户已取消（任务尚未开始）。")
+    except Exception:
+        _LOG.warning("写入排队取消记录失败（%s）", _log_safe(job_id),
+                     exc_info=True)
+    _notify_job_done(job_id)
 
 
 def _scheduler_loop():
@@ -333,7 +358,29 @@ def _run_in_thread(job_id: str, fn) -> None:
         final = {"status": "done", "result": None, "error": None,
                  "traceback": None}
         try:
-            final["result"] = fn()
+            # 每个任务一个令牌：取消时只杀本任务的外部子进程，
+            # 不会误伤并发只读分析里的 ffprobe（2026-11-27 交叉审计）。
+            with procutil.task_scope() as scope:
+                with JOBS_LOCK:
+                    job_ref = JOBS.get(job_id)
+                    if job_ref is not None:
+                        job_ref["scope"] = scope
+                try:
+                    # 提交后、真正开跑前被取消的：不要再执行任务本体
+                    if _job_cancelled(job_id):
+                        raise pipeline.PipelineCancelled()
+                    final["result"] = fn()
+                finally:
+                    with JOBS_LOCK:
+                        job_ref = JOBS.get(job_id)
+                        if job_ref is not None:
+                            job_ref.pop("scope", None)
+                # 取消发生在任务内部（例如打包阶段）：即使函数正常返回，
+                # 也不把结果当成功交付。
+                if _job_cancelled(job_id):
+                    final["status"] = "canceled"
+                    final["error"] = "用户已取消，已完成的部分成果保留在结果目录。"
+                    final["result"] = None
         except pipeline.PipelineCancelled:
             final["status"] = "canceled"
             final["error"] = "用户已取消，已完成的部分成果保留在结果目录。"
@@ -804,6 +851,10 @@ def api_full(req: FullReq):
         opt = pipeline.run_project(str(path), opts, work_root, output_dir,
                                    progress,
                                    cancel=lambda: _job_cancelled(job_id))
+        # 打包阶段没有取消回调：进包前再确认一次，已取消就别再产出
+        # 一个用户不想要的交付包。
+        if _job_cancelled(job_id):
+            raise pipeline.PipelineCancelled()
         pkg = packager.package_project(sdk, opt["working_dir"], req.platforms,
                                        destination,
                                        log=lambda m: _job_log(job_id, "package", m),
@@ -842,6 +893,7 @@ def api_job(job_id: str, since: int = 0):
 @app.post("/api/job/{job_id}/cancel")
 def api_job_cancel(job_id: str):
     queued_error: Optional[str] = None
+    scope = None
     # 与调度器共用队列锁，固定 _QUEUE_LOCK → JOBS_LOCK 锁序：排队取消
     # 与 queued → running 的状态转换必须二选一，不能 canceled 后再点火。
     with _QUEUE_LOCK:
@@ -856,6 +908,9 @@ def api_job_cancel(job_id: str):
                 queued_error = job["error"]
             else:
                 job["cancel"] = True
+                # 运行中的任务：拿到它自己的令牌，立刻停掉外部工具
+                # （打包/ffmpeg 等），不再等它们自然跑完。
+                scope = job.get("scope")
         if queued_error is not None:
             # 调度器可能刚弹出队首但尚未转换状态；同一把队列锁保证
             # 此处要么移除仍在队列里的条目，要么让调度器重新核对后跳过。
@@ -864,6 +919,12 @@ def api_job_cancel(job_id: str):
                 _QUEUE.remove(job_id)
             except ValueError:
                 pass
+    if scope is not None:
+        try:
+            procutil.kill_children(scope=scope)
+        except Exception:
+            _LOG.warning("取消任务时终止外部工具失败（%s）",
+                         _log_safe(job_id), exc_info=True)
     # 排队任务不会进 _run_in_thread，历史收尾要在这里补；
     # 写盘放在 JOBS_LOCK 外，失败只记警告
     if queued_error is not None:

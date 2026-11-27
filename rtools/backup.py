@@ -80,17 +80,56 @@ def ensure_free_space(dest: str | Path, required_bytes: int,
 def make_working_copy(project_dir: str, dest_root: str) -> str:
     """把工程复制到工作目录，返回副本路径。原件保持不动。"""
     src = Path(project_dir)
+    src_real = src.resolve()
+    dest_real = Path(dest_root).resolve()
+    if dest_real != src_real and src_real in dest_real.parents:
+        # 工作目录落在工程内部时，copytree 会把工作副本再复制进自己，
+        # 无限递归直到写满磁盘。
+        raise BackupError(
+            f"工作目录不能放在输入工程内部：{dest_root} 位于 {project_dir} 里。"
+            "请改用工程外的目录（如 --work-root 指定别的路径）。")
     stamp = time.strftime("%Y%m%d-%H%M%S") + f"-{uuid.uuid4().hex[:8]}"
     dest = Path(dest_root) / f"{src.name}-working-{stamp}"
 
     ensure_free_space(dest, _tree_size(src, _COPY_SKIP),
                       f"复制工作副本 {src.name}")
 
+    skipped_links: list[str] = []
+
     def ignore(_dir, names):
-        return [n for n in names if n in _COPY_SKIP]
+        keep = []
+        for name in names:
+            if name in _COPY_SKIP:
+                continue
+            full = Path(_dir) / name
+            # 符号链接 / 目录联接一律不复制：copytree 默认会跟随，
+            # 把工程外的数据搬进工作副本（体积预检也没算它们），
+            # 最终可能被打进交付包。扫描同样不跟链接，此处口径对齐。
+            try:
+                if full.is_symlink() or _is_junction(full):
+                    skipped_links.append(str(full))
+                    continue
+            except OSError:
+                continue
+            keep.append(name)
+        return [n for n in names if n not in keep]
 
     shutil.copytree(src, dest, ignore=ignore, dirs_exist_ok=False)
+    if skipped_links:
+        logger.warning("工作副本跳过 %d 个符号链接/联接（不跟随、不复制）：%s",
+                       len(skipped_links), skipped_links[:5])
     return str(dest)
+
+
+def _is_junction(path: Path) -> bool:
+    """Windows 目录联接（junction）；其他平台恒为 False。"""
+    checker = getattr(os.path, "isjunction", None)
+    if checker is None:
+        return False
+    try:
+        return bool(checker(path))
+    except OSError:
+        return False
 
 
 def make_backup_zip(target_dir: str, dest_zip: str) -> str:
@@ -111,6 +150,14 @@ def make_backup_zip(target_dir: str, dest_zip: str) -> str:
                              compresslevel=6) as zf:
             for p in target.rglob("*"):
                 if p.is_file():
+                    # 链接一律不备份内容：跟随链接会把工程外的文件
+                    # 写进备份包（in_place 备份可能被交给别人）。
+                    try:
+                        if p.is_symlink() or _is_junction(p):
+                            logger.warning("备份跳过符号链接/联接：%s", p)
+                            continue
+                    except OSError:
+                        continue
                     if any(part in _BACKUP_SKIP
                            for part in p.relative_to(target).parts):
                         continue

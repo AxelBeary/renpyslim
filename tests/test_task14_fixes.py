@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 from rtools import apk, cache, scanner, updater
@@ -17,11 +18,26 @@ _MB = 1024 * 1024
 # ---------- ① build-tools 版本排序 ----------
 
 def _make_bt_dir(sdk: Path, name: str) -> Path:
+    """按当前平台的真实命名造工具：Windows 是 .exe/.bat，POSIX 无后缀。"""
     d = sdk / "rapt" / "Sdk" / "build-tools" / name
     d.mkdir(parents=True)
-    (d / "zipalign.exe").write_bytes(b"FAKE-ZIPALIGN")
-    (d / "apksigner.bat").write_text("@echo off", encoding="ascii")
+    if os.name == "nt":
+        zipalign, signer = d / "zipalign.exe", d / "apksigner.bat"
+        zipalign.write_bytes(b"FAKE-ZIPALIGN")
+        signer.write_text("@echo off", encoding="ascii")
+    else:
+        zipalign, signer = d / "zipalign", d / "apksigner"
+        zipalign.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        signer.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        zipalign.chmod(0o755)
+        signer.chmod(0o755)
     return d
+
+
+def _tool_names(d: Path) -> tuple[Path, Path]:
+    if os.name == "nt":
+        return d / "zipalign.exe", d / "apksigner.bat"
+    return d / "zipalign", d / "apksigner"
 
 
 def test_build_tools_numeric_sort(tmp_path):
@@ -29,8 +45,9 @@ def test_build_tools_numeric_sort(tmp_path):
     _make_bt_dir(tmp_path, "9.0.0")
     want = _make_bt_dir(tmp_path, "35.0.0")
     za, signer = apk.find_build_tools(str(tmp_path))
-    assert za == str(want / "zipalign.exe")
-    assert signer == str(want / "apksigner.bat")
+    want_za, want_signer = _tool_names(want)
+    assert za == str(want_za)
+    assert signer == str(want_signer)
 
 
 def test_build_tools_unparseable_last(tmp_path):
@@ -38,14 +55,14 @@ def test_build_tools_unparseable_last(tmp_path):
     _make_bt_dir(tmp_path, "not-a-version")
     want = _make_bt_dir(tmp_path, "2.0.0")
     za, _ = apk.find_build_tools(str(tmp_path))
-    assert za == str(want / "zipalign.exe")
+    assert za == str(_tool_names(want)[0])
 
 
 def test_build_tools_only_unparseable(tmp_path):
     """只有解析失败的目录时也能兜底用上（行为不回退）。"""
     want = _make_bt_dir(tmp_path, "weird")
     za, _ = apk.find_build_tools(str(tmp_path))
-    assert za == str(want / "zipalign.exe")
+    assert za == str(_tool_names(want)[0])
 
 
 # ---------- ② 缓存体积守卫下沉 ----------

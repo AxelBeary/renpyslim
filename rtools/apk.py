@@ -12,6 +12,7 @@ Ren'Py 安卓版结构：assets/x-game/** 是游戏资源，assets/x-renpy/** �
 """
 from __future__ import annotations
 
+import ast
 import logging
 import os
 import random
@@ -120,15 +121,29 @@ def find_build_tools(sdk: str) -> tuple[Optional[str], Optional[str]]:
         # 可解析的 (1, 版本元组) 优先；解析失败的 (0, ()) 排最后
         return (1, v) if v is not None else (0, ())
 
+    def _usable(path: Path) -> bool:
+        """必须真的是文件；POSIX 上的 shell 脚本还要有执行位。
+
+        旧版只看 exists：最新版工具若是 0644（解压/拷贝丢执行位），
+        会选中一个根本跑不起来的 zipalign，也不回退旧版，最后整个
+        APK 静默“未对齐/未签名”。
+        """
+        if not path.is_file():
+            return False
+        if os.name == "nt":
+            return True     # Windows 上 .exe/.bat 由系统按后缀执行
+        # POSIX：.exe/.bat 即使有执行位也跑不起来，只认真正可执行的文件
+        return os.access(str(path), os.X_OK)
+
     # build-tools 的产物名按宿主平台不同：Windows 是 zipalign.exe +
     # apksigner.bat，Linux/macOS 是无后缀的 zipalign + apksigner（shell 脚本）。
-    # 逐版本找“同一目录里两者都齐”的那一份，缺一个就继续往下找。
+    # 逐版本找“同一目录里两者都齐且可用”的那一份，缺一个就继续往下找。
     versions = sorted((d for d in bt_root.iterdir() if d.is_dir()),
                       key=_key, reverse=True)
     for d in versions:
-        zipalign = next((d / n for n in _ZIPALIGN_NAMES if (d / n).exists()),
+        zipalign = next((d / n for n in _ZIPALIGN_NAMES if _usable(d / n)),
                         None)
-        signer = next((d / n for n in _APKSIGNER_NAMES if (d / n).exists()),
+        signer = next((d / n for n in _APKSIGNER_NAMES if _usable(d / n)),
                       None)
         if zipalign is not None and signer is not None:
             return str(zipalign), str(signer)
@@ -261,7 +276,7 @@ def generate_keystore(dest_dir: str, password: Optional[str] = None,
         err = proc.stderr.decode("utf-8", "replace")[-300:]
         raise ApkError(f"生成钥匙失败：{err}")
     memo = ks.with_name(ks.stem + "-钥匙备忘.txt")
-    memo.write_text(
+    memo_text = (
         "RenPySlim 自动生成的签名钥匙（请妥善保管！）\n\n"
         f"钥匙文件：{ks}\n"
         f"别　　名：{alias}\n"
@@ -269,8 +284,18 @@ def generate_keystore(dest_dir: str, password: Optional[str] = None,
         "重要：\n"
         "1. 这个密码是打开钥匙的唯一凭据，丢了就无法再给这个应用签更新包。\n"
         "2. 用这把钥匙签的包，玩家需先卸载旧版再安装（签名不同不能覆盖更新）。\n"
-        "3. 建议把钥匙文件和这份备忘一起备份到安全的地方。\n",
-        encoding="utf-8")
+        "3. 建议把钥匙文件和这份备忘一起备份到安全的地方。\n")
+    # 备忘里是明文密码：POSIX 下按 0600 创建，别人读不到；
+    # Windows 的 os.open 模式位不生效，由用户目录 ACL 兜底。
+    fd = os.open(str(memo), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(memo_text)
+    if os.name != "nt":
+        try:
+            os.chmod(memo, 0o600)
+            os.chmod(ks, 0o600)
+        except OSError:
+            pass
     return {"keystore": str(ks), "password": password, "alias": alias,
             "memo": str(memo)}
 
@@ -341,7 +366,8 @@ def analyze_apk(apk_path: str,
                 script_count += 1
             if any(name.startswith(pre) for pre in UNTOUCHABLE_PREFIXES):
                 continue
-            if not name.startswith("assets/"):
+            # 预分析口径与瘦身一致：只统计 assets/x-game/ 内的游戏资源
+            if not name.startswith(X_GAME_PREFIX):
                 continue
             kind = kind_of(suffix)
             if kind == AssetKind.OTHER:
@@ -381,6 +407,46 @@ def analyze_apk(apk_path: str,
     p.emit("analyze", f"APK 分析完成：可优化资源 {len(assets)} 个",
            code="apk_analyze_done", params={"n": len(assets)})
     return {"report": base, "apk": summary}
+
+
+def _check_apk_remap_support(game_root: Path) -> tuple[bool, str]:
+    """APK 版重映射预检：引擎版本 + 游戏自带文件回调。
+
+    APK 里只有编译脚本，没有 .rpy 源码；回调冲突只能在 rpyc/rpymc
+    原始字节里找特征串。拿不准（缺版本文件、解析失败、出现特征串）
+    一律拒绝注入，退回同名压缩——安全优先。
+    """
+    sv = game_root / "x-script_version.txt"
+    if not sv.exists():
+        sv = game_root / "script_version.txt"
+    if not sv.exists():
+        return False, "缺少 script_version.txt，无法确认引擎版本"
+    try:
+        raw = sv.read_text(encoding="utf-8", errors="ignore").strip()
+        version = tuple(int(x) for x in ast.literal_eval(raw))
+    except Exception:
+        return False, "无法解析 script_version.txt"
+    if version < remap_mod._MIN_REMAP_VERSION:
+        v_show = ".".join(str(x) for x in version)
+        return False, f"引擎版本 {v_show} 低于 remap 要求的 8.0.0"
+    for p in game_root.rglob("*"):
+        if not p.is_file() or p.suffix.lower() not in (".rpy", ".rpyc",
+                                                      ".rpymc"):
+            continue
+        if p.name == remap_mod.REMAP_SCRIPT_NAME or \
+                p.name == remap_mod.REMAP_SCRIPT_NAME + "c":
+            continue
+        if p.suffix.lower() == ".rpy":
+            try:
+                text = p.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+        else:
+            # rpyc 文本在 zlib 槽里，必须解压后再找特征串
+            text = charset_mod.read_rpyc_text(p)
+        if "file_open_callback" in text or "loadable_callback" in text:
+            return False, "检测到游戏自身设置了文件加载回调，remap 可能冲突"
+    return True, ""
 
 
 def slim_apk(apk_path: str, preset_name: str,
@@ -443,7 +509,9 @@ def slim_apk(apk_path: str, preset_name: str,
                 continue
             if any(name.startswith(pre) for pre in UNTOUCHABLE_PREFIXES):
                 continue
-            if not name.startswith("assets/"):
+            # 红线：只碰 assets/x-game/。旧版放宽到整个 assets/，会把
+            # assets/licenses/logo.png 之类的包资源也改写，可能弄坏 APK。
+            if not name.startswith(X_GAME_PREFIX):
                 continue
             if kind_of(Path(name).suffix.lower()) == AssetKind.OTHER:
                 # 审核修复：rpyc/rpy/txt 属 OTHER 以前从不解出，字符集扫空，
@@ -493,6 +561,22 @@ def slim_apk(apk_path: str, preset_name: str,
         if remap_convert and not remap_usable:
             warnings.append("未找到 Ren'Py SDK，无法编译重映射脚本，"
                             "图片/音频降级为同名压缩。")
+        remap_entry = game_rel_to_apk_entry(
+            remap_mod.REMAP_SCRIPT_NAME + "c")
+        if remap_usable and remap_entry in names:
+            # 已经注入过映射脚本：再叠一份会丢掉旧映射（旧格式文件的
+            # 请求没人接），同名条目还会重复。宁可不转换，不破坏游戏。
+            remap_usable = False
+            warnings.append(
+                "这个 APK 已经注入过重映射脚本：为避免旧映射丢失或"
+                "同名条目重复，本次不再叠加格式转换，原脚本与原资源保持不变。")
+        if remap_usable:
+            ok_support, reason = _check_apk_remap_support(
+                work / "assets" / "x-game")
+            if not ok_support:
+                remap_usable = False
+                warnings.append(f"重映射预检未通过（{reason}），"
+                                "本次降级为同名压缩。")
         changed: set[str] = set()
         pending_remap = []   # (旧条目, 新条目名, 本地新文件, 节省字节)
         # 审核修复：预检同名撞车——foo.png 与 foo.jpg 都会变 foo.webp，
