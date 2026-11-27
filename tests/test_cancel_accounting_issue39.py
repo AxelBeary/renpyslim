@@ -26,6 +26,7 @@ from rtools.image_optimizer import optimize_image
 from rtools.models import ChangeRecord, Progress
 from rtools.pipeline import (
     PipelineCancelled,
+    _ChangelogFlush,
     _run_jobs,
     _run_jobs_or_flush,
 )
@@ -260,8 +261,11 @@ def test_partial_results_include_all_finished_jobs(tmp_path):
         return _result(0)
 
     jobs = [quick(i) for i in range(4)] + [("slow", slow)]
+    records: list = []
+    saved = 0
+    view = _ChangelogFlush(str(out_dir), records, lambda: saved)
     target = lambda: _run_jobs_or_flush(                        # noqa: E731
-        Progress(), "optimize", jobs, cancel.is_set, str(out_dir), [], 0)
+        Progress(), "optimize", jobs, cancel.is_set, view)
 
     with _ScopedRun(target) as run:
         assert slow_entered.wait(30), "慢任务没有起来"
@@ -314,8 +318,11 @@ def test_cancel_changelog_matches_disk_state(tmp_path):
                                      detail="晚完成")])
 
     jobs = [quick(i) for i in range(3)] + [("image", late_image)]
+    records: list = []
+    saved = 0
+    view = _ChangelogFlush(str(out_dir), records, lambda: saved)
     target = lambda: _run_jobs_or_flush(                        # noqa: E731
-        Progress(), "optimize", jobs, cancel.is_set, str(out_dir), [], 0)
+        Progress(), "optimize", jobs, cancel.is_set, view)
 
     with _ScopedRun(target) as run:
         assert entered.wait(30)
@@ -428,12 +435,15 @@ def test_cancel_does_not_double_count_records(tmp_path):
     records: list = []
     aggregated: list = []
 
-    def aggregate(results):
-        """模拟调用方的记账：返回本批新增的节省字节。"""
+    saved_box = {"saved": 0}
+
+    def aggregate(results, _kind=""):
+        """模拟调用方的记账：并进自己的 saved/records 并返回本批增量。"""
         take = 0
         for r in results:
             records.extend(r["records"])
             take += r.get("saved", 0)
+        saved_box["saved"] += take
         aggregated.append(take)
         return take
 
@@ -443,10 +453,11 @@ def test_cancel_does_not_double_count_records(tmp_path):
                                              src=f"{i}.png", detail="x")])
         return (f"j{i}", fn)
 
+    view = _ChangelogFlush(str(out_dir), records, lambda: saved_box["saved"],
+                           aggregate=aggregate)
     with pytest.raises(PipelineCancelled):
         _run_jobs_or_flush(Progress(), "optimize", [job(i) for i in range(3)],
-                           lambda: True, str(out_dir), records, 0,
-                           aggregate=aggregate)
+                           lambda: True, view)
 
     data = json.loads((out_dir / "changelog.json").read_text(encoding="utf-8"))
     # 完成了几条取决于轮询时机，但"记了几次"必须与"完成了几条"严格相等：
