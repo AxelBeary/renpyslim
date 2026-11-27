@@ -72,6 +72,10 @@ python cli.py env [--sdk SDK路径]
    解压按"不信任包内容"的口径：拒绝绝对路径与 `..` 越界、不创建设备文件/FIFO、
    符号链接与硬链接一律落成普通文件（不创建链接）；保留 Unix 执行位
    （0755 启动脚本往返仍是 0755）与空目录。**回包格式跟随输入格式**。
+   **zip 也保留执行位（issue #41）**：解压时按 `external_attr` 高 16 位还原
+   （只认 `create_system=3` 的 Unix 条目，剥掉 setuid/setgid/sticky、只留
+   `0o755` 集合内的位），回包时写回同样的位；归一化与 tar 系共用同一份 helper。
+   **Windows 上既不还原也不写执行位**（回包固定 0644），行为与改动前一致。
 5. **POSIX 进程组终止**（`rtools/procutil.py`）：外部工具以独立会话启动，超时/取消时
    对整个进程组 SIGTERM → 宽限期 → SIGKILL，不再遗留 `renpy.sh`→python、
    `gradle`→java 这类孙进程继续占管道占文件。Windows 侧仍走 `taskkill /T`，行为不变。
@@ -294,6 +298,12 @@ On Linux / WSL Ubuntu, install dependencies and run `python cli.py ...` exactly 
    hardlinks are materialised as regular files (no links are created). Unix exec bits
    survive (a 0755 launcher round-trips as 0755), as do empty directories.
    **The repacked output keeps the input format.**
+   **zip keeps exec bits too (issue #41)**: extraction restores the mode from the
+   high 16 bits of `external_attr` (only for `create_system=3` Unix entries, with
+   setuid/setgid/sticky stripped and only bits inside the `0o755` set applied), and
+   repacking writes the same bits back; normalisation is **shared** with the tar path
+   rather than duplicated. **On Windows nothing is restored or written** (repacking
+   stays at 0644), so Windows behaviour is unchanged.
 5. **POSIX process-group termination** (`rtools/procutil.py`): external tools are
    started in their own session; on timeout/cancel the whole process group gets
    SIGTERM, then SIGKILL after a grace period, so grandchild processes such as

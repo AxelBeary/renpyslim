@@ -127,3 +127,31 @@
 
 批次验收线：本机 venv 全量 `python -m pytest tests -q` 全绿；ruff F/E9 全绿；
 `python -m pip check` 无冲突；`gh api` 查 CodeQL 开放告警 0；main 上 CI 全绿。
+
+## 八、2026-11-28 issue #41：zip 往返保留 Unix 执行位
+
+来源：issue #41 报告——tar 系（issue #26）早就把执行位往返做对了，zip 没有：
+解压侧读不到 `ZipInfo.external_attr`，回包侧也不写权限位，于是 Linux 发布包里
+0755 的 `renpy.sh` 走一趟 zip 就变成不可执行。
+
+**拍板：支持，但只在 POSIX 生效。** 理由：
+
+1. zip 本身不是"存不住"权限位，而是标准库里没有一个环节替你做——Unix 打包工具
+   一直把 `st_mode` 写进 `external_attr` 高 16 位（`create_system=3`），信息在包
+   里，只是没人读、也没人写；
+2. Windows 上执行位在 NTFS 上无从体现，写了也没意义，所以**不还原、回包固定
+   0644**，与改动前逐字节一致（实测同一目录打出来的 zip 只有 `create_system`
+   与 `external_attr` 两处不同）；
+3. 安全口径必须与 tar 系一致：剥掉 setuid/setgid/sticky、只留 `0o755` 集合内的
+   位，且**共用同一份 helper**（`_set_unix_mode` / `_member_write_mode`），
+   避免两套实现日后各自漂移。
+
+| # | 事项 | 实现 | 验证 |
+|---|---|---|---|
+| Z1 | 解压还原执行位 | `_zip_member_mode` 取 `(external_attr >> 16) & 0o777`，**只认 `create_system=3`**（Windows 写的条目高 16 位没有 Unix 语义，实测 Windows 的 `zipfile` 写出来就是 0），非零才应用；归一化走与 tar 共用的 `_set_unix_mode` | `tests/test_archives_zip_mode.py`：0755 往返仍 0755、0644 往返仍 0644、setuid 被剥离、Windows 写的条目不被凭空加执行位 |
+| Z2 | 回包写回 mode | `_zip_write_file` 自己造 `ZipInfo`（`from_file` 算其余字段）+ `external_attr = mode << 16` + `create_system=3`，压缩方式/等级沿用原设置 | 同上：往返用例断言包内 `external_attr >> 16` 与解压后的实际权限 |
+| Z3 | Windows 零变化 | zip 的还原平台判断单点收在 `_zip_extract_member`（`os.name != "posix"` 不 chmod）；`_member_write_mode` 在 Windows 固定 0644。`_set_unix_mode` 保持 tar 原语义（Windows 上仍会 chmod，0444 会设只读），不为 zip 改动 | 同一目录在 Windows 上打包，改动前后 zip 字节数一致、只差上述两个字段；tar/zip 解压在 Windows 上逐文件比对权限与改动前一致 |
+| Z4 | 文档口径 | ARCHITECTURE「压缩包」节与 AGENTS.md 中英双节改写"压缩包往返"边界，明确 zip 也保留执行位、POSIX-only | 文档逐条对照实现 |
+
+批次验收线：`python -m pytest tests -q` 全绿（数量以实际收集为准）；ruff F/E9 全绿；
+`python -m pip check` 无冲突。

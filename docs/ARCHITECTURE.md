@@ -60,7 +60,7 @@ rtools/            核心引擎（不依赖 Web/CLI，可独立调用与测试�
   rpa.py           RPA 封包读写（白名单反序列化，新旧格式自适应，改名替换重建）
   sdk.py           SDK 启动器解析（renpy.exe / renpy.sh 统一口径、执行位人话提示）
   archives.py      zip/7z/RAR/tar 系解压（GBK 中文名还原、密码编码重试、安全解压）、
-                   成品定位、回包（跟随输入格式）
+                   成品定位、回包（跟随输入格式）、zip/tar 执行位往返（POSIX）
   packager.py      SDK 发现、官方打包调度（平台非空/合法校验）、RPA 归档配置注入、用户配置
   apk.py           APK 瘦身（x- 前缀体系、重打包保字节、重映射注入、三种签名）
                    与只读预分析 analyze_apk（读 ZIP 条目表，不解包不改原包）
@@ -191,6 +191,17 @@ has_renpy_layout）。全程不解包、不建工作目录、不改原包；CLI 
     目标不在包内或尚未解出时告警跳过，绝不猜内容。
   - **执行位与空目录保留**：0755 启动脚本往返仍是 0755，空目录不丢；
     回包**跟随输入格式**，zip 进 zip 出、`.tar.bz2` 进 `.tar.bz2` 出。
+  - **zip 同样往返执行位（Issue #41）**：解压侧按
+    `mode = (external_attr >> 16) & 0o777` 取 mode，**只认 `create_system=3`**
+    （Unix 打包工具；Windows 工具留 0，那 16 位里没有 Unix 语义），非零才应用；
+    回包侧每个普通文件成员写 `external_attr = mode << 16` 并置 `create_system=3`。
+    归一化（剥 setuid/setgid/sticky、只留 `0o755` 集合内的位）与 tar 系**共用**
+    `_set_unix_mode` / `_member_write_mode`，不存在第二份实现。
+    **Windows 行为零变化**：zip 的还原平台判断单点收在 `_zip_extract_member`
+    （`os.name != "posix"` 直接不 chmod），回包固定 0644——与改动前一致，
+    NTFS 上执行位本就无从体现。`_set_unix_mode` 本身**不带**平台判断：
+    tar 系在 Windows 上照旧会跑一遍 `os.chmod`（`0444` 会真的设成只读），
+    那是 issue #26 起就有的行为，不因 zip 的新需求去动它。
 
 Web 侧另有两处平台分支，都在 `web/app.py`：`_local_path` 的 POSIX 分支以 `/`
 为根（相对路径 / NUL / 网络路径照旧拒绝）；`_open_in_desktop` 在 macOS 用
@@ -307,7 +318,9 @@ build_exe.bat                                # 产出 dist\RenPySlim.exe
   test_backup_space、test_packager_platforms、test_web_v017、test_frontend_*、
   test_log_codes；v0.18.0（issue #26）新增 test_posix_support（启动器解析、本地路径
   POSIX 分支、桌面文案与 reveal、进程组终止）与 test_archives_tar（tar 系解压/回包、
-  执行位、越界与特殊条目拦截）。测试数量以 `pytest tests -q` 实际收集为准，文档不写死。
+  执行位、越界与特殊条目拦截）；issue #41 新增 test_archives_zip_mode（zip 执行位
+  往返、setuid 剥离、Windows 写的条目不被凭空加执行位）。测试数量以
+  `pytest tests -q` 实际收集为准，文档不写死。
 - 平台 CI 双跑：`ci.yml` 覆盖 Windows 主流程；`.github/workflows/ci-linux.yml` 在
   ubuntu-latest 上跑 Python 3.12 / 3.13 矩阵（`pip check` + ruff + 全量 pytest +
   CLI 冒烟 + 无头 Web 启动），是"非 Windows 不能坏"的护栏。
