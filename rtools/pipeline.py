@@ -61,39 +61,145 @@ def _find_game_dir(project_dir: str) -> Path:
     return game
 
 
-def _flush_partial_changelog(output_dir: str, records, saved) -> None:
+def _flush_partial_changelog(output_dir: str, records, saved,
+                             rpa_pending: int = 0) -> None:
     """取消/中断时把已完成的改动落清单（审核修复）。
 
     否则磁盘已被部分修改，清单却不存在，用户无从知道发生了什么。
+
+    issue #37 / #38：这里的 records / saved 只含**已经落地**的改动。
+    RPA 暂存账本（_RpaLedger）里尚未提交的资产收益绝不能写进来——
+    封包没重建成功就等于没改过。还有多少暂记收益没落地，只在
+    rpa_pending 里报个数，让报告与交付物对得上。
     """
     try:
-        _write_json(Path(output_dir) / "changelog.json",
-                    {"records": [r.to_dict() for r in records],
-                     "saved_bytes": saved, "cancelled": True})
+        data = {"records": [r.to_dict() for r in records],
+                "saved_bytes": saved, "cancelled": True}
+        if rpa_pending:
+            data["rpa_pending_bytes"] = rpa_pending
+        _write_json(Path(output_dir) / "changelog.json", data)
     except Exception:
         pass
 
 
+class _RpaLedger:
+    """封包内资产的记账账本：先暂存，封包重建成功才提交（issue #37）。
+
+    背景：封包内资产是先在临时目录里优化、再靠重建封包换进交付物的。
+    重建"没变小 / 失败 / 没走到"时原件压根没动，这些资产收益与
+    copy / compress 记录都只是**暂记**，绝不能当成已节省。
+
+    旧版的做法是"先无条件并进总清单，事后按净变化把 saved 减回去"——
+    数字能对，记录对不上（#37）；而且减回去的时机在取消路径之外，
+    部分清单根本等不到（#38）。
+
+    现在改成一次记账事务，两个出口口径一致：
+
+    - 提交（封包重建成功）：该封包的 records 与**封包净变化**一起进总账，
+      资产暂记值作废——索引/格式开销可能吃掉甚至反超资产收益；
+    - 丢弃（没变小 / 失败 / 取消 / 异常）：records 与 saved 整体不落地。
+
+    选"丢弃"而不是"标 reverted"：records 表示"改过什么"，标一条
+    reverted 反而要读者自己减一遍，且 saved_bytes 与记录条数仍是错的。
+    没落地的改动本就不该出现在清单里。
+
+    记账口径：RPA 资产既不进 saved、也不进 records，只进这里。
+    因此"总节省 = 散落资产收益 + 已提交封包的净变化"，
+    这个恒等式在成功 / 部分成功 / 取消 / 异常四个出口都成立。
+    """
+
+    def __init__(self):
+        self.staged: dict[str, dict] = {}
+
+    def stage(self, rpa_name: str, records, saved: int) -> None:
+        """暂存某个封包名下的资产改动（重建成功前不对外生效）。"""
+        slot = self.staged.setdefault(rpa_name, {"records": [], "saved": 0})
+        slot["records"].extend(records)
+        slot["saved"] += saved
+
+    def provisional(self) -> int:
+        """还没落地的暂记收益合计（只用于报告，不参与总节省）。"""
+        return sum(slot["saved"] for slot in self.staged.values())
+
+    def commit(self, rpa_name: str, records: list) -> None:
+        """提交：该封包的资产记录过账进总清单。
+
+        暂记的资产收益**作废**——真实节省以封包净变化为准，由调用方
+        单独记入。资产收益与封包净变化相加会重复记账。
+        """
+        slot = self.staged.pop(rpa_name, None)
+        if slot:
+            records.extend(slot["records"])
+
+    def discard(self, rpa_name: str) -> None:
+        """丢弃：封包没重建成功，该封包的记录与收益都不落地。"""
+        self.staged.pop(rpa_name, None)
+
+
+class _ChangelogFlush:
+    """取消/异常出口的落清单视图：先聚合本批成果，再按现取口径落盘。
+
+    审核修复（中-1 / 高-5）要求任何异常都把"磁盘已改的改动"写进部分清单；
+    issue #38 补上另一半：落盘时机不能早于记账口径定型。旧版在调用方
+    汇总/扣减之前就把清单写了出去，写进去的是当时手上那份数字。
+    这里把两件事拆开：
+
+    - absorb()：把异常带出来的本批已完成结果折进清单——封包内的资产
+      不进总账，只交给 RPA 暂存账本（封包重建成功才提交）；
+    - saved_ref：落盘那一刻才现取，拿到的是最新的总节省，不是快照。
+
+    一次运行只建一个视图，成功与部分两个出口都从 total_saved() 取数：
+    口径只有一个，不会出现"部分清单和成功清单算法不一样"。
+    """
+
+    def __init__(self, output_dir: str, records, saved_ref: Callable[[], int],
+                 ledger=None):
+        self.output_dir = output_dir
+        self.records = records
+        self._saved_ref = saved_ref
+        self._ledger = ledger
+        self._absorbed = 0
+
+    def absorb(self, results) -> "_ChangelogFlush":
+        for r in results or ():
+            rpa = r.get("rpa")
+            if rpa and self._ledger is not None:
+                # 封包内资产：只挂账，重建成功之前一笔都不算已节省
+                self._ledger.stage(rpa[0], r.get("records", []),
+                                   r.get("saved", 0))
+                continue
+            self.records.extend(r.get("records", []))
+            self._absorbed += r.get("saved", 0)
+        return self
+
+    def total_saved(self) -> int:
+        """当前口径下的总节省：调用方的 saved 现值 + 本视图已吸收的收益。"""
+        return self._saved_ref() + self._absorbed
+
+    def flush(self) -> None:
+        pending = self._ledger.provisional() if self._ledger is not None else 0
+        _flush_partial_changelog(self.output_dir, self.records,
+                                 self.total_saved(), rpa_pending=pending)
+
+
 def _run_jobs_or_flush(p: Progress, stage: str, jobs: list, cancel,
-                       output_dir: str, records, saved) -> list:
+                       flush: _ChangelogFlush) -> list:
     """_run_jobs 外加中断兜底：任何异常都先把已落盘的改动记入清单。
 
     审核修复：
     - 中-1：取消时本批已完成的改动先聚合再落清单；
     - 高-5：非取消的真异常（文件占用/磁盘满等）同样落清单，
       磁盘已被部分修改时用户才有对账依据。
+    - issue #38：落清单的口径交给 flush 视图（见 _ChangelogFlush），
+      RPA 的暂记收益在这里不会被当成已节省。
     """
     try:
         return _run_jobs(p, stage, jobs, cancel)
     except PipelineCancelled as e:
-        extra = 0
-        for r in e.partial_results:
-            records.extend(r.get("records", []))
-            extra += r.get("saved", 0)
-        _flush_partial_changelog(output_dir, records, saved + extra)
+        flush.absorb(e.partial_results).flush()
         raise
     except BaseException:
-        _flush_partial_changelog(output_dir, records, saved)
+        flush.flush()
         raise
 
 
@@ -486,6 +592,9 @@ def run_project(project_dir: str, options: OptimizeOptions,
     ref_index = RefIndex(game_dir, (a.rel for a in assets))
     rename_map: dict[str, str] = {}
     saved = 0
+    # 取消/异常出口的落清单视图（见 _ChangelogFlush）：一次运行只用一个，
+    # 保证"saved 快照 + 本批已吸收收益"不会在多个出口被重复写。
+    flush_view = _ChangelogFlush(output_dir, records, lambda: saved)
     min_bytes = preset.min_size_kb * 1024
 
     # --- 附加检测（只报告，不动手）：废资源 / 重复文件 / 缺字 ---
@@ -790,7 +899,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
         jobs = [_safe_job("image", _img_job(a)) for a in todo_images
                 if a.size >= min_bytes and a.ext not in (".gif", ".bmp", ".avif")]
         _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
-                                      output_dir, records, saved), "image")
+                                      flush_view), "image")
 
     if options.do_audio:
         if not find_ffmpeg():
@@ -802,7 +911,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
             jobs = [_safe_job("audio", _aud_job(a)) for a in todo_audio
                     if a.size >= min_bytes]
             _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
-                                          output_dir, records, saved), "audio")
+                                          flush_view), "audio")
 
     if options.do_videos:
         if not find_ffmpeg():
@@ -822,7 +931,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
             jobs = [_safe_job("video", _vid_job(a)) for a in todo_videos
                     if a.ext in (".mp4", ".webm", ".ogv")]
             _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
-                                          output_dir, records, saved), "video")
+                                          flush_view), "video")
 
     if options.do_fonts and preset.font_subset:
         def _font_job(a):
@@ -857,7 +966,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
         jobs = [_safe_job("font", _font_job(a)) for a in todo_fonts
                 if a.size >= 256 * 1024]
         font_results = _run_jobs_or_flush(p, "optimize", jobs, cancel,
-                                          output_dir, records, saved)
+                                          flush_view)
         _aggregate(font_results, "font")
         for r in font_results:
             if r.get("font_mode"):
@@ -943,10 +1052,14 @@ def run_project(project_dir: str, options: OptimizeOptions,
         # --- 第 6 步：产出报告与修改清单 ---
         out = Path(output_dir)
         _write_json(out / "analysis.json", report.to_dict())
+        # 与部分出口同一份口径（见 _ChangelogFlush.total_saved）。
         _write_json(out / "changelog.json",
-                    {"records": [r.to_dict() for r in records], "saved_bytes": saved})
+                    {"records": [r.to_dict() for r in records],
+                     "saved_bytes": flush_view.total_saved()})
     except BaseException:
-        _flush_partial_changelog(output_dir, records, saved)
+        # 与成功出口同一口径：saved 在落盘那一刻现取，
+        # 不会把已吸收的成果写丢。
+        flush_view.flush()
         raise
     p.emit("done", f"工程优化完成，共节省约 {_fmt(saved)}",
            code="project_done", params={"saved": _fmt(saved)})
@@ -1103,10 +1216,11 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
 
     saved = 0
     rpa_replacements: dict[str, dict[str, str]] = {}   # rpa文件名 -> {内部路径: 优化后文件}
-    # 每个封包内资产优化时已计入 saved；但真实节省必须以封包重建后的
-    # 净变化为准（封包索引/格式开销可能吃掉甚至反超资产收益）。
-    # 这里单独记下各封包已记的资产收益，重建时按实际 delta 重算。
-    rpa_saved: dict[str, int] = {}
+    # 封包内资产的记账事务（issue #37）：优化完先挂在这本账上，
+    # 重建成功才提交进 records / saved，否则整体丢弃。见 _RpaLedger 的文档。
+    rpa_ledger = _RpaLedger()
+    # 取消/异常出口的落清单视图（一次运行只用一个，出口口径统一）。
+    flush_view = _ChangelogFlush(output_dir, records, lambda: saved, rpa_ledger)
     # 第二波：skipped 与 failed 分桶，口径同工程模式
     failed = {"image": 0, "audio": 0, "video": 0, "font": 0}
     skipped = {"image": 0, "audio": 0, "video": 0, "font": 0}
@@ -1443,18 +1557,19 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         dist_jobs.append(_safe_job(_DIST_KIND.get(a.kind, "image"),
                                    _dist_job(a)))
 
-    for r in _run_jobs_or_flush(p, "optimize", dist_jobs, cancel,
-                                output_dir, records, saved):
-        records.extend(r["records"])
-        saved += r["saved"]
+    for r in _run_jobs_or_flush(p, "optimize", dist_jobs, cancel, flush_view):
+        if r["rpa"]:
+            # 封包内资产：先进账本，重建成功那一刻才决定要不要过账
+            rpa_name = r["rpa"][0]
+            rpa_replacements.setdefault(rpa_name, {})[r["rpa"][1]] = r["rpa"][2]
+            rpa_ledger.stage(rpa_name, r["records"], r["saved"])
+        else:
+            records.extend(r["records"])
+            saved += r["saved"]
         if r["rename"]:
             rename_map[r["rename"][0]] = r["rename"][1]
         if r["remap"]:
             remap_map[r["remap"][0]] = r["remap"][1]
-        if r["rpa"]:
-            rpa_name = r["rpa"][0]
-            rpa_replacements.setdefault(rpa_name, {})[r["rpa"][1]] = r["rpa"][2]
-            rpa_saved[rpa_name] = rpa_saved.get(rpa_name, 0) + r["saved"]
         # 记账以字段为准（第二波）：failed/skipped 均为类型名字符串；
         # isinstance 防御兜底记录（极端路径下可能不是字符串），
         # 绝不让记账环节抛 KeyError 把整批成果带崩。
@@ -1540,15 +1655,15 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
             _check_cancel(cancel)
             rpa_files = list(working_p.rglob(rpa_name))
             if not rpa_files:
-                # 原包已不在工作副本，相关资产收益不可能落地，必须扣回。
-                saved -= rpa_saved.pop(rpa_name, 0)
+                # 原包已不在工作副本，资产收益与记录都不可能落地，整体丢弃。
+                rpa_ledger.discard(rpa_name)
                 report.warnings.append(
                     f"{rpa_name}：未找到待重建的封包，相关资产节省未计入。")
                 continue
             # 第二波：同名封包多份时不能盲取第一个重建——另外几份里的
             # 同名条目仍旧，会产生不一致的兄弟副本；跳过重建并警告。
             if len(rpa_files) > 1:
-                saved -= rpa_saved.pop(rpa_name, 0)
+                rpa_ledger.discard(rpa_name)
                 report.warnings.append(
                     f"{rpa_name}：在工作副本里找到 {len(rpa_files)} 份同名封包，"
                     "无法确定该重建哪一份，已跳过该批重建并保留原包；"
@@ -1567,8 +1682,11 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                 if new_size < old_size:
                     tmp_rpa.replace(src_rpa)
                     archive_replaced = True
-                    # 真实节省按封包净变化记账，扣回先前按资产累加的收益。
-                    saved += (old_size - new_size) - rpa_saved.pop(rpa_name, 0)
+                    # 提交这笔记账事务：该封包名下的资产记录过账，
+                    # 真实节省按封包净变化单独记——暂记的资产收益作废，
+                    # 两者相加会重复记账。
+                    rpa_ledger.commit(rpa_name, records)
+                    saved += old_size - new_size
                     records.append(ChangeRecord(
                         action="rpa_rebuild", src=rpa_name,
                         detail=f"封包内 {total} 个文件，替换 {replaced} 个，"
@@ -1580,9 +1698,10 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                             Path(v[1]).unlink(missing_ok=True)
                 else:
                     # 重建后未变小：保留原包、删临时包；改名转换的散落副本
-                    # 不动。已按资产记的收益并未落地，全部扣回。
+                    # 不动。这笔记账事务整体丢弃——原包一个字节都没变，
+                    # 资产记录与收益都不该出现在清单里（issue #37）。
                     tmp_rpa.unlink(missing_ok=True)
-                    saved -= rpa_saved.pop(rpa_name, 0)
+                    rpa_ledger.discard(rpa_name)
                     report.warnings.append(
                         f"{rpa_name}：封包重建后未变小（{_fmt(old_size)} -> "
                         f"{_fmt(new_size)}），已保留原封包；改名转换的散落副本"
@@ -1590,11 +1709,19 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
             except Exception as e:
                 tmp_rpa.unlink(missing_ok=True)
                 if archive_replaced:
+                    # 原包已被新包换掉，改动确实落地了：照常提交并记账，
+                    # 不能让一个后续异常把真实收益吞掉。
+                    rpa_ledger.commit(rpa_name, records)
+                    saved += old_size - new_size
+                    records.append(ChangeRecord(
+                        action="rpa_rebuild", src=rpa_name,
+                        detail=f"封包内 {total} 个文件，替换 {replaced} 个，"
+                               f"{_fmt(old_size)} -> {_fmt(new_size)}"))
                     report.warnings.append(
                         f"{rpa_name}：封包已重建，但后续清理或记账失败（{e}）")
                 else:
-                    # 重建失败同样未落地，扣回该封包已记的资产收益。
-                    saved -= rpa_saved.pop(rpa_name, 0)
+                    # 重建失败：原包原样保留，事务整体丢弃。
+                    rpa_ledger.discard(rpa_name)
                     report.warnings.append(
                         f"{rpa_name}：封包重建失败，保留原封包（{e}），"
                         "相关资产节省未计入。")
@@ -1643,14 +1770,17 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         d = report.to_dict()
         d["unreferenced"] = unreferenced
         _write_json(out / "analysis.json", d)
+        # 成功出口与部分出口共用同一份 records / saved 口径
+        # （暂存账此时必然已清空：每个封包要么提交要么丢弃）。
         _write_json(out / "changelog.json",
-                    {"records": [r.to_dict() for r in records], "saved_bytes": saved})
+                    {"records": [r.to_dict() for r in records],
+                     "saved_bytes": flush_view.total_saved()})
     except BaseException:
         # 审核修复（高-5）：任何异常（含取消）都落部分清单，
-        # 磁盘已被部分修改时用户有对账依据。尚未完成封包重建的资产
-        # 收益没有落地，部分清单也不能把它们算进 saved。
-        _flush_partial_changelog(
-            output_dir, records, saved - sum(rpa_saved.values()))
+        # 磁盘已被部分修改时用户有对账依据。
+        # issue #38：saved 只含已落地的改动——封包内资产还挂在账本上
+        # （没提交就等于没改过），这里不需要也不会再扣一次。
+        flush_view.flush()
         raise
     finally:
         # 审核修复（中-7）：解包临时目录任何路径上都不能残留，
