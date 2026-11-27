@@ -27,6 +27,7 @@ import sys
 import threading
 import uuid
 from pathlib import Path
+from typing import Optional
 
 import rtools
 
@@ -48,8 +49,8 @@ if _missing:
         ensure_ascii=False, indent=2))
     sys.exit(1)
 
-from rtools import packager, pipeline, scanner, analyzer, charset, font_tool  # noqa: E402
-from rtools import archives, crashdump, jobstore, backup  # noqa: E402
+from rtools import packager, pipeline, scanner, font_tool  # noqa: E402
+from rtools import analysis, archives, crashdump, jobstore, backup  # noqa: E402
 from rtools import __version__  # noqa: E402
 from rtools.config import (OptimizeOptions, CharsetOptions, PRESETS,  # noqa: E402
                            DEFAULT_PRESET)
@@ -364,6 +365,7 @@ def cmd_env(args) -> int:
 
 
 def cmd_analyze(args) -> int:
+    """只读分析。真正的分析逻辑在 rtools.analysis（与 Web 共用一份实现）。"""
     path = Path(args.path)
     if not path.exists():
         return _fail(f"路径不存在：{args.path}")
@@ -382,98 +384,26 @@ def cmd_analyze(args) -> int:
             return _fail(str(e))
         return _ok({"report": result["report"].to_dict(),
                     "apk": result["apk"]})
-    elif getattr(args, "mode", None) == "apk":
+    if getattr(args, "mode", None) == "apk":
         return _fail(f"--mode apk 只适用于 .apk 文件：{args.path}")
 
-    # 压缩包直接进：解压到临时目录，分析完清理
-    cleanup_dir = None
-    archive_input = False
-    if archives.is_archive(str(path)):
-        archive_input = True
-        import tempfile
-        cleanup_dir = tempfile.mkdtemp(prefix="rtools_unpack_")
-        try:
-            archives.extract_archive(str(path), cleanup_dir, args.password)
-            roots = archives.find_dist_roots(cleanup_dir)
-            if len(roots) > 1:
-                import shutil
-                names = "；".join(Path(x).name for x in roots)
-                shutil.rmtree(cleanup_dir, ignore_errors=True)
-                cleanup_dir = None
-                return _fail(
-                    f"压缩包里找到 {len(roots)} 个成品目录（{names}）。"
-                    "本工具一次只分析一个成品，请把各平台拆开分别分析。")
-            path = Path(roots[0])
-        except archives.ArchiveError as e:
-            # 审核修复（中-32）：解压失败路径以前直接 return，
-            # 泄漏临时目录（外层 try/finally 尚未进入）
-            import shutil
-            shutil.rmtree(cleanup_dir, ignore_errors=True)
-            cleanup_dir = None
-            return _fail(str(e))
-        except Exception:
-            import shutil
-            shutil.rmtree(cleanup_dir, ignore_errors=True)
-            cleanup_dir = None
-            raise
-
+    # 压缩包 / 工程 / 成品统一走 analysis.analyze_input：解压、多成品拒绝、
+    # 模式判定、临时目录清理都在那一份实现里。旧版这里和 web/app.py
+    # 各写了一份，已经漂了（压缩包多成品在 GUI 里被静默取第一个）。
     try:
-        # 工程有 .rpy 源码，成品只有 .rpyc，以此自动区分。
-        # 压缩包一律按成品（dist）：包内可能带源码，但输入形态是发布包，
-        # 口径必须与 optimize 一致（AGENTS「压缩包一律按成品处理」）。
-        mode = args.mode
-        if archive_input:
-            if mode and mode != "dist":
-                print(f"警告：{path.name} 是压缩包，按成品（dist）分析，"
-                      f"--mode {mode} 不适用，已自动改用 dist。",
-                      file=sys.stderr, flush=True)
-            mode = "dist"
-        elif not mode:
-            game = path / "game"
-            mode = "project" if (game.is_dir()
-                                 and any(game.rglob("*.rpy"))) else "dist"
-        progress = Progress(_log)
-        progress.emit("analyze", f"扫描 {args.path}（{mode} 模式）")
-        scan_log = lambda i, t, n: _log("scan", f"扫描资源 {i}/{t}：{n}")
-        if mode == "project":
-            game = path / "game"
-            assets = scanner.scan_assets(str(game), progress=scan_log)
-            report = analyzer.analyze(assets, str(game), "project")
-            chars, warns = charset.extract_charset(str(game), CharsetOptions())
-            report.warnings.extend(warns)
-            report.charset_size = len(chars)
-            report.languages = charset.detect_languages(str(game))
-            # 字体使用处数：让用户在优化前就看到哪些字体只用在一两处
-            from rtools.refs import RefIndex
-            from rtools import cleanup as _cleanup
-            from rtools.models import AssetKind
-            ref_index = RefIndex(str(game))
-            fonts = [a for a in assets if a.kind == AssetKind.FONT
-                     and a.ext in (".ttf", ".otf")]
-            report.font_usage, usage_warns = _cleanup.font_usage_report(
-                ref_index, fonts)
-            report.warnings.extend(usage_warns)
-        else:
-            # 分析必须只读：解包用临时目录，用完立即清理
-            import shutil
-            import tempfile
-            extract = Path(tempfile.mkdtemp(prefix="rtools_analyze_"))
-            try:
-                loose = scanner.scan_assets(str(path), progress=scan_log)
-                # 审核修复（中-25）：与优化执行路径对齐传 extract_scripts，
-                # 避免分析口径与执行口径不一致（潜伏地雷）
-                packed = scanner.scan_rpa_assets(str(path), str(extract),
-                                                 progress=scan_log,
-                                                 extract_scripts=True)
-                report = analyzer.analyze(loose + packed, str(path), "dist")
-                report.languages = charset.detect_languages(str(path))
-            finally:
-                shutil.rmtree(extract, ignore_errors=True)
-        return _ok({"report": report.to_dict()})
-    finally:
-        if cleanup_dir:
-            import shutil
-            shutil.rmtree(cleanup_dir, ignore_errors=True)
+        result = analysis.analyze_input(
+            str(path), mode=getattr(args, "mode", None),
+            password=args.password, progress=_analysis_log)
+    except analysis.AnalyzeError as e:
+        return _fail(str(e))
+    return _ok(result)
+
+
+def _analysis_log(stage: str, message: str, code: str = "",
+                  params: Optional[dict] = None) -> None:
+    """分析的进度回调：CLI 一律写 stderr（stdout 只放结果 JSON）。"""
+    print(f"[{stage}] {message}", file=sys.stderr, flush=True)
+
 
 
 def cmd_optimize(args) -> int:

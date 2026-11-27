@@ -47,6 +47,9 @@ rtools/            核心引擎（不依赖 Web/CLI，可独立调用与测试�
   config.py        档位（conservative/balanced/aggressive）、保底字符集、选项
   scanner.py       资源扫描（两步：先数总数再逐个报进度），ffprobe 元数据
   analyzer.py      报告生成：问题/建议/优先级/预计节省
+  analysis.py      `analyze` 命令的唯一实现：解压/模式判定/多成品拒绝/只读扫描
+                   （CLI 与 Web 都只做外壳，分析口径改这里一处即可；
+                   interfaces 里不准再出现第二份扫描-分析-字符集流程）
   charset.py       字符集提取（工程/成品/独立三种来源）、缺字对账、健壮编码；
                    按翻译语言分桶与引擎内置界面安全字（多语言感知，v0.16.0）
   font_optimizer.py 字体瘦身（临时文件策略 + 空壳防御 _sanity_check）
@@ -87,6 +90,19 @@ assets/            图标资源（icon.ico/icon.png，exe 与托盘共用）
 依赖方向（只许从上层指向下层）：
 `main.py / cli.py / web/app.py → rtools.pipeline → 各功能模块 → models/config/procutil`
 **rtools 内部禁止反向依赖 pipeline**；新增模块放在功能层。
+
+**"同一件事只写一份"的硬约束**（血泪教训，均为实际发生过的口径分叉）：
+
+| 一件事 | 唯一实现 | 曾经重复导致 |
+|---|---|---|
+| 分析一个输入 | `rtools.analysis.analyze_input` | 多成品压缩包在 GUI 里被静默取第一个、各平台内容丢失 |
+| 工程/成品判定 | `rtools.analysis.detect_mode` | 同一条 zip 在 GUI 判 project、CLI 判 dist |
+| remap 预检 | `rtools.remap.check_remap_support` | APK 与成品两套版本文件识别规则各自漂移 |
+| 权限位归一化 | `rtools.archives._set_unix_mode` / `_member_write_mode` | tar 与 zip 会得到两套权限 |
+| 安全遍历目录树 | `rtools.archives.walk_tree` | junction 穿透后备份包泄漏工程外文件 |
+| 记账 | `_ChangelogFlush.absorb`（经调用方 aggregate） | 同一条记录被并两次，saved_bytes 翻倍 |
+
+新增功能时先在这张表里找一遍：能挂到既有实现上就别再开一份。
 
 ## 3. 两条主流程
 

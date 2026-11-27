@@ -19,6 +19,7 @@ from __future__ import annotations
 import ast
 import json
 from pathlib import Path
+from typing import Optional
 
 from .charset import read_rpyc_text
 
@@ -73,6 +74,20 @@ def parse_remap_targets(script_text: str) -> int:
     return script_text.count('": ')
 
 
+def _find_script_version(game_root: Path) -> Optional[Path]:
+    """定位引擎版本文件；找不到返回 None。
+
+    Ren'Py 打包时按平台改名：成品目录里是 script_version.txt，APK 的
+    assets/x-game 下是 x-script_version.txt。APK 预检与成品预检共用这
+    一处口径，避免"一个入口认、另一个不认"的分叉（审核修复）。
+    """
+    for name in ("x-script_version.txt", "script_version.txt"):
+        candidate = Path(game_root) / name
+        if candidate.exists():
+            return candidate
+    return None
+
+
 def check_remap_support(game_root: Path) -> tuple[bool, str]:
     """注入前预检：该游戏能不能安全启用运行时重映射（审核修复）。
 
@@ -85,9 +100,10 @@ def check_remap_support(game_root: Path) -> tuple[bool, str]:
     返回 (支持, 人类可读原因)；支持时原因恒为空串。
     """
     game_root = Path(game_root)
-    sv_path = game_root / "script_version.txt"
-    if not sv_path.exists():
-        return False, "缺少 script_version.txt，无法确认引擎版本，已拒绝注入 remap"
+    sv_path = _find_script_version(game_root)
+    if sv_path is None:
+        return False, ("缺少 script_version.txt（或 APK 的 x-script_version.txt），"
+                       "无法确认引擎版本，已拒绝注入 remap")
     try:
         raw = sv_path.read_text(encoding="utf-8", errors="ignore").strip()
     except OSError:

@@ -12,7 +12,6 @@ Ren'Py 安卓版结构：assets/x-game/** 是游戏资源，assets/x-renpy/** �
 """
 from __future__ import annotations
 
-import ast
 import logging
 import os
 import random
@@ -409,46 +408,6 @@ def analyze_apk(apk_path: str,
     return {"report": base, "apk": summary}
 
 
-def _check_apk_remap_support(game_root: Path) -> tuple[bool, str]:
-    """APK 版重映射预检：引擎版本 + 游戏自带文件回调。
-
-    APK 里只有编译脚本，没有 .rpy 源码；回调冲突只能在 rpyc/rpymc
-    原始字节里找特征串。拿不准（缺版本文件、解析失败、出现特征串）
-    一律拒绝注入，退回同名压缩——安全优先。
-    """
-    sv = game_root / "x-script_version.txt"
-    if not sv.exists():
-        sv = game_root / "script_version.txt"
-    if not sv.exists():
-        return False, "缺少 script_version.txt，无法确认引擎版本"
-    try:
-        raw = sv.read_text(encoding="utf-8", errors="ignore").strip()
-        version = tuple(int(x) for x in ast.literal_eval(raw))
-    except Exception:
-        return False, "无法解析 script_version.txt"
-    if version < remap_mod._MIN_REMAP_VERSION:
-        v_show = ".".join(str(x) for x in version)
-        return False, f"引擎版本 {v_show} 低于 remap 要求的 8.0.0"
-    for p in game_root.rglob("*"):
-        if not p.is_file() or p.suffix.lower() not in (".rpy", ".rpyc",
-                                                      ".rpymc"):
-            continue
-        if p.name == remap_mod.REMAP_SCRIPT_NAME or \
-                p.name == remap_mod.REMAP_SCRIPT_NAME + "c":
-            continue
-        if p.suffix.lower() == ".rpy":
-            try:
-                text = p.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-        else:
-            # rpyc 文本在 zlib 槽里，必须解压后再找特征串
-            text = charset_mod.read_rpyc_text(p)
-        if "file_open_callback" in text or "loadable_callback" in text:
-            return False, "检测到游戏自身设置了文件加载回调，remap 可能冲突"
-    return True, ""
-
-
 def slim_apk(apk_path: str, preset_name: str,
               charset_opts: Optional[CharsetOptions] = None,
               sdk: Optional[str] = None,
@@ -571,7 +530,10 @@ def slim_apk(apk_path: str, preset_name: str,
                 "这个 APK 已经注入过重映射脚本：为避免旧映射丢失或"
                 "同名条目重复，本次不再叠加格式转换，原脚本与原资源保持不变。")
         if remap_usable:
-            ok_support, reason = _check_apk_remap_support(
+            # 预检与成品入口共用同一份实现：引擎版本 + 回调冲突，
+            # 两处各写一份就会各自漂移（版本文件在 APK 里叫
+            # x-script_version.txt，由 remap 侧统一识别）。
+            ok_support, reason = remap_mod.check_remap_support(
                 work / "assets" / "x-game")
             if not ok_support:
                 remap_usable = False

@@ -273,7 +273,14 @@ def run_quiet(cmd, **kwargs) -> subprocess.CompletedProcess:
         finally:
             with _ACTIVE_LOCK:
                 _ACTIVE.pop(proc, None)
-                _OWN_SESSION_PIDS.discard(proc.pid)
+                # 注意顺序：退出前 proc 可能仍有孙进程活在同一个进程组里，
+                # 这里直接 discard 会让这一刻之后到达的 _kill_tree 看不到
+                # "这是我们的会话"，退化成只 kill 直接子进程（已经退出）。
+                # 现在的收尾是 _kill_tree 先行、communicate 收尾、再 discard，
+                # 正常路径没有遗留；只有"杀完之后孙进程还赖着"的极端情况会
+                # 落到这条缝隙里，且需要 pid 被系统复用到同一个 pgid 才会
+                # 误伤无关进程——概率极低，但记在这里，改动时别把它当无意义
+                # 的清理顺手删掉或提前。
     return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
 
 

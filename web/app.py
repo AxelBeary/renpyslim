@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from rtools import (analyzer, apk, archives, charset, font_tool, jobstore,
+from rtools import (analysis, apk, archives, font_tool, jobstore,
                     packager, pipeline, procutil, scanner, sdk as sdk_mod)
 from rtools.config import (CharsetOptions, OptimizeOptions, PRESETS,
                            DEFAULT_PRESET, default_options)
@@ -589,12 +589,9 @@ def api_env():
             "presets": {k: v.label for k, v in PRESETS.items()}}
 
 
-def _detect_mode(path: Path) -> str:
-    """工程有 .rpy 源码脚本，成品只有编译后的 .rpyc，以此区分。"""
-    game = path / "game"
-    if game.is_dir() and any(game.rglob("*.rpy")):
-        return "project"
-    return "dist"
+# 工程/成品判定与 CLI、analysis 共用同一份实现：这是第三个曾经各写一份的
+# 口径（gui 判 project、cli 判 dist 的经典分叉来源），现在只留 analysis 的。
+_detect_mode = analysis.detect_mode
 
 
 @app.post("/api/analyze")
@@ -619,90 +616,20 @@ def api_analyze(req: AnalyzeReq):
         _run_in_thread(job_id, apk_task)
         return {"ok": True, "job": job_id}
 
-    # 分析改后台任务跑：扫描大项目耗时不短，前端轮询实时进度
+    # 分析改后台任务跑：扫描大项目耗时不短，前端轮询实时进度。
+    # 真正的分析在 rtools.analysis（与 CLI 共用一份实现）——旧版这里
+    # 另写了一份，且已经与 CLI 漂了（压缩包多成品在 GUI 里被静默取
+    # 第一个、带源码的压缩包被判成 project）。
     job_id = _new_job("analyze", title=path.name)
 
     def task():
-        import shutil
-        import tempfile
-        p = path
-        scan_log = lambda i, total, name: _job_log(
-            job_id, "scan", f"扫描资源 {i}/{total}：{name}")
-        cleanup_dir = None
-        try:
-            # 压缩包直接进：解压到临时目录，分析完清理
-            is_archive = archives.is_archive(str(p))
-            if is_archive:
-                _job_log(job_id, "unpack", f"正在解压压缩包 {p.name}…")
-                cleanup_dir = tempfile.mkdtemp(prefix="rtools_unpack_")
-                archives.extract_archive(str(p), cleanup_dir, req.password)
-                p = Path(archives.find_dist_root(cleanup_dir))
-                _job_log(job_id, "unpack", f"已定位成品目录：{p.name}")
-
-            # 审核修复（中-31）：压缩包输入强制走 dist 分析——
-            # 旧版沿用页面传来的 mode，project 页手输 zip 路径会报
-            # "缺少 game 目录"的误导错
-            mode = _detect_mode(p) if is_archive else (req.mode or _detect_mode(p))
-
-            if mode == "project":
-                if not (p / "game").is_dir():
-                    raise ValueError(f"{req.path} 缺少 game 目录，不是有效工程")
-                game = str(p / "game")
-                assets = scanner.scan_assets(
-                    game, probe=True, progress=scan_log,
-                    cancel=lambda: _job_cancelled(job_id))
-                report = analyzer.analyze(assets, game, "project")
-                _job_log(job_id, "analyze", "正在提取字符集…")
-                chars, warns = charset.extract_charset(game, CharsetOptions())
-                report.warnings.extend(warns)
-                report.charset_size = len(chars)
-                report.languages = charset.detect_languages(game)
-                # 字体使用处数：前端分析报告与 CLI 同口径；
-                # languages 字段在分析报告里如实展示检测到的语言清单。
-                from rtools.refs import RefIndex
-                from rtools import cleanup as _cleanup
-                from rtools.models import AssetKind
-                ref_index = RefIndex(game)
-                fonts = [a for a in assets if a.kind == AssetKind.FONT
-                         and a.ext in (".ttf", ".otf")]
-                report.font_usage, usage_warns = _cleanup.font_usage_report(
-                    ref_index, fonts)
-                report.warnings.extend(usage_warns)
-                charlist_str = "".join(sorted(c for c in chars if c.isprintable()))
-            else:
-                # 分析必须只读：解包封包用临时目录，分析完立即清理
-                work = Path(tempfile.mkdtemp(prefix="rtools_analyze_"))
-                try:
-                    loose = scanner.scan_assets(str(p), probe=True,
-                                                progress=scan_log,
-                                                cancel=lambda: _job_cancelled(job_id))
-                    # 审核修复（中-25）：与优化执行路径对齐传
-                    # extract_scripts，避免分析口径与执行口径不一致
-                    packed = scanner.scan_rpa_assets(str(p), str(work),
-                                                     probe=True, progress=scan_log,
-                                                     cancel=lambda: _job_cancelled(job_id),
-                                                     extract_scripts=True)
-                    report = analyzer.analyze(loose + packed, str(p), "dist")
-                    report.languages = charset.detect_languages(str(p))
-                finally:
-                    shutil.rmtree(work, ignore_errors=True)
-                # 防误用：目录里找不到编译脚本，很可能选错了目录
-                if not any(f.suffix.lower() == ".rpyc" for f in p.rglob("*.rpyc")):
-                    report.warnings.insert(
-                        0, "这个目录里没找到 .rpyc 编译脚本，看起来不像已打包的成品。"
-                           "请确认选的是解压后含 exe 和 game 文件夹的那个目录；"
-                           "如果你选的其实是工程目录，请切到左边的「超级打包器」标签。")
-            _job_log(job_id, "done", "分析完成")
-            result = {"mode": mode, "report": report.to_dict()}
-            if mode == "project":
-                result["charlist"] = charlist_str
-            return result
-        finally:
-            if cleanup_dir:
-                shutil.rmtree(cleanup_dir, ignore_errors=True)
-
-    _run_in_thread(job_id, task)
-    return {"ok": True, "job": job_id}
+        progress = _job_progress(job_id)
+        # 取消探针挂在回调上：analysis 里每个扫描步骤都会查它，
+        # Web 的取消按钮因此在分析阶段也生效。
+        progress.cancel = lambda: _job_cancelled(job_id)
+        return analysis.analyze_input(
+            str(path), mode=req.mode, password=req.password,
+            progress=progress)
 
 
 @app.post("/api/optimize")

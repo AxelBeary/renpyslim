@@ -88,6 +88,13 @@
 `pip check`、`node --check` 均通过。Windows 未在本轮复跑，由 CI 覆盖。
 本批次未改依赖清单，无需 lock/依赖表同步。
 
+> **数字随平台变，不要当固定基线。** skipped 的差额全部来自平台专属用例
+> （POSIX 专属：进程组终止、执行位往返、真 SIGINT 投递等；Windows 专属：
+> junction 穿透、NTFS 只读位）。同一提交在 Windows / Python 3.13 上是
+> **452 passed / 16 skipped**，在 Ubuntu / Python 3.12 上是 460 / 8。
+> 判据是"0 failed"与"skip 理由都已登记在 tests/conftest.py 白名单"，
+> 不是某个具体数字。
+
 **验证**（2026-11-26 复跑）：
 
 - Windows（Python 3.13.14）：`python -m pytest tests -q` → **378 passed / 9 skipped**，

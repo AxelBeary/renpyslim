@@ -326,11 +326,15 @@ def test_find_build_tools_skips_non_executable_latest(tmp_path):
     assert "34.0.0" in signer
 
 
+# APK 预检与成品预检共用 remap.check_remap_support（版本文件在 APK 里叫
+# x-script_version.txt，由 remap._find_script_version 统一识别）：
+# 这里直接对着共用实现断言，防止哪天又分叉成两份。
+
 def test_apk_remap_support_rejects_old_engine(tmp_path):
     root = tmp_path / "x-game"
     root.mkdir()
     (root / "x-script_version.txt").write_text("(7, 4, 0)", encoding="utf-8")
-    ok, reason = apk._check_apk_remap_support(root)
+    ok, reason = remap.check_remap_support(root)
     assert not ok and "8.0.0" in reason
 
 
@@ -341,7 +345,7 @@ def test_apk_remap_support_rejects_compiled_callback(tmp_path):
     (root / "x-scripts").mkdir()
     (root / "x-scripts" / "x-extra.rpyc").write_bytes(
         _make_rpyc2("config.file_open_callback = custom_loader\n"))
-    ok, reason = apk._check_apk_remap_support(root)
+    ok, reason = remap.check_remap_support(root)
     assert not ok and "回调" in reason
 
 
@@ -369,8 +373,16 @@ def test_apk_remap_support_accepts_clean_package(tmp_path):
     (root / "x-script_version.txt").write_text("(8, 1, 0)", encoding="utf-8")
     (root / "x-scripts").mkdir()
     (root / "x-scripts" / "x-script.rpyc").write_bytes(b"RENPY RPC2\x00label start")
-    ok, reason = apk._check_apk_remap_support(root)
+    ok, reason = remap.check_remap_support(root)
     assert ok and reason == ""
+
+
+def test_remap_finds_apk_style_version_file(tmp_path):
+    """APK 的 x-script_version.txt 也要认——两个入口共用同一处口径。"""
+    (tmp_path / "x-script_version.txt").write_text("(8, 1, 0)", encoding="utf-8")
+    assert remap._find_script_version(tmp_path).name == "x-script_version.txt"
+    (tmp_path / "x-script_version.txt").unlink()
+    assert remap._find_script_version(tmp_path) is None
 
 
 # ---------------------------------------------------------------------------
