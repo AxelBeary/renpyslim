@@ -1578,6 +1578,16 @@ const LOG_CODES = {
     "de": "Arbeite {done}/{total} · bisher {saved} gespart",
     "fr": "Au travail {done}/{total} · {saved} économisés pour l'instant"
   },
+  "job_cancelled": {
+    "zh": "任务因取消提前结束：{error}",
+    "en": "Task stopped early by cancellation: {error}",
+    "ru": "Задача остановлена из-за отмены: {error}",
+    "es": "Tarea detenida antes por la cancelación: {error}",
+    "pt": "Tarefa encerrada antes pelo cancelamento: {error}",
+    "tr": "Görev iptal nedeniyle erken durdu: {error}",
+    "de": "Aufgabe wegen Abbruch vorzeitig beendet: {error}",
+    "fr": "Tâche arrêtée plus tôt par l'annulation : {error}"
+  },
   "job_error": {
     "zh": "任务执行异常，已跳过：{error}",
     "en": "Task failed and was skipped: {error}",

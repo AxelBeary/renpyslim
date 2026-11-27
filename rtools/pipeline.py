@@ -45,6 +45,10 @@ class PipelineCancelled(PipelineError):
 
     审核修复（中-1）：携带被取消时本批已完成的结果，
     否则这些已落盘的改动不会进 changelog。
+
+    issue #39：partial_results 是该批**全部**成果，不只是取消瞬间刚好
+    完成的那几个——取消后已经在跑的优化器要么不落盘，要么落盘且记账，
+    两者只能选一个，不能出现“产物有、清单无”。
     """
 
     def __init__(self, partial_results: list | None = None):
@@ -914,6 +918,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
             try:
                 res = compress_video(a.path, a.path, options.preset,
                                      use_av1=use_av1)
+            except procutil.TaskCancelled:
+                raise          # issue #39：取消不是“无法压缩”，别吞成警告
             except RuntimeError as e:
                 out["warn"] = str(e)
                 return out
@@ -1025,6 +1031,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 slim_chars, mode = font_plans.get(a.rel, (chars, "global"))
                 try:
                     res = subset_font(a.path, a.path, slim_chars)
+                except procutil.TaskCancelled:
+                    raise      # issue #39：取消不是“瘦身失败”
                 except Exception as e:
                     out["failed"] = "font"
                     out["warn"] = f"{a.rel}：字体瘦身失败，保留原文件（{e}）"
@@ -1515,6 +1523,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     try:
                         res = compress_video(a.path, a.path, options.preset,
                                              use_av1=use_av1)
+                    except procutil.TaskCancelled:
+                        raise      # issue #39：取消不是“无法压缩”
                     except RuntimeError as e:
                         res = None
                         out["warn"] = str(e)
@@ -1545,6 +1555,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                         detail=f"字形 {res['glyphs_before']} -> {res['glyphs_after']}"))
                     if a.in_rpa:
                         out["rpa"] = (a.rpa_name, a.rel, a.path)
+                except procutil.TaskCancelled:
+                    raise      # issue #39：取消不是“瘦身失败”
                 except Exception as e:
                     out["failed"] = "font"
                     out["warn"] = f"{a.rel}：字体瘦身失败，保留原文件（{e}）"

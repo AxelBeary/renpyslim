@@ -23,7 +23,7 @@ from typing import Optional
 from .audio_optimizer import find_ffmpeg
 from .config import DEFAULT_PRESET
 from .image_optimizer import OptimizeResult
-from .procutil import run_quiet
+from .procutil import TaskCancelled, check_cancelled, run_quiet
 
 # 档位 → CRF（越大越省、画质越低）
 CRF_BY_PRESET = {"conservative": 23, "balanced": 28, "aggressive": 32}
@@ -161,6 +161,11 @@ def compress_video(src: str, dst: str, preset: str = DEFAULT_PRESET,
             return OptimizeResult(
                 status="failed",
                 reason=f"FFmpeg 重编码失败（退出码 {proc.returncode}）{err[:200]}")
+        # 取消发生在编码期间：任务已被杀掉，半成品绝不能替换原视频
+        check_cancelled()
+    except TaskCancelled:
+        tmp.unlink(missing_ok=True)
+        raise
     except Exception as e:
         tmp.unlink(missing_ok=True)
         return OptimizeResult(status="failed", reason=str(e))
@@ -171,6 +176,7 @@ def compress_video(src: str, dst: str, preset: str = DEFAULT_PRESET,
         return OptimizeResult(status="skipped",
                               reason="已是最优，压不出更小")
 
+    check_cancelled()            # 落盘前的协作式取消检查（issue #39）
     dst_p.parent.mkdir(parents=True, exist_ok=True)
     tmp.replace(dst_p)
     return OptimizeResult(status="ok", path=str(dst_p),

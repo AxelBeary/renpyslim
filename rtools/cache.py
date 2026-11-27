@@ -16,6 +16,8 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
+from . import procutil
+
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path.home() / ".renpyslim" / "cache"
@@ -166,6 +168,9 @@ def apply_cached(cached_path: str, dst: str) -> bool:
 
     审核修复（中-4）：先写随机 tmp 再原子替换——直写目标时
     IO 故障会把待优化文件本身写成半截。
+
+    issue #39：缓存命中同样是一次“改盘”，取消后不能再替换目标——
+    它和优化器走同一套协作式取消检查点。
     """
     tmp = None
     try:
@@ -173,9 +178,15 @@ def apply_cached(cached_path: str, dst: str) -> bool:
         dst_p.parent.mkdir(parents=True, exist_ok=True)
         tmp = dst_p.with_name(f"{dst_p.name}.{uuid.uuid4().hex}.tmp")
         shutil.copyfile(cached_path, tmp)
+        procutil.check_cancelled()
         os.replace(tmp, dst_p)
         return True
     except OSError:
         if tmp is not None:
             tmp.unlink(missing_ok=True)
         return False
+    except BaseException:
+        # 取消等异常：临时文件必清，异常原样上抛（不能当成“未命中”继续）
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+        raise

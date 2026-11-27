@@ -58,6 +58,12 @@
    `kill_children(scope)`），取消一个任务不再误杀并发只读分析的 ffprobe；
    超时/Ctrl+C 收尾带超时并清理孙进程；Web 在提交后、点火前被取消的任务
    直接落终态；打包阶段取消后不再报 done，SDK 进程随 scope 一起停。
+   后续 issue #39 补齐了"取消之后"的账：任务令牌带持久取消标记
+   （`cancel_scope` / `check_cancelled` / `TaskCancelled`），`run_quiet`
+   在 `Popen` 前与登记后各查一次，取消后不再冒出新的外部进程；纯 Python
+   优化器在 `replace`/`unlink` 前查取消，不再出现"产物有、changelog 无"；
+   `_run_jobs` 取消后先 `shutdown(wait=True, cancel_futures=True)` 再收集
+   **全部**已完成 future，`partial_results` 完整。
 2. **任务历史**：`jobs.json` 读-改-写加跨进程文件锁，Web 与 CLI 并发写
    不再丢记录（实测 30/30）。
 3. **不可信输入**：交付目录名来自压缩包时撞名只换唯一序号、绝不 rmtree；

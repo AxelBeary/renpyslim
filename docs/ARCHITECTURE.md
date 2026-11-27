@@ -58,7 +58,8 @@ rtools/            核心引擎（不依赖 Web/CLI，可独立调用与测试�
   utils.py         fmt_size 等公共小工具
   runtime.py       端口登记文件、干净退出
   procutil.py      run_quiet：外部调用统一收口（Windows 不弹黑框；
-                   POSIX 独立会话 + 进程组终止）
+                   POSIX 独立会话 + 进程组终止）；任务 scope 的取消标记
+                   与落盘前检查点（cancel_scope / check_cancelled / TaskCancelled）
 tests/             pytest：conftest.py 统一 sys.path；按功能分文件
 docs/              BACKLOG.md（需求事实源）、本文件
 assets/            图标资源（icon.ico/icon.png，exe 与托盘共用）
@@ -214,11 +215,33 @@ POSIX 分支只是把"根"和"怎么调用外部程序"换了个写法，没有�
     不再等优化跑完才在最后一步失败。
 18. **不可信包的权限位**：tar 解压只还原 0755 以内的位，剥离
     setuid/setgid/sticky（与 3.12 `data_filter` 口径一致）。
+19. **取消不留账外产物**（issue #39）：取消是协作式的，且两条腿都要落地——
+    - **外部进程**：`kill_children()` 先给任务令牌落下持久取消标记
+      （`procutil.cancel_scope`），再由 `run_quiet` 在 `Popen` 之前与登记
+      `_ACTIVE` 之后各查一次，已取消就拒绝启动/立即终止。旧版只对
+      `_ACTIVE` 拍一次快照，取消瞬间还没轮到起子进程的 worker 之后照样
+      会起 ffmpeg/renpy，跑完谁也说不清。
+    - **纯 Python 优化器**：Pillow/fontTools 中途打断不了，就在**落盘点**
+      之前查一次（`procutil.check_cancelled`，图片/音频/视频/字体/缓存
+      复制都有）。于是口径统一为"要么不留痕，要么留痕且记账"：取消后
+      替换/删除不再发生；一旦发生过（取消前）就必然进 `partial_results`
+      与 `changelog`。
+    - **收尾顺序**：`_run_jobs` 取消后先 `shutdown(wait=True,
+      cancel_futures=True)`（未开始的撤掉、已开始的等退出），再收集**全部**
+      已完成的 future，最后抛携带完整 `partial_results` 的
+      `PipelineCancelled`；调用方（工程线 `_run_batch` / 成品线 `_aggregate`）
+      把这批结果记进 records/saved/failed/skipped 后再上抛，落清单只走
+      一个入口，不会重复计数。
+    - 代价：取消要等正在跑的纯 Python 任务退出（不可中断）。这是有意的
+      取舍——"等一会儿但账目对得上"胜于"立刻返回但清单与产物打架"。
 
 ## 5. 扩展指南
 
 ### 新增一种优化器（如视频压缩，见 BACKLOG B7）
-1. 建 `rtools/video_optimizer.py`，遵循"临时文件+没变小不替换"范式
+1. 建 `rtools/video_optimizer.py`，遵循"临时文件+没变小不替换"范式；
+   在 `replace`/`unlink` 之前调 `procutil.check_cancelled()`，并把
+   `TaskCancelled` 原样上抛（别被 `except Exception` 归成 failed），
+   取消才不会留下账外产物（见第 4 节第 19 条）
 2. `config.py` 加选项字段（默认关 = 安全）
 3. `pipeline.py` 两条线的优化循环各接一个分支
 4. CLI/Web 加对应开关，tests/ 加回归测试
