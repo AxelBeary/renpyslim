@@ -792,7 +792,7 @@ def _tar_add_dir(tf: tarfile.TarFile, dirpath: Path, rel: Path) -> None:
         st = path.stat(follow_symlinks=False)
         info = tarfile.TarInfo(member_rel.as_posix())
         info.size = st.st_size
-        info.mode = _tar_member_mode(st)
+        info.mode = _member_write_mode(st)
         info.mtime = int(st.st_mtime)
         with open(path, "rb") as fh:
             tf.addfile(info, fh)
