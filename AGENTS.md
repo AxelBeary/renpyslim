@@ -23,6 +23,10 @@
   在 Windows Terminal 等 ConPTY 终端里可能完全看不到输出——那只作兜底，不要依赖。
 - 输出约定：**结果 JSON 走 stdout，过程日志走 stderr**——解析时只读 stdout，stderr 不要当 JSON 解析。
   参数错误也不例外：同样向 stdout 输出 `{"ok": false, ...}` JSON，退出码 1。
+- **用户中断（Ctrl+C）也是同一种 JSON 出口**：stdout 输出
+  `{"ok": false, "error": "用户已中断", "interrupted": true, "kind": ..., "command": ...}`，
+  退出码 **130**（128 + SIGINT）。自动化据此把"用户中断"与"失败（1）/ 被杀"分开；
+  stderr 仍是人话中文日志，已启动的外部子进程与临时目录照常清理。
 - 所有命令的结果 JSON 顶层有 `"ok": true/false`；失败时带 `"error"` 字段。
 
 ## 运行方式
@@ -225,6 +229,12 @@ Windows 与 WSL Ubuntu 双平台跑通（数量以 `pytest tests -q` 实际收�
 - Output contract: **result JSON on stdout, progress logs on stderr**.
   Parse stdout only; stderr is never JSON. Argument errors are no exception:
   they also emit `{"ok": false, ...}` JSON on stdout and exit with code 1.
+- **A user interrupt (Ctrl+C) uses the same JSON exit path**: stdout carries
+  `{"ok": false, "error": "用户已中断", "interrupted": true, "kind": ..., "command": ...}`
+  and the exit code is **130** (128 + SIGINT), so automation can tell
+  "interrupted by the user" apart from "failed (1) / killed". stderr stays
+  human-readable Chinese, and spawned child processes / temp directories are
+  still cleaned up as before.
 - Every result JSON has top-level `"ok": true/false`; failures carry `"error"`.
 
 ## Running

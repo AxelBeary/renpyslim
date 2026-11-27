@@ -199,7 +199,12 @@ def test_unexpected_exception_records_error(tmp_path, monkeypatch, capsys):
 
 
 def test_interrupted_job_records_error(tmp_path, monkeypatch):
-    """Ctrl+C（BaseException）也要收尾，不能留 running 幽灵记录。"""
+    """Ctrl+C 也要收尾，不能留 running 幽灵记录。
+
+    issue #40 之后中断不再上抛：cli.main 捕获 KeyboardInterrupt，输出
+    中断 JSON 并返回 130；历史语义不变——仍记 status=error 且 error 文本
+    带 KeyboardInterrupt（供 Web 历史面板区分"中断"）。
+    """
     import cli
 
     def _interrupt(args):
@@ -207,8 +212,7 @@ def test_interrupted_job_records_error(tmp_path, monkeypatch):
 
     monkeypatch.setattr(cli, "cmd_analyze", _interrupt)
     apk = _make_apk(tmp_path)
-    with pytest.raises(KeyboardInterrupt):
-        cli.main(["analyze", str(apk)])
+    assert cli.main(["analyze", str(apk)]) == 130
 
     jobs = jobstore.list_jobs()
     assert len(jobs) == 1
@@ -305,8 +309,8 @@ def test_heartbeat_thread_stops_on_every_exit_path(tmp_path, monkeypatch,
     monkeypatch.setattr(cli, "cmd_analyze", fake_command)
     argv = ["analyze", str(tmp_path / "dummy.apk")]
     if outcome == "cancelled":
-        with pytest.raises(KeyboardInterrupt):
-            cli.main(argv)
+        # issue #40：中断走 JSON 出口返回 130（不再上抛 KeyboardInterrupt）
+        assert cli.main(argv) == 130
     else:
         assert cli.main(argv) == 1
     captured = capsys.readouterr()
