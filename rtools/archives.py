@@ -9,6 +9,8 @@
   细节见 _extract_tar 的文档字符串
 重新打包默认仍输出 zip（兼容性最好）；需要按后缀出 tar 系时用
 create_archive，它会把 mode 一起写进成员，保证 0755 启动脚本可执行。
+zip 在 POSIX 上同样往返执行位（写 external_attr、解压时 chmod 还原，
+统一走 _set_unix_mode；Windows 行为不变），细节见 Issue #41。
 """
 from __future__ import annotations
 
@@ -77,6 +79,43 @@ def repack_suffix(input_suffix: str) -> str:
     “不支持的打包格式”，用户白等一场。zip 兼容性最好，是安全默认。
     """
     return input_suffix if input_suffix in _WRITABLE_SUFFIXES else ".zip"
+
+
+# ---------------------------------------------------------------------------
+# 权限位规范化：tar 系（Issue #26）与 zip（Issue #41）共用同一套口径
+#
+# 只搬普通读写执行位（submask 0o755），**绝不还原 setuid/setgid/sticky**：
+# 不可信压缩包不能往用户目录里塞 setuid 文件，3.12 的 tar data_filter 也
+# 只保留 0o755，两处口径必须一致——所以这里只写一份，两种格式都走它。
+#
+# 这里**不做平台判断**：它就是 tar 系原本的实现，Windows 侧照旧调用
+# （NTFS 上 os.chmod 只认只读位，0755 基本是空操作，但 0444 会真的设成
+# 只读——这是改动前就有的行为，不为 zip 的新需求去动它）。要不要在
+# Windows 上还原，由各调用点自己决定：zip 那边单点判 os.name == "posix"
+# （见 _zip_extract_member），tar 保持原样。
+# ---------------------------------------------------------------------------
+
+def _set_unix_mode(path: str, mode: Optional[int], is_dir: bool) -> None:
+    """按成员里的 Unix mode 还原权限位（核心诉求：启动脚本解压后仍可执行）。
+
+    zip 与 tar 解压共用：zip 的 mode 存在 ZipInfo.external_attr 高 16 位，
+    tar 的存在 TarInfo.mode，取值方式由调用方各自算好再传进来。
+
+    只搬权限那 12 位（S_IMODE），不碰文件类型位；目录的 mode 不还原
+    （临时目录得让当前进程继续往里写，保持默认更省事）。
+
+    失败一律静默：Windows 的 os.chmod 只认只读位（S_IWRITE），对 0755
+    可能直接抛错或只生效一半——这不是错误，不该让整次解压失败。
+    """
+    if is_dir or not mode:          # mode 为 None 或极端包里的全 0，跳过
+        return
+    try:
+        # 只还原普通读写执行位，绝不还原 setuid/setgid/sticky：
+        # 不可信包不能往用户目录里写 setuid 文件；3.12 的 data_filter
+        # 也只保留 0o755，两个版本口径必须一致。
+        os.chmod(path, stat.S_IMODE(mode) & 0o755)
+    except OSError:
+        pass
 
 
 def find_7zip() -> Optional[str]:
@@ -188,7 +227,7 @@ def extract_archive(src: str, dest_dir: str,
                             first = seen.get(norm)
                             if first is None:
                                 seen[norm] = info.filename
-                                zf.extract(info, dest_p, pwd=cand)
+                                _zip_extract_member(zf, info, dest_p, cand)
                                 continue
                             if info.is_dir():
                                 logger.warning(
@@ -207,7 +246,7 @@ def extract_archive(src: str, dest_dir: str,
                             logger.warning(
                                 "压缩包撞名：条目 '%s' 与已解压条目 '%s' 冲突，"
                                 "后到内容保留为 '%s'。", info.filename, first, cand_name)
-                            zf.extract(dup_info, dest_p, pwd=cand)
+                            _zip_extract_member(zf, dup_info, dest_p, cand)
                     ok = True
                     break
                 except RuntimeError as e:
@@ -327,6 +366,10 @@ def create_zip(src_dir: str, dest_zip: str) -> str:
     审核修复：改用 os.scandir 自行递归（rglob 会穿入 Windows junction，
     可能成环或拉进范围外内容），跳过符号链接与 junction 并告警；
     空目录写入目录条目（arcname 以 / 结尾）避免解压后丢失。
+
+    Issue #41：普通文件成员写入 Unix 权限位（external_attr 高 16 位 +
+    create_system=3），POSIX 上解压回来执行位还在；取值口径与 tar 系
+    共用 _member_write_mode，Windows 上固定 0644（没有执行位可言）。
     """
     src = Path(src_dir)
     out = Path(dest_zip)
@@ -355,6 +398,32 @@ def _is_link_or_junction(entry: os.DirEntry) -> bool:
     return False
 
 
+def _zip_write_file(zf: zipfile.ZipFile, filepath: str, arcname: Path) -> None:
+    """把一个普通文件写进 zip，并带上 Unix 权限位（Issue #41）。
+
+    为什么不用 zf.write：它内部构造的 ZipInfo 里 external_attr 是标准库
+    自己按 st_mode 填的（Windows 上恒 0666、create_system=0），既没有我们
+    归一化后的 mode，也没法把 Windows 固定成 0644。这里自己造 ZipInfo 再
+    open/write 流式拷贝（不把大文件读进内存），压缩方式与等级沿用
+    create_zip 传下来的 ZIP_DEFLATED / 9 级，其余字段仍由 ZipInfo.from_file
+    计算，产物与改动前只差 external_attr / create_system 两处。
+    """
+    info = zipfile.ZipInfo.from_file(filepath, arcname)
+    info.create_system = 3                  # 3 = Unix：权限位只在这套里有意义
+    info.external_attr = _member_write_mode(os.stat(filepath)) << 16
+    info.compress_type = zf.compression
+    # 压缩等级的属性名 3.12 是私有的 _compresslevel、3.13 改成公开的
+    # compress_level，按特性嗅探两个版本都给同一档（沿用 _extract_tar
+    # 判断 data_filter 的写法）。不设的话会回落 zlib 默认级，与
+    # create_zip 文档写明的 9 级不符。
+    if hasattr(info, "compress_level"):
+        info.compress_level = zf.compresslevel
+    else:                                   # Python 3.12 及更早
+        info._compresslevel = zf.compresslevel
+    with open(filepath, "rb") as fsrc, zf.open(info, "w") as fdst:
+        shutil.copyfileobj(fsrc, fdst, 1024 * 8)
+
+
 def _zip_add_dir(zf: zipfile.ZipFile, dirpath: Path, rel: Path) -> None:
     """递归把一个目录加入 zip：跳过符号链接/junction，空目录保留条目。"""
     has_content = False
@@ -368,10 +437,66 @@ def _zip_add_dir(zf: zipfile.ZipFile, dirpath: Path, rel: Path) -> None:
                 _zip_add_dir(zf, Path(entry.path), rel / entry.name)
                 has_content = True
             elif entry.is_file(follow_symlinks=False):
-                zf.write(entry.path, rel / entry.name)
+                _zip_write_file(zf, entry.path, rel / entry.name)
                 has_content = True
     if not has_content:
+        # 目录条目不写 mode：解压侧同样不还原目录权限（目录得让当前进程
+        # 继续往里写），与改动前逐字节一致。
         zf.writestr(zipfile.ZipInfo(rel.as_posix() + "/"), b"")
+
+
+# ---------------------------------------------------------------------------
+# zip 权限位（Issue #41）：解压侧按 external_attr 还原，回包侧写回去
+#
+# zip 没有独立的权限字段，Unix 打包工具把 st_mode 塞进 external_attr 高 16 位
+# 并置 create_system=3；Windows 工具留 create_system=0，那 16 位里没有 Unix
+# 语义（实测 Windows 的 Python zipfile 写出来就是 0）。所以解压侧只认
+# create_system=3，回包侧一律写成 3。归一化（剥 setuid/setgid/sticky、
+# 只留 0o755 集合）与 tar 系共用 _set_unix_mode，不写第二份。
+# 平台判断（Windows 不还原）只在 _zip_extract_member 一处，tar 侧不受影响。
+# ---------------------------------------------------------------------------
+
+def _zip_member_mode(info: zipfile.ZipInfo) -> int:
+    """从 zip 成员里取出 Unix 权限位；取不出或不合理时返回 0（不还原）。
+
+    zip 没有专门的权限字段：Unix 打包工具把 st_mode 塞进 external_attr
+    的高 16 位（低 8 位是 DOS 属性，高位才是 Unix 那套）。判两件事：
+
+    - **是不是 Unix 写出来的**：Windows 的资源管理器 / 7-Zip 默认
+      create_system=0（FAT），external_attr 里根本没有 Unix 权限位，
+      硬按高位取会得到 0 或垃圾值，照搬会让文件权限莫名其妙；
+    - **别把全 0 当成"要改成 0000"**：极端包里的空 mode 跳过，保持默认。
+
+    目录与特殊条目不用管：调用方按 info.is_dir() 传 is_dir，
+    _set_unix_mode 对目录一律跳过（目录权限不还原）。
+    """
+    if info.create_system != 3:     # 0=FAT(Windows) / 3=Unix；只信 Unix 的
+        return 0
+    mode = (info.external_attr >> 16) & 0o777
+    if not mode:                    # 极端包里全 0：跳过，保持默认权限
+        return 0
+    return mode
+
+
+def _zip_extract_member(zf: zipfile.ZipFile, info: zipfile.ZipInfo,
+                        dest_dir: Path, pwd: Optional[bytes]) -> None:
+    """解一个 zip 成员，并在 POSIX 上还原它的 Unix 权限位（Issue #41）。
+
+    为什么自己包一层而不是直接 zf.extract：zipfile 只负责把内容写出来，
+    **不会**按 external_attr 还原权限位，解出来的脚本一律没有执行位
+    （Linux 发布包的 renpy.sh 因此跑不起来）。这里解完再补一次 chmod。
+
+    zf.extract 的返回值就是落盘路径，直接拿来当 chmod 目标；撞名改名的
+    条目传的是改过名的 info，路径自然跟着改，不需要额外算一遍。
+
+    **Windows 不还原**（Issue #41 的硬要求：zip 侧行为零变化）。平台判断
+    只写在这一处：tar 系的 _set_unix_mode 在 Windows 上仍会走一遍 os.chmod
+    （那是改动前就有的行为，0444 会真的设成只读），这里不能把两者搅在一起。
+    """
+    member_path = zf.extract(info, dest_dir, pwd=pwd)
+    if os.name != "posix":
+        return
+    _set_unix_mode(member_path, _zip_member_mode(info), info.is_dir())
 
 
 # ---------------------------------------------------------------------------
@@ -409,30 +534,6 @@ def _member_output_path(dest_real: str, name: str) -> Optional[str]:
     if target != dest_real and not target.startswith(dest_real + os.sep):
         return None
     return target
-
-
-def _tar_set_mode(path: str, mode: Optional[int], is_dir: bool) -> None:
-    """按 tar 成员的 mode 还原权限位（核心诉求：renpy.sh 解压后仍是 0755）。
-
-    tar 是 Unix 格式，官方 Linux 包的启动脚本 renpy.sh 必须可执行，
-    否则解压出来根本跑不起来；而 zip 存不住 Unix 权限位，这也是
-    Linux 发布包偏爱 tar 的原因。
-
-    只搬权限那 12 位（S_IMODE），不碰文件类型位；目录的 mode 不还原
-    （临时目录得让当前进程继续往里写，保持默认更省事）。
-
-    失败一律静默：Windows 的 os.chmod 只认只读位（S_IWRITE），对 0755
-    可能直接抛错或只生效一半——这不是错误，不该让整次解压失败。
-    """
-    if is_dir or not mode:          # mode 为 None 或极端包里的全 0，跳过
-        return
-    try:
-        # 只还原普通读写执行位，绝不还原 setuid/setgid/sticky：
-        # 不可信包不能往用户目录里写 setuid 文件；3.12 的 data_filter
-        # 也只保留 0o755，两个版本口径必须一致。
-        os.chmod(path, stat.S_IMODE(mode) & 0o755)
-    except OSError:
-        pass
 
 
 def _tar_link_source(dest_real: str, member: tarfile.TarInfo,
@@ -499,7 +600,7 @@ def _tar_write_link_as_file(tf: tarfile.TarFile, member: tarfile.TarInfo,
                        "已跳过；需要时请从原始压缩包重新解压该文件。",
                        member.name, member.linkname, exc)
         return False
-    _tar_set_mode(member_path, member.mode, False)
+    _set_unix_mode(member_path, member.mode, False)
     return True
 
 
@@ -560,7 +661,7 @@ def _extract_tar(src: str, dest_dir: Path) -> None:
                     else:
                         with fsrc, open(member_path, "wb") as fdst:
                             shutil.copyfileobj(fsrc, fdst)
-                    _tar_set_mode(member_path, member.mode, False)
+                    _set_unix_mode(member_path, member.mode, False)
                 elif member.issym() or member.islnk():
                     # 只登记，第二趟再还原（此时目标一定已经落盘）
                     pending_links.append((member, member_path))
@@ -609,9 +710,11 @@ def create_archive(src_dir: str, dest_archive: str) -> str:
     原来的发布流程对不上（Linux 玩家下下来发现不是 tar.bz2）。这里按后缀
     分派，认不出的后缀直接报错——不猜。
 
-    tar 系会把源文件权限写进 tar 成员（tarinfo.mode），保证 0755 的启动
-    脚本往返一次还是 0755（zip 格式存不住 Unix 权限位，解出来没有执行位）。
-    链接 / junction 沿用 create_zip 的口径：跳过并告警，不跟随打包。
+    两种格式都会把源文件权限写进成员（tar 用 tarinfo.mode，zip 用
+    ZipInfo.external_attr 高 16 位，见 _member_write_mode），保证 0755 的
+    启动脚本往返一次还是 0755；解压侧的还原口径见 _set_unix_mode（POSIX
+    生效，Windows 不变）。链接 / junction 沿用 create_zip 的口径：
+    跳过并告警，不跟随打包。
     """
     suffix = _archive_suffix(str(dest_archive))
     if suffix == ".zip":
@@ -631,15 +734,18 @@ def _create_tar(src_dir: str, dest_archive: str, suffix: str) -> str:
     return str(out)
 
 
-def _tar_member_mode(st: os.stat_result) -> int:
-    """把源文件权限搬进 tarinfo.mode。
+def _member_write_mode(st: os.stat_result) -> int:
+    """把源文件权限写进成员（tarinfo.mode / zip 的 external_attr 共用口径）。
 
     Linux/macOS 上老实用 stat 的权限位（0755 的脚本原样搬走）；
     Windows 上 stat 那一套是假的（恒 0666/0777，没有执行位可言），
     照搬会让所有文件都"看起来可执行"，所以按 Unix 惯例给 0644 兜底——
     需要可执行的是脚本，而脚本本来就得在 Unix 上打出来。
+
+    Issue #41 起 zip 回包也走这里：两种格式的取值规则本就必须一致，
+    否则同一个目录打进 zip 与 tar 会得到两套权限。
     """
-    if os.name == "nt":
+    if os.name != "posix":      # 单点平台判断：Windows 固定 0644（行为不变）
         return 0o644
     return stat.S_IMODE(st.st_mode) or 0o644
 
@@ -664,7 +770,7 @@ def _tar_add_dir(tf: tarfile.TarFile, dirpath: Path, rel: Path) -> None:
                 st = entry.stat(follow_symlinks=False)
                 info = tarfile.TarInfo((rel / entry.name).as_posix())
                 info.size = st.st_size
-                info.mode = _tar_member_mode(st)
+                info.mode = _member_write_mode(st)
                 info.mtime = int(st.st_mtime)
                 with open(entry.path, "rb") as fh:
                     tf.addfile(info, fh)
