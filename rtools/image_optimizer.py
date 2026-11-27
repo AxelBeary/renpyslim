@@ -7,6 +7,8 @@ from typing import Optional
 
 from PIL import Image
 
+from .procutil import TaskCancelled, check_cancelled
+
 
 class OptimizeResult(dict):
     """优化器三态返回值（第二波修复，三个优化器共用）。
@@ -38,6 +40,10 @@ def optimize_image(src: str, dst: str, quality: int,
 
     安全策略：永远先写到临时文件，确认体积确实变小后才替换目标，
     保证任何失败路径下原文件完好无损。
+
+    取消（issue #39）：压缩是纯 Python 的、中途打断不了，所以落盘点
+    前再查一次——已取消就丢掉临时文件不替换，保证“要么不留痕，
+    要么留痕且记账”，不会出现产物有、changelog 无。
     """
     src_p, dst_p = Path(src), Path(dst)
     # 审核修复（高-3）：tmp 名带随机后缀——并行任务（如 a.wav 转换
@@ -75,12 +81,16 @@ def optimize_image(src: str, dst: str, quality: int,
             tmp.unlink(missing_ok=True)
             return OptimizeResult(status="skipped", reason="已是最优，压不出更小")
 
+        check_cancelled()        # 落盘前的协作式取消检查（issue #39）
         # 审核补修（低）：与 quantize_png 对齐，目标父目录不存在时先建
         dst_p.parent.mkdir(parents=True, exist_ok=True)
         tmp.replace(dst_p)
         return OptimizeResult(status="ok", path=str(dst_p),
                               old_size=old_size, new_size=new_size,
                               converted=dst_p.suffix.lower() != ext)
+    except TaskCancelled:
+        tmp.unlink(missing_ok=True)
+        raise
     except Exception as e:
         tmp.unlink(missing_ok=True)
         return OptimizeResult(status="failed", reason=str(e))
@@ -91,7 +101,8 @@ def quantize_png(src: str, dst: str, max_colors: int = 256) -> Optional[dict]:
 
     本地实现 TinyPNG 同类效果：真彩 PNG 精简到 ≤256 色，
     CG/立绘类大图通常再省 60%~80%。同名同格式，两种模式都安全。
-    没变小或不适量化时返回 None，绝不动目标文件。
+    没变小或不适量化时返回 None，绝不动目标文件；任务已取消时抛
+    TaskCancelled（落盘前检查，见 issue #39）。
     """
     src_p, dst_p = Path(src), Path(dst)
     if src_p.suffix.lower() != ".png":
@@ -127,6 +138,7 @@ def quantize_png(src: str, dst: str, max_colors: int = 256) -> Optional[dict]:
         tmp.unlink(missing_ok=True)
         return None
 
+    check_cancelled()            # 落盘前的协作式取消检查（issue #39）
     dst_p.parent.mkdir(parents=True, exist_ok=True)
     tmp.replace(dst_p)
     return {"old_size": old_size, "new_size": new_size, "converted": False}

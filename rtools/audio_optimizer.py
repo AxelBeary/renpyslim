@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from .image_optimizer import OptimizeResult
-from .procutil import run_quiet
+from .procutil import TaskCancelled, check_cancelled, run_quiet
 
 
 def find_ffmpeg() -> Optional[str]:
@@ -72,10 +72,15 @@ def _transcode(src: str, dst: str, bitrate_k: int, ext: str) -> OptimizeResult:
             return OptimizeResult(status="skipped",
                                   reason="已是最优，压不出更小")
 
+        check_cancelled()        # 落盘前的协作式取消检查（issue #39）
         dst_p.parent.mkdir(parents=True, exist_ok=True)
         tmp.replace(dst_p)
         return OptimizeResult(status="ok", path=str(dst_p),
                               old_size=old_size, new_size=new_size)
+    except TaskCancelled:
+        # 取消不是失败：临时文件清掉后原样上抛，别被下面归成 failed
+        tmp.unlink(missing_ok=True)
+        raise
     except Exception as e:
         tmp.unlink(missing_ok=True)
         return OptimizeResult(status="failed", reason=str(e))

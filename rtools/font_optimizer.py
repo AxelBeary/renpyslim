@@ -6,6 +6,8 @@ from pathlib import Path
 from fontTools import subset
 from fontTools.ttLib import TTFont
 
+from .procutil import check_cancelled
+
 
 def _subset_options() -> subset.Options:
     options = subset.Options()
@@ -62,6 +64,7 @@ def subset_font_object(font: TTFont, dst: str, chars: set[str]) -> dict:
         tmp.unlink(missing_ok=True)
         raise
 
+    check_cancelled()            # 落盘前的协作式取消检查（issue #39）
     new_size = tmp.stat().st_size
     tmp.replace(dst_p)
     return {"new_size": new_size,
@@ -75,6 +78,9 @@ def subset_font(src: str, dst: str, chars: set[str]) -> dict:
 
     安全策略：永远先写临时文件，确认变小后才替换目标。
     旧版本直接写 dst，原地模式下若结果没变小会误删原字体，已修复。
+
+    取消（issue #39）：子集化是纯 Python 的、中途打断不了，落盘前再
+    查一次取消；已取消就丢掉临时文件并抛 TaskCancelled，不留脏产物。
     """
     src_p, dst_p = Path(src), Path(dst)
     old_size = src_p.stat().st_size
@@ -106,6 +112,7 @@ def subset_font(src: str, dst: str, chars: set[str]) -> dict:
         tmp.unlink(missing_ok=True)
         raise ValueError(f"瘦身结果未变小（{old_size} -> {new_size}），已跳过")
 
+    check_cancelled()            # 落盘前的协作式取消检查（issue #39）
     tmp.replace(dst_p)
     return {"old_size": old_size, "new_size": new_size,
             "glyphs_before": keep_before, "glyphs_after": keep_after}

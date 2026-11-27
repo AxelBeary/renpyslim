@@ -10,7 +10,7 @@ import subprocess
 from pathlib import Path
 
 from . import sdk as sdk_mod
-from .procutil import run_quiet
+from .procutil import TaskCancelled, run_quiet
 
 # 错误行特征：带 "game/xxx.rpy:行号" 位置前缀。
 # 审核修复（中-21）：旧筛法要求行内同时含 "error/错误" 与 ".rpy"，
@@ -54,6 +54,9 @@ def lint_project(sdk: str, project_dir: str, timeout: int = 600) -> dict:
     except subprocess.TimeoutExpired:
         return {"ran": True, "ok": False, "summary": "lint 超时",
                 "output": "", "suspects": []}
+    except TaskCancelled:
+        # issue #39：取消不是“lint 跑不了”——报错会让用户以为工程有问题
+        raise
     except Exception as e:
         return {"ran": True, "ok": False, "summary": f"lint 无法执行：{e}",
                 "output": "", "suspects": []}

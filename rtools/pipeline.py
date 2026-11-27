@@ -42,6 +42,10 @@ class PipelineCancelled(PipelineError):
 
     审核修复（中-1）：携带被取消时本批已完成的结果，
     否则这些已落盘的改动不会进 changelog。
+
+    issue #39：partial_results 是该批**全部**成果，不只是取消瞬间刚好
+    完成的那几个——取消后已经在跑的优化器要么不落盘，要么落盘且记账，
+    两者只能选一个，不能出现“产物有、清单无”。
     """
 
     def __init__(self, partial_results: list | None = None):
@@ -72,21 +76,32 @@ def _flush_partial_changelog(output_dir: str, records, saved) -> None:
 
 
 def _run_jobs_or_flush(p: Progress, stage: str, jobs: list, cancel,
-                       output_dir: str, records, saved) -> list:
+                       output_dir: str, records, saved,
+                       aggregate=None) -> list:
     """_run_jobs 外加中断兜底：任何异常都先把已落盘的改动记入清单。
 
     审核修复：
     - 中-1：取消时本批已完成的改动先聚合再落清单；
     - 高-5：非取消的真异常（文件占用/磁盘满等）同样落清单，
       磁盘已被部分修改时用户才有对账依据。
+    issue #39：取消时把本批**全部**成果（不只是取消瞬间刚好完成的
+    几个）都聚进来——partial_results 必须是完整的，否则清单与产物对不上。
+
+    aggregate：调用方自己的记账函数（如按资源类型累计 failed/skipped、
+    更新改写映射）。传了就由它一次性完成记账并返回新增的节省字节，
+    避免“这里并一次、调用方再并一次”的重复计数；不传则退回
+    “只并 records/saved”的老口径（测试与轻量调用方用）。
     """
     try:
         return _run_jobs(p, stage, jobs, cancel)
     except PipelineCancelled as e:
-        extra = 0
-        for r in e.partial_results:
-            records.extend(r.get("records", []))
-            extra += r.get("saved", 0)
+        if aggregate is not None:
+            extra = aggregate(e.partial_results) or 0
+        else:
+            extra = 0
+            for r in e.partial_results:
+                records.extend(r.get("records", []))
+                extra += r.get("saved", 0)
         _flush_partial_changelog(output_dir, records, saved + extra)
         raise
     except BaseException:
@@ -158,6 +173,10 @@ def _safe_job(kind: str, item: tuple) -> tuple:
     def wrapped():
         try:
             return fn()
+        except procutil.TaskCancelled:
+            # issue #39：取消不是失败——已取消的任务被拦下/终止属于预期，
+            # 交给 _run_jobs 按取消收尾，不能计成“文件处理失败”。
+            raise
         except Exception as e:
             return {"records": [], "saved": 0, "rename": None, "remap": None,
                     "rpa": None, "warn": None, "failed": kind,
@@ -185,27 +204,80 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
     state = {"done": 0, "saved": 0}
     lock = threading.Lock()
 
-    def _cancel_now(pending):
-        """取消收尾：取消未开始的、杀掉正在跑的外部程序、
-        收集已完成的成果（只拿还没被处理过的，防重复记账）。"""
-        for rest in futures:
-            rest.cancel()
+    def _harvest(fut, report: bool = True, lenient: bool = False):
+        """把一个已结束的 future 并进 results（异常按失败兜底计账）。
+
+        report=False 用于取消收尾：任务已停，再报“处理中 n/m”只会让
+        用户以为还在跑，但成果仍要一条不落地收进 partial_results。
+        lenient=True 同用于取消收尾：被取消拦下的任务没有成果可收，
+        跳过即可——收尾阶段绝不能再往外抛异常（issue #39）。
+        """
+        with lock:
+            state["done"] += 1
+            if report and (state["done"] % 5 == 0
+                           or state["done"] == len(futures)):
+                p.emit(stage, f"处理中 {state['done']}/{len(futures)}"
+                              f" · 累计已省 {_fmt(state['saved'])}",
+                       code="optimize_progress",
+                       params={"done": state["done"],
+                               "total": len(futures),
+                               "saved": _fmt(state["saved"])})
+        try:
+            r = fut.result()
+        except procutil.TaskCancelled as e:
+            # issue #39：取消导致的终止不算失败、也不算成果——任务自己
+            # 决定“别再加新活”了，整批按取消收尾；收尾阶段遇到同类
+            # 情况直接跳过，绝不能在收尾中途再抛一次。
+            if lenient:
+                return
+            p.emit(stage, f"任务因取消提前结束：{e}",
+                   code="job_cancelled", params={"error": str(e)})
+            raise
+        except Exception as e:
+            # 审核修复（中-2）：吞异常可以，但至少要留条日志；
+            # 第二波修复：异常也计入失败（此前丢弃导致失败数虚低），
+            # 归因由 _safe_job 包装层完成，这里是最后兜底。
+            p.emit(stage, f"任务执行异常，已跳过：{e}",
+                   code="job_error", params={"error": str(e)})
+            # 收口修复：兜底归因用字符串 "internal"——旧版写布尔
+            # True，在成品模式 isinstance(fk, str) 过滤下不计数，
+            # 失败数虚低。
+            r = {"records": [], "saved": 0, "rename": None,
+                 "remap": None, "rpa": None, "warn": None,
+                 "skipped": None, "failed": "internal"}
+        if r:
+            with lock:
+                state["saved"] += r.get("saved", 0)
+            results.append(r)
+
+    def _collect_all():
+        """取消收尾：撤掉没开始的、杀掉在跑的、等池子收干净，再全量收集。
+
+        issue #39：旧版只对“取消瞬间已经完成”的 future 拍一次快照就抛
+        异常，还在跑的纯 Python 优化器之后照样写完落盘——产物有、
+        partial_results 与 changelog 却没有，两边对不上。现在改成：
+        1) kill_children 先落下取消标记并杀掉此刻在跑的子进程，
+           之后才轮到启动的 worker 会在 run_quiet 里被直接拒绝；
+        2) shutdown(wait=True, cancel_futures=True) 撤掉未开始的、
+           等已开始的退出——被撤掉的不落盘，已落盘的成果留在 future 里；
+        3) 最后把所有真正跑完的 future 收进来，partial_results 才完整。
+        本函数跑在调度线程里、不在池内，等池子退出不会自锁。
+        """
         # 审核修复（中-3）：杀掉正在跑的外部程序（ffmpeg 等），
         # 否则线程池退出要等它们自然跑完，取消形同虚设。
         # 2026-11-27：只杀本任务名下的进程，别误伤并发只读分析的 ffprobe。
         procutil.kill_children(scope=procutil.current_scope())
-        for rest in pending:
-            if rest.done() and not rest.cancelled():
-                try:
-                    r = rest.result(timeout=0)
-                except Exception:
-                    r = None
-                if r:
-                    with lock:
-                        state["saved"] += r.get("saved", 0)
-                    results.append(r)
-        raise PipelineCancelled(results)
+        ex.shutdown(wait=True, cancel_futures=True)
+        for fut in futures:
+            if fut.cancelled() or not fut.done():
+                continue
+            if fut in harvested:
+                continue
+            harvested.add(fut)
+            _harvest(fut, report=False, lenient=True)
 
+    # 已并入 results 的 future（防重复记账）
+    harvested: set = set()
     with ThreadPoolExecutor(max_workers=workers) as ex:
         # 每个 worker 复制一份当前 context，任务令牌才能跟着进入子线程，
         # 取消时按令牌筛选自己启动的外部进程（2026-11-27 交叉审计）。
@@ -218,44 +290,24 @@ def _run_jobs(p: Progress, stage: str, jobs: list,
             pending = set(futures)
             while pending:
                 if cancel and cancel():
-                    _cancel_now(pending)
+                    _collect_all()
+                    raise PipelineCancelled(results)
                 done, pending = wait(pending, timeout=0.5,
                                      return_when=FIRST_COMPLETED)
                 for fut in done:
-                    with lock:
-                        state["done"] += 1
-                        if state["done"] % 5 == 0 or state["done"] == len(futures):
-                            p.emit(stage, f"处理中 {state['done']}/{len(futures)}"
-                                          f" · 累计已省 {_fmt(state['saved'])}",
-                                   code="optimize_progress",
-                                   params={"done": state["done"],
-                                           "total": len(futures),
-                                           "saved": _fmt(state["saved"])})
-                    try:
-                        r = fut.result()
-                    except Exception as e:
-                        # 审核修复（中-2）：吞异常可以，但至少要留条日志；
-                        # 第二波修复：异常也计入失败（此前丢弃导致失败数虚低），
-                        # 归因由 _safe_job 包装层完成，这里是最后兜底。
-                        p.emit(stage, f"任务执行异常，已跳过：{e}",
-                               code="job_error", params={"error": str(e)})
-                        # 收口修复：兜底归因用字符串 "internal"——旧版写布尔
-                        # True，在成品模式 isinstance(fk, str) 过滤下不计数，
-                        # 失败数虚低。
-                        r = {"records": [], "saved": 0, "rename": None,
-                             "remap": None, "rpa": None, "warn": None,
-                             "skipped": None, "failed": "internal"}
-                    if r:
-                        with lock:
-                            state["saved"] += r.get("saved", 0)
-                        results.append(r)
-        except PipelineCancelled as e:
-            for rest in futures:
-                rest.cancel()
-            # 审核修复（中-3）：同取消分支，只杀本任务名下的进程
-            procutil.kill_children(scope=procutil.current_scope())
-            # 已完成的成果尽量留下，不强删；并随异常上抛供上层落清单
-            raise PipelineCancelled(e.partial_results or results) from None
+                    if fut in harvested:
+                        continue
+                    harvested.add(fut)
+                    _harvest(fut)
+        except (PipelineCancelled, procutil.TaskCancelled) as e:
+            # 取消收尾（issue #39）：无论信号来自轮询、某个 job 内部的
+            # run_quiet 拦截，还是优化器落盘前的检查点，都按同一口径
+            # 把已完成成果收全。已收过的 future 不会重复记账，
+            # _collect_all 可以安全地重复调用。
+            _collect_all()
+            if isinstance(e, PipelineCancelled) and e.partial_results:
+                raise PipelineCancelled(e.partial_results) from None
+            raise PipelineCancelled(results) from None
     return results
 
 
@@ -637,6 +689,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
             try:
                 res = compress_video(a.path, a.path, options.preset,
                                      use_av1=use_av1)
+            except procutil.TaskCancelled:
+                raise          # issue #39：取消不是“无法压缩”，别吞成警告
             except RuntimeError as e:
                 out["warn"] = str(e)
                 return out
@@ -684,11 +738,22 @@ def run_project(project_dir: str, options: OptimizeOptions,
     clash_ogg = find_suffix_clashes(
         [a.rel for a in todo_audio if a.ext in (".wav", ".mp3")], ".ogg")
 
+    # issue #39：取消时本批已完成的成果同样要记账（records/saved/failed/
+    # skipped 一并更新），否则物化到磁盘的改动只剩一张空白清单。
+    # 记账只走一个入口：_aggregate 由 _run_jobs_or_flush 在落清单前调用，
+    # 不会出现“这里并一次、那边再并一次”的重复计数。
+    def _run_batch(jobs, kind):
+        def _take(results):
+            before = saved
+            _aggregate(results, kind)
+            return saved - before
+        _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel, output_dir,
+                                      records, saved, aggregate=_take), kind)
+
     if options.do_images:
         jobs = [_safe_job("image", _img_job(a)) for a in todo_images
                 if a.size >= min_bytes and a.ext not in (".gif", ".bmp", ".avif")]
-        _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
-                                      output_dir, records, saved), "image")
+        _run_batch(jobs, "image")
 
     if options.do_audio:
         if not find_ffmpeg():
@@ -699,8 +764,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
         else:
             jobs = [_safe_job("audio", _aud_job(a)) for a in todo_audio
                     if a.size >= min_bytes]
-            _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
-                                          output_dir, records, saved), "audio")
+            _run_batch(jobs, "audio")
 
     if options.do_videos:
         if not find_ffmpeg():
@@ -719,8 +783,7 @@ def run_project(project_dir: str, options: OptimizeOptions,
                     "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。")
             jobs = [_safe_job("video", _vid_job(a)) for a in todo_videos
                     if a.ext in (".mp4", ".webm", ".ogv")]
-            _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
-                                          output_dir, records, saved), "video")
+            _run_batch(jobs, "video")
 
     if options.do_fonts and preset.font_subset:
         def _font_job(a):
@@ -731,6 +794,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 slim_chars, mode = font_plans.get(a.rel, (chars, "global"))
                 try:
                     res = subset_font(a.path, a.path, slim_chars)
+                except procutil.TaskCancelled:
+                    raise      # issue #39：取消不是“瘦身失败”
                 except Exception as e:
                     out["failed"] = "font"
                     out["warn"] = f"{a.rel}：字体瘦身失败，保留原文件（{e}）"
@@ -754,12 +819,21 @@ def run_project(project_dir: str, options: OptimizeOptions,
         # 命中率低、意义小。
         jobs = [_safe_job("font", _font_job(a)) for a in todo_fonts
                 if a.size >= 256 * 1024]
+
+        def _take_font(results):
+            # issue #39：取消也把已完成字体的瘦身模式记进报告，
+            # 否则“字体变了、报告说没变”同样是对不上账
+            before = saved
+            _aggregate(results, "font")
+            for r in results:
+                if r.get("font_mode"):
+                    report.font_slim_modes[r["font_rel"]] = r["font_mode"]
+            return saved - before
+
         font_results = _run_jobs_or_flush(p, "optimize", jobs, cancel,
-                                          output_dir, records, saved)
-        _aggregate(font_results, "font")
-        for r in font_results:
-            if r.get("font_mode"):
-                report.font_slim_modes[r["font_rel"]] = r["font_mode"]
+                                          output_dir, records, saved,
+                                          aggregate=_take_font)
+        _take_font(font_results)
 
     # 第二波记账口径：failed（真错误）与 skipped（已是最优/不支持）分开；
     # “压完没变小”不再计失败，但两者都原样保留、不计节省。
@@ -1221,6 +1295,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                     try:
                         res = compress_video(a.path, a.path, options.preset,
                                              use_av1=use_av1)
+                    except procutil.TaskCancelled:
+                        raise      # issue #39：取消不是“无法压缩”
                     except RuntimeError as e:
                         res = None
                         out["warn"] = str(e)
@@ -1251,6 +1327,8 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
                         detail=f"字形 {res['glyphs_before']} -> {res['glyphs_after']}"))
                     if a.in_rpa:
                         out["rpa"] = (a.rpa_name, a.rel, a.path)
+                except procutil.TaskCancelled:
+                    raise      # issue #39：取消不是“瘦身失败”
                 except Exception as e:
                     out["failed"] = "font"
                     out["warn"] = f"{a.rel}：字体瘦身失败，保留原文件（{e}）"
@@ -1341,34 +1419,48 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
         dist_jobs.append(_safe_job(_DIST_KIND.get(a.kind, "image"),
                                    _dist_job(a)))
 
-    for r in _run_jobs_or_flush(p, "optimize", dist_jobs, cancel,
-                                output_dir, records, saved):
-        records.extend(r["records"])
-        saved += r["saved"]
-        if r["rename"]:
-            rename_map[r["rename"][0]] = r["rename"][1]
-        if r["remap"]:
-            remap_map[r["remap"][0]] = r["remap"][1]
-        if r["rpa"]:
-            rpa_name = r["rpa"][0]
-            rpa_replacements.setdefault(rpa_name, {})[r["rpa"][1]] = r["rpa"][2]
-            rpa_saved[rpa_name] = rpa_saved.get(rpa_name, 0) + r["saved"]
-        # 记账以字段为准（第二波）：failed/skipped 均为类型名字符串；
-        # isinstance 防御兜底记录（极端路径下可能不是字符串），
-        # 绝不让记账环节抛 KeyError 把整批成果带崩。
-        fk = r.get("failed")
-        if isinstance(fk, str):
-            if fk in failed:
-                failed[fk] += 1
-            else:
-                # 收口修复：兜底归因 "internal" 等非类型名失败也计数，
-                # 不再被 isinstance 过滤静默吞掉（失败数虚低）。
-                failed[fk] = failed.get(fk, 0) + 1
-        sk = r.get("skipped")
-        if isinstance(sk, str) and sk in skipped:
-            skipped[sk] += 1
-        if r["warn"]:
-            report.warnings.append(r["warn"])
+    # 审核修复：本批结果搬进独立函数，取消/异常两条路径都能把
+    # 已完成的成果记进 records/saved（issue #39）。返回值是本批新增的
+    # 节省字节：_run_jobs_or_flush 用它在落清单时算总数，避免重复累加。
+    def _aggregate(results):
+        nonlocal saved
+        before = saved
+        for r in results:
+            records.extend(r["records"])
+            saved += r["saved"]
+            if r["rename"]:
+                rename_map[r["rename"][0]] = r["rename"][1]
+            if r["remap"]:
+                remap_map[r["remap"][0]] = r["remap"][1]
+            if r["rpa"]:
+                rpa_name = r["rpa"][0]
+                rpa_replacements.setdefault(
+                    rpa_name, {})[r["rpa"][1]] = r["rpa"][2]
+                rpa_saved[rpa_name] = rpa_saved.get(rpa_name, 0) + r["saved"]
+            # 记账以字段为准（第二波）：failed/skipped 均为类型名字符串；
+            # isinstance 防御兜底记录（极端路径下可能不是字符串），
+            # 绝不让记账环节抛 KeyError 把整批成果带崩。
+            fk = r.get("failed")
+            if isinstance(fk, str):
+                if fk in failed:
+                    failed[fk] += 1
+                else:
+                    # 收口修复：兜底归因 "internal" 等非类型名失败也计数，
+                    # 不再被 isinstance 过滤静默吞掉（失败数虚低）。
+                    failed[fk] = failed.get(fk, 0) + 1
+            sk = r.get("skipped")
+            if isinstance(sk, str) and sk in skipped:
+                skipped[sk] += 1
+            if r["warn"]:
+                report.warnings.append(r["warn"])
+        return saved - before
+
+    # issue #39：取消不能把“已经处理完 / 已经失败”的条目吞掉——
+    # 本批结果（取消时是全部已完成成果）先聚进来再上抛，
+    # rpa_saved 等记账跟着更新，上层落部分清单时口径与产物一致。
+    _aggregate(_run_jobs_or_flush(p, "optimize", dist_jobs, cancel,
+                                  output_dir, records, saved,
+                                  aggregate=_aggregate))
 
     # --- 第 4.3 步：实验性运行时重映射脚本注入（BACKLOG B9） ---
     # 审核修复（高-5）：从这里开始每一步都可能改盘（remap 注入/引用改写/
