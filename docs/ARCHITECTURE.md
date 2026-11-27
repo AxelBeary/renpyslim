@@ -12,6 +12,25 @@ Ren'Py 游戏资源瘦身与打包工具。**一台引擎、两个入口**：
 
 设计公理（一切决策的根）：**默认安全、可反悔、没变小不动手、原件优先**。
 
+### CLI 输出契约（含中断）
+
+结果 JSON 走 stdout、过程日志走 stderr，两者不混。所有结果顶层有 `ok`，
+失败带 `error`；**三种出口都守这条**：
+
+| 出口 | stdout | 退出码 |
+|---|---|---|
+| 成功 | `{"ok": true, ...}` | 0 |
+| 失败 / 参数错误 | `{"ok": false, "error": "...", "usage": ...}` | 1 |
+| 用户中断（Ctrl+C） | `{"ok": false, "error": "用户已中断", "interrupted": true, "kind": ..., "command": ...}` | 130 |
+
+中断也是 JSON 出口（issue #40）：`cli.main` 捕获 `KeyboardInterrupt`，流水线
+取消标志触发的 `PipelineCancelled` 在各命令处单独收口，二者都由
+`cli._fail_interrupted` 落一份结果 JSON 后返回 130（128 + SIGINT）；
+`full` 进打包段前把 SIGINT 交还默认处理器，否则 Ctrl+C 会被取消标志的
+处理器静默吞掉。中断路径不吞清理逻辑——子进程（`procutil.kill_children`）、
+临时目录、部分清单与任务历史照旧收尾；历史仍按既有约定记 `status=error`
+（`tests/test_cli_history.py` / `test_cli_job_history.py` 锁住），也不写崩溃转储。
+
 ## 2. 目录与模块职责
 
 ```
@@ -198,6 +217,9 @@ POSIX 分支只是把"根"和"怎么调用外部程序"换了个写法，没有�
 11. **预分析只读**：APK 预分析只读 ZIP 条目表，不解包、不建工作目录、不改原包
 12. **路径动作不执行文件**：`/api/reveal` 只接受绝对存在本机路径（拒绝 UNC/
     网络共享），只用 Windows Shell API 打开/定位（不拼命令行）
+13. **中断也是 JSON 出口**：CLI 的 Ctrl+C 不许裸退出（-2 / 无输出），必须经
+    `cli._fail_interrupted` 输出 `ok:false` + `interrupted:true` 并返回 130；
+    中断路径不得吞掉子进程 kill、临时目录清理与历史收尾
 
 ### 2026-11-27 交叉审计加固（与上面红线配套）
 

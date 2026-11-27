@@ -56,6 +56,16 @@ from rtools.config import (OptimizeOptions, CharsetOptions, PRESETS,  # noqa: E4
 from rtools.models import Progress  # noqa: E402
 
 
+# 中断契约（issue #40）：Ctrl+C 同样以 stdout 结果 JSON 收尾，
+# 退出码 130 = 128 + SIGINT，与"参数错误 / 失败 = 1"区分开。
+EXIT_INTERRUPTED = 130
+_INTERRUPT_ERROR = "用户已中断"
+# 取消标志（信号处理器只置位、不抛异常）触发的收尾：历史里如实记取消，
+# 不冒充 KeyboardInterrupt（测试仍按"中断 = status error"的既有约定核对）。
+_CANCELLED_HISTORY_ERROR = "PipelineCancelled: 用户取消（Ctrl+C）"
+_SCAN_CANCELLED_HISTORY_ERROR = "ScanCancelled: 用户取消扫描（Ctrl+C）"
+
+
 def _log(stage: str, message: str) -> None:
     print(f"[{stage}] {message}", file=sys.stderr, flush=True)
 
@@ -72,6 +82,30 @@ def _fail(msg: str) -> int:
     if _ACTIVE_JOB is not None:
         _finish_job("failed", error=msg)
     return 1
+
+
+def _fail_interrupted(command: str | None, history_error: str | None = None) -> int:
+    """用户中断（Ctrl+C）的 JSON 出口（issue #40：契约为先）。
+
+    中断与失败一样守着"结果 JSON 走 stdout"：`ok` 为 false、`error` 是固定
+    中文文案，另带机器可读的 `interrupted` 标记与 `kind` / `command`
+    （与任务历史同名的字段），脚本据此把"用户中断"与"失败 / 崩溃"分开。
+    退出码 130 = 128 + SIGINT，与 shell 里 Ctrl+C 的口径一致，也不与
+    "参数错误 / 失败 = 1"混淆。
+
+    历史仍按既有语义收尾：状态 error（tests/test_cli_job_history.py 的中断约定）；
+    取消标志触发的路径传自己的 `history_error`，别把 PipelineCancelled 记成
+    KeyboardInterrupt。
+    """
+    kind = command or "unknown"
+    _log("cancel", f"{_INTERRUPT_ERROR}，结果仍以 JSON 输出（退出码 {EXIT_INTERRUPTED}）。")
+    print(json.dumps({"ok": False, "error": _INTERRUPT_ERROR,
+                      "interrupted": True, "kind": kind, "command": kind},
+                     ensure_ascii=False, indent=2), flush=True)
+    if _ACTIVE_JOB is not None:
+        _finish_job("error", error=history_error
+                    or f"KeyboardInterrupt: {_INTERRUPT_ERROR}")
+    return EXIT_INTERRUPTED
 
 
 # --- 任务历史：CLI 任务与 Web 写同一份 jobs.json ---------------------------
@@ -290,6 +324,20 @@ def _make_cancel():
     return lambda: flag["v"]
 
 
+def _restore_sigint() -> None:
+    """把 SIGINT 还给默认处理器：打包段要靠它变成 KeyboardInterrupt。
+
+    取消回调只在优化段有用（置标志、落部分清单）；打包是一条外部命令，
+    没人查那个标志，继续留着处理器会把 Ctrl+C 无声吞掉——用户以为停了，
+    SDK 还在后台写产物。恢复默认处理器后信号重新变成 KeyboardInterrupt：
+    procutil.run_quiet 照旧杀子进程树，cli.main 兜底落中断 JSON 并退 130。
+    """
+    try:
+        signal.signal(signal.SIGINT, signal.default_int_handler)
+    except ValueError:
+        pass   # 同上：非主线程注册不了，忽略
+
+
 def _build_options(args) -> OptimizeOptions:
     opts = OptimizeOptions()
     opts.preset = getattr(args, "preset", None) or DEFAULT_PRESET
@@ -466,6 +514,15 @@ def cmd_optimize(args) -> int:
                                              output_dir, progress,
                                              password=args.password,
                                              cancel=cancel)
+    except pipeline.PipelineCancelled:
+        # Ctrl+C 触发的取消走中断出口（issue #40）：JSON + 130，
+        # 不再以 -2 收场；子进程与临时目录已由 pipeline 自身的
+        # 清理逻辑处理完，这里只负责结果契约。
+        return _fail_interrupted("optimize", _CANCELLED_HISTORY_ERROR)
+    except scanner.ScanCancelled:
+        # 扫描段按 Ctrl+C 时 scanner 抛的是它自己的取消异常（旧版落进
+        # "意外错误" + 崩溃转储，把用户中断当成崩溃记）；同样是用户中断。
+        return _fail_interrupted("optimize", _SCAN_CANCELLED_HISTORY_ERROR)
     except (pipeline.PipelineError, archives.ArchiveError,
             backup.BackupError) as e:
         return _fail(str(e))
@@ -536,8 +593,16 @@ def cmd_full(args) -> int:
     try:
         opt_result = pipeline.run_project(str(path), opts, work_root,
                                           output_dir, progress, cancel=cancel)
+    except pipeline.PipelineCancelled:
+        return _fail_interrupted("full", _CANCELLED_HISTORY_ERROR)
+    except scanner.ScanCancelled:      # 扫描段中断，同 optimize
+        return _fail_interrupted("full", _SCAN_CANCELLED_HISTORY_ERROR)
     except (pipeline.PipelineError, backup.BackupError) as e:
         return _fail(str(e))
+
+    # 优化段结束：打包段不再需要取消标志，把 SIGINT 恢复成默认语义
+    # （issue #40——"打包过程中按 Ctrl+C"必须真的能中断，且以 JSON + 130 收场）
+    _restore_sigint()
 
     sdk = packager.find_sdk(args.sdk)
     if not sdk:
@@ -728,6 +793,11 @@ def main(argv=None) -> int:
     _start_job(args)
     try:
         return args.func(args)
+    except KeyboardInterrupt:
+        # issue #40：Ctrl+C 不再以 -2（SIGINT）裸奔收场。信号处理器已把
+        # 取消标志置位、子进程与临时目录清理也都跑完，这里只补 JSON 出口
+        # 与 130 退出码；finally 里的兜底不会再改写已落的历史终态。
+        return _fail_interrupted(getattr(args, "command", None))
     except Exception as e:
         # 审核修复（中-32）：统一顶层兜底，任何异常都保证以结果
         # JSON 收场，不再裸 traceback 破坏 stdout 契约。
