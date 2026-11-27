@@ -19,8 +19,9 @@ import shutil
 import stat
 import tarfile
 import zipfile
+from collections.abc import Collection
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 from .procutil import run_quiet
 
@@ -327,12 +328,16 @@ def create_zip(src_dir: str, dest_zip: str) -> str:
     审核修复：改用 os.scandir 自行递归（rglob 会穿入 Windows junction，
     可能成环或拉进范围外内容），跳过符号链接与 junction 并告警；
     空目录写入目录条目（arcname 以 / 结尾）避免解压后丢失。
+    遍历口径已抽成 walk_tree / _walk_tree，与备份（backup.make_backup_zip）
+    共用同一份实现——两处各写一份就是两份会各自漂移的安全判定。
     """
     src = Path(src_dir)
     out = Path(dest_zip)
     out.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
-        _zip_add_dir(zf, src, Path(src.name))
+        walk_tree(src, lambda p, rel: zf.write(str(p), rel.as_posix()),
+                  lambda rel: zf.writestr(
+                      zipfile.ZipInfo(rel.as_posix() + "/"), b""))
     return str(out)
 
 
@@ -355,23 +360,54 @@ def _is_link_or_junction(entry: os.DirEntry) -> bool:
     return False
 
 
-def _zip_add_dir(zf: zipfile.ZipFile, dirpath: Path, rel: Path) -> None:
-    """递归把一个目录加入 zip：跳过符号链接/junction，空目录保留条目。"""
+def walk_tree(root: str | Path,
+              on_file: Callable[[Path, Path], None],
+              on_empty_dir: Callable[[Path], None] | None = None,
+              skip_names: Collection[str] = ()) -> None:
+    """安全遍历一棵目录树，把普通文件逐个交给 on_file（唯一一份扫描口径）。
+
+    口径（打包与备份共用，别在别处再写第二份）：
+    - 用 os.scandir 自行递归，**不用 rglob**：rglob 会穿进符号链接与
+      Windows junction，把范围外的文件当成树内普通文件；
+    - 符号链接 / junction 无论指向文件还是目录一律跳过并告警，绝不跟随
+      （成环会栈溢出，跟随则把工程外的数据拷进产物）；
+    - skip_names 里的名字整棵跳过（目录跳过子树，同名文件也跳过）；
+    - 空目录（或内容全被跳过、自身不是链接的目录）交给 on_empty_dir，
+      否则解压后目录会凭空消失——根目录自身也算在内，与旧实现一致。
+
+    传给回调的"相对路径"都带根目录名（root 的 basename 打头），因为交出去
+    的 zip/tar 需要一个顶层文件夹，解压后才是 self-contained 的一份。
+    参数：on_file(绝对路径, 相对 root 的路径)；on_empty_dir(相对 root 的路径)。
+    """
+    base = Path(root)
+    _walk_tree(base, Path(base.name), on_file, on_empty_dir, set(skip_names))
+
+
+def _walk_tree(dirpath: Path, rel: Path,
+               on_file: Callable[[Path, Path], None],
+               on_empty_dir: Callable[[Path], None] | None,
+               skip_names: set[str]) -> None:
+    """walk_tree 的递归体：rel 是 dirpath 在交付包里的相对路径（含根名）。"""
+    entries: list[os.DirEntry] = []
     has_content = False
     with os.scandir(dirpath) as it:
-        for entry in sorted(it, key=lambda e: e.name):
-            if _is_link_or_junction(entry):
-                logger.warning("打包跳过 '%s'：符号链接或 junction，"
-                               "不跟随，避免成环或拷贝范围外内容。", entry.path)
-                continue
-            if entry.is_dir(follow_symlinks=False):
-                _zip_add_dir(zf, Path(entry.path), rel / entry.name)
-                has_content = True
-            elif entry.is_file(follow_symlinks=False):
-                zf.write(entry.path, rel / entry.name)
-                has_content = True
-    if not has_content:
-        zf.writestr(zipfile.ZipInfo(rel.as_posix() + "/"), b"")
+        entries = sorted(it, key=lambda e: e.name)
+    for entry in entries:
+        if entry.name in skip_names:
+            continue
+        if _is_link_or_junction(entry):
+            logger.warning("打包/备份跳过 '%s'：符号链接或 junction，"
+                           "不跟随，避免成环或拷贝范围外内容。", entry.path)
+            continue
+        if entry.is_dir(follow_symlinks=False):
+            _walk_tree(Path(entry.path), rel / entry.name,
+                       on_file, on_empty_dir, skip_names)
+            has_content = True
+        elif entry.is_file(follow_symlinks=False):
+            on_file(Path(entry.path), rel / entry.name)
+            has_content = True
+    if not has_content and on_empty_dir is not None:
+        on_empty_dir(rel)
 
 
 # ---------------------------------------------------------------------------
@@ -647,31 +683,23 @@ def _tar_member_mode(st: os.stat_result) -> int:
 def _tar_add_dir(tf: tarfile.TarFile, dirpath: Path, rel: Path) -> None:
     """递归把一个目录加入 tar：跳过符号链接/junction，空目录保留条目。
 
-    与 _zip_add_dir 同口径（os.scandir 自行递归，不跟随链接），
-    区别只在于 tar 成员带上 mode/mtime，权限才能往返。
+    遍历走 walk_tree（与 create_zip 同一份 os.scandir 递归实现，不跟随
+    链接），区别只在于 tar 成员带上 mode/mtime，权限才能往返。
     """
-    has_content = False
-    with os.scandir(dirpath) as it:
-        for entry in sorted(it, key=lambda e: e.name):
-            if _is_link_or_junction(entry):
-                logger.warning("打包跳过 '%s'：符号链接或 junction，"
-                               "不跟随，避免成环或拷贝范围外内容。", entry.path)
-                continue
-            if entry.is_dir(follow_symlinks=False):
-                _tar_add_dir(tf, Path(entry.path), rel / entry.name)
-                has_content = True
-            elif entry.is_file(follow_symlinks=False):
-                st = entry.stat(follow_symlinks=False)
-                info = tarfile.TarInfo((rel / entry.name).as_posix())
-                info.size = st.st_size
-                info.mode = _tar_member_mode(st)
-                info.mtime = int(st.st_mtime)
-                with open(entry.path, "rb") as fh:
-                    tf.addfile(info, fh)
-                has_content = True
-    if not has_content:
+    def add_file(path: Path, member_rel: Path) -> None:
+        st = path.stat(follow_symlinks=False)
+        info = tarfile.TarInfo(member_rel.as_posix())
+        info.size = st.st_size
+        info.mode = _tar_member_mode(st)
+        info.mtime = int(st.st_mtime)
+        with open(path, "rb") as fh:
+            tf.addfile(info, fh)
+
+    def add_empty_dir(member_rel: Path) -> None:
         # 空目录（或内容全被跳过）：写一个目录成员，解压后仍然存在
-        info = tarfile.TarInfo(rel.as_posix() + "/")
+        info = tarfile.TarInfo(member_rel.as_posix() + "/")
         info.type = tarfile.DIRTYPE
         info.mode = 0o755
         tf.addfile(info)
+
+    walk_tree(dirpath, add_file, add_empty_dir)
