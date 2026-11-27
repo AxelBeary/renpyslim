@@ -8,7 +8,6 @@
 """
 from __future__ import annotations
 
-import ast
 import contextvars
 import json
 import os
@@ -20,7 +19,7 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from pathlib import Path
 from typing import Callable, Optional
 
-from . import analyzer, apk, archives, backup, cache, charset, cleanup, font_tool, procutil, scanner, verifier
+from . import analyzer, apk, archives, backup, cache, charset, cleanup, font_tool, packager, procutil, scanner, verifier
 from . import remap as remap_mod
 from .audio_optimizer import convert_audio, reencode_audio, find_ffmpeg
 from .font_optimizer import subset_font
@@ -307,20 +306,19 @@ def _font_slim_plan(rel: str, build_chars: set, buckets: dict,
     return build_chars, "global"
 
 
-def _av1_allowed(game_dir) -> bool:
-    """AV1 只有 Ren'Py 8.0+ 能播放；版本不明一律按不支持处理。"""
-    try:
-        raw = (Path(game_dir) / "script_version.txt").read_text(
-            encoding="utf-8", errors="ignore").strip()
-        return tuple(int(x) for x in ast.literal_eval(raw)) >= (8, 0, 0)
-    except Exception:
-        return False
+def _av1_enabled_warning(source: str | None) -> str:
+    """启用 AV1 时的提示：写清这次是按什么判定引擎版本的（issue #42）。"""
+    basis = f"（依据：{source}）" if source else ""
+    return ("已启用 AV1 视频编码（实验性）：官方支持且体积更小，"
+            "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。"
+            f"{basis}发布前请确认目标引擎就是 8.0 及以上。")
 
 
 def run_project(project_dir: str, options: OptimizeOptions,
                 work_root: str, output_dir: str,
                 progress: Progress | None = None,
-                cancel: Callable[[], bool] | None = None) -> dict:
+                cancel: Callable[[], bool] | None = None,
+                sdk: str | None = None) -> dict:
     """优化一个 Ren'Py 工程。返回汇总 dict（含报告路径）。"""
     p = progress or Progress()
     records: list[ChangeRecord] = []
@@ -350,11 +348,12 @@ def run_project(project_dir: str, options: OptimizeOptions,
                code="copy_done", params={"path": working})
 
     game_dir = str(_find_game_dir(working))
-    # 工程模式：多半还没有 script_version.txt（它通常在打包后生成），
-    # 没有该文件时尊重用户显式开关；一旦有版本文件就按 8.0+ 门控。
-    _sv = Path(game_dir) / "script_version.txt"
-    use_av1 = options.experimental_av1 and (
-        not _sv.exists() or _av1_allowed(game_dir))
+    # AV1 引擎门控（issue #42）：工程模式多半还没有 script_version.txt
+    # （它通常在打包后生成），没有该文件时按本机 SDK 版本兜底；两者都拿
+    # 不到就停用——放行等于赌玩家那边的引擎，产出的 AV1 可能根本放不出来。
+    # 判定与成品模式共用 packager.av1_decision，两条线口径必须一致，
+    # 不准各写一份 if。
+    use_av1, av1_source = packager.av1_decision(options, game_dir, sdk)
 
     # --- 第 2 步：扫描 + 分析 ---
     p.emit("analyze", "正在扫描资源文件……", code="scan_start")
@@ -710,13 +709,9 @@ def run_project(project_dir: str, options: OptimizeOptions,
                 "视频压缩为实验性功能：同名重编码，若个别播放器出现兼容问题，"
                 "请在高级选项关闭后重跑。")
             if options.experimental_av1 and not use_av1:
-                report.warnings.append(
-                    "AV1 视频编码已跳过：无法确认引擎为 Ren'Py 8.0+，"
-                    "为免老引擎播放失败，本次按普通编码处理。")
+                report.warnings.append(packager.AV1_DISABLED_WARNING)
             elif use_av1:
-                report.warnings.append(
-                    "已启用 AV1 视频编码（实验性）：官方支持且体积更小，"
-                    "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。")
+                report.warnings.append(_av1_enabled_warning(av1_source))
             jobs = [_safe_job("video", _vid_job(a)) for a in todo_videos
                     if a.ext in (".mp4", ".webm", ".ogv")]
             _aggregate(_run_jobs_or_flush(p, "optimize", jobs, cancel,
@@ -816,7 +811,6 @@ def run_project(project_dir: str, options: OptimizeOptions,
 
         _check_cancel(cancel)
         # --- 第 5.8 步：官方 lint 自动验证 ---
-        from . import packager
         validation = {"ran": False, "ok": False, "summary": "未执行", "suspects": []}
         sdk = packager.find_sdk()
         if sdk:
@@ -879,7 +873,8 @@ def run_project(project_dir: str, options: OptimizeOptions,
 def run_dist(dist_dir: str, options: OptimizeOptions,
              work_root: str, output_dir: str,
              progress: Progress | None = None,
-             cancel: Callable[[], bool] | None = None) -> dict:
+             cancel: Callable[[], bool] | None = None,
+             sdk: str | None = None) -> dict:
     """对一个已打包的 Ren'Py 成品做安全瘦身。不改文件名、不换格式。"""
     p = progress or Progress()
     records: list[ChangeRecord] = []
@@ -938,7 +933,9 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     # 反编译出 rpy 后，既有的引用改写/格式转换机制全部解锁；
     # 引擎启动时发现 rpy 比 rpyc 新会自动重编译，玩家无感
     game_dir_p = working_p / "game"
-    use_av1 = options.experimental_av1 and _av1_allowed(game_dir_p)
+    # 与工程模式同一个门控（issue #42）：成品优先看 game/script_version.txt，
+    # 缺失时按本机 SDK 版本兜底，都拿不到就停用。
+    use_av1, av1_source = packager.av1_decision(options, game_dir_p, sdk)
     dec_stats = None
     if options.experimental_decompile and game_dir_p.is_dir():
         from . import decompile as _decompile
@@ -1012,13 +1009,9 @@ def run_dist(dist_dir: str, options: OptimizeOptions,
     if options.do_videos and not find_ffmpeg():
         report.warnings.append("未找到 FFmpeg，视频压缩已跳过。")
     if options.do_videos and options.experimental_av1 and not use_av1:
-        report.warnings.append(
-            "AV1 视频编码已跳过：无法确认引擎为 Ren'Py 8.0+，"
-            "为免老引擎播放失败，本次按普通编码处理。")
+        report.warnings.append(packager.AV1_DISABLED_WARNING)
     elif options.do_videos and use_av1 and find_ffmpeg():
-        report.warnings.append(
-            "已启用 AV1 视频编码（实验性）：官方支持且体积更小，"
-            "但只有 Ren'Py 8.0 及以上构建的游戏能播放，老引擎会放不出来。")
+        report.warnings.append(_av1_enabled_warning(av1_source))
 
     # --- 第 4 步：优化（默认同名同格式；带源码的成品可换格式；B4 并行） ---
     def _dist_job(a):
@@ -1584,7 +1577,8 @@ def run_dist_smart(path: str, options: OptimizeOptions,
                    work_root: str, output_dir: str,
                    progress: Progress | None = None,
                    password: str | None = None,
-                   cancel: Callable[[], bool] | None = None) -> dict:
+                   cancel: Callable[[], bool] | None = None,
+                   sdk: str | None = None) -> dict:
     """输入可以是成品目录，也可以是 zip/7z/rar 压缩包。
 
     压缩包输入时：解压 -> 定位成品目录 -> 瘦身 -> 重新打包成
@@ -1594,7 +1588,7 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     if not archives.is_archive(path):
         # 审核修复：目录分支也得把取消开关传下去，否则取消按钮失灵
         return run_dist(path, options, work_root, output_dir, p,
-                        cancel=cancel)
+                        cancel=cancel, sdk=sdk)
 
     src_name = Path(path).stem
     extract_dir = str(Path(work_root) / f"{src_name}-解压")
@@ -1666,7 +1660,7 @@ def run_dist_smart(path: str, options: OptimizeOptions,
            code="unpack_done", params={"name": Path(dist_root).name})
 
     result = run_dist(dist_root, options, work_root, output_dir, p,
-                      cancel=cancel)
+                      cancel=cancel, sdk=sdk)
 
     # 第二波：run_dist 之后的收尾步骤（改名/回包）同样尊重取消
     _check_cancel(cancel)

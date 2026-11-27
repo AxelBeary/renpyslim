@@ -230,14 +230,33 @@ def test_unreferenced_scan_includes_source_scripts(tmp_path):
     assert "game/audio/orphan.ogg" in flagged
 
 
-def test_av1_requires_engine_8(tmp_path):
-    assert not pipeline._av1_allowed(tmp_path)          # 缺版本文件
+def test_av1_requires_engine_8(tmp_path, monkeypatch):
+    """AV1 引擎门控（issue #42 起口径统一到 packager，且 fail-closed）。
+
+    旧版此处断言"缺版本文件 → 不支持"，但那只是 _av1_allowed 自身的判定；
+    流水线在缺文件时反而放行。现在判定只有一份实现，且缺文件时用本机 SDK
+    兜底、兜底也拿不到就停用，所以这里连"无 SDK"的前提一起钉住。
+    """
+    from rtools import packager
+    from rtools.config import OptimizeOptions
+
+    monkeypatch.setattr(packager, "find_sdk", lambda *a, **kw: None)
+    opts = OptimizeOptions(experimental_av1=True)
+
+    def enabled(options):
+        return packager.av1_decision(options, tmp_path)[0]
+
+    # 缺版本文件 + 无 SDK → 拿不到版本 → 停用（旧版此处会放行）
+    assert packager._av1_engine_version(tmp_path) == (None, None)
+    assert not enabled(opts)
     (tmp_path / "script_version.txt").write_text("(7, 4, 0)", encoding="utf-8")
-    assert not pipeline._av1_allowed(tmp_path)
+    assert not enabled(opts)
     (tmp_path / "script_version.txt").write_text("(8, 0, 0)", encoding="utf-8")
-    assert pipeline._av1_allowed(tmp_path)
+    assert enabled(opts)
     (tmp_path / "script_version.txt").write_text("(8, 3, 2)", encoding="utf-8")
-    assert pipeline._av1_allowed(tmp_path)
+    assert enabled(opts)
+    # 开关关着时永远不生效（不因版本满足而误开）
+    assert not enabled(OptimizeOptions())
 
 
 def test_analyze_rejects_multi_root_archive(tmp_path, capsys):

@@ -136,6 +136,12 @@ Windows 与 WSL Ubuntu 双平台跑通（数量以 `pytest tests -q` 实际收�
 - 实验性开关（默认全关，开启前必须征得用户同意）：`--png-quant`（PNG 有损量化）、
   `--videos`（视频重编码）、`--av1`（视频 AV1，仅 8.0+ 引擎）、`--remap`（成品注入重映射）、
   `--decompile`（反编译 rpyc 解锁无源码成品的格式转换）。
+- `--av1` 的引擎门控是 **fail-closed**（issue #42，工程模式与成品模式同一口径）：
+  先看 `game/script_version.txt`；没有该文件就用 SDK 版本兜底（显式指定的
+  `--sdk` 优先，其次是配置/自动探测到的那个；工程模式实际打包用的就是它）；
+  两者都拿不到 → **停用 AV1**，按普通编码处理并给出中文提示（说明为何停用、
+  怎么解除：写 `game/script_version.txt` 或指定 `--sdk`）。`--av1` 不等于一定
+  用 AV1，真实生效值以结果里的 warning 为准。
 - 产物默认写到输入路径旁边的 `_rtools_work/`（中间产物）和 `_rtools_output/`
   （报告 analysis.json、改动清单 changelog.json、校验 validation.txt、成品包）。
   可用 `--work-root` / `--output` 改位置（仅适用于 `optimize` / `full`；
@@ -367,6 +373,14 @@ Notes:
   (lossy PNG quantization), `--videos` (video re-encode), `--av1` (AV1 video,
   Ren'Py 8.0+ only), `--remap` (runtime remap injection for dists),
   `--decompile` (decompile rpyc to unlock format conversion on source-less games).
+- `--av1` is gated **fail-closed** (issue #42; one shared rule for project and
+  dist mode): `game/script_version.txt` first; without that file the SDK version
+  is used as the fallback (an explicit `--sdk` wins, then the configured or
+  auto-detected SDK — project mode is packaged with exactly that one); when
+  neither is available **AV1 is disabled**, the run falls back to the normal
+  codec and a Chinese warning states why and how to lift it (write
+  `game/script_version.txt`, or point `--sdk` at a 8.0+ SDK). `--av1` does not
+  guarantee AV1 output — the resulting warning reports what actually took effect.
 - Outputs go to `_rtools_work/` (intermediate) and `_rtools_output/`
   (analysis.json, changelog.json, validation.txt, final packages) next to the
   input; override with `--work-root` / `--output` (only `optimize` / `full`

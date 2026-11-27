@@ -457,6 +457,8 @@ def cmd_optimize(args) -> int:
     progress = Progress(_log)
     cancel = _make_cancel()   # 审核修复（中-3）：Ctrl+C 走取消路径
     try:
+        # optimize 没有 --sdk：AV1 门控需要 SDK 版本兜底时由 find_sdk 按
+        # 配置/常见安装位置自行探测（与打包、lint 的口径一致）。
         if mode == "project":
             result = pipeline.run_project(str(path), opts, work_root,
                                           output_dir, progress, cancel=cancel)
@@ -535,7 +537,8 @@ def cmd_full(args) -> int:
     cancel = _make_cancel()   # 审核修复（中-3）：Ctrl+C 走取消路径
     try:
         opt_result = pipeline.run_project(str(path), opts, work_root,
-                                          output_dir, progress, cancel=cancel)
+                                          output_dir, progress, cancel=cancel,
+                                          sdk=args.sdk)
     except (pipeline.PipelineError, backup.BackupError) as e:
         return _fail(str(e))
 

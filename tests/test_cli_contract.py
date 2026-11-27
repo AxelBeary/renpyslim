@@ -81,7 +81,7 @@ def test_optimize_archive_forces_dist(tmp_path, monkeypatch, capsys):
         return {}
 
     def fake_dist(path, opts, work_root, output_dir, progress,
-                  password=None, cancel=None):
+                  password=None, cancel=None, sdk=None):
         calls["kind"] = "dist"
         calls["path"] = path
         return {"report": tmp_path / "analysis.json",
@@ -107,7 +107,7 @@ def test_optimize_archive_default_dist(tmp_path, monkeypatch):
     calls = {}
 
     def fake_dist(path, opts, work_root, output_dir, progress,
-                  password=None, cancel=None):
+                  password=None, cancel=None, sdk=None):
         calls["kind"] = "dist"
         return {"report": tmp_path / "analysis.json",
                 "changelog": tmp_path / "changelog.json"}
@@ -153,7 +153,7 @@ def _stub_pipeline(monkeypatch, calls, tmp_path):
                 "changelog": tmp_path / "changelog.json"}
 
     def fake_dist(path, opts, work_root, output_dir, progress,
-                  password=None, cancel=None):
+                  password=None, cancel=None, sdk=None):
         calls["kind"] = "dist"
         return {"report": tmp_path / "analysis.json",
                 "changelog": tmp_path / "changelog.json"}

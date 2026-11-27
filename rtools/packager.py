@@ -6,8 +6,10 @@
 """
 from __future__ import annotations
 
+import ast
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -190,15 +192,116 @@ def _remember_sdk(path: str) -> None:
 
 
 def sdk_version(sdk: str) -> str:
+    """SDK 引擎版本字符串（形如 "Ren'Py 8.3.4.2201"）；拿不到返回"未知版本"。
+
+    走 procutil.run_quiet：AV1 门控会在常规优化流程里调用本函数（issue #42），
+    图形界面下裸 subprocess 会闪黑框（安全红线 9：外部调用一律无窗口）。
+    """
     launcher = sdk_mod.find_launcher(sdk)
     if not launcher:
         return "未知版本"
     try:
-        out = subprocess.run([launcher, "--version"],
-                             capture_output=True, timeout=60)
+        out = run_quiet([launcher, "--version"],
+                        capture_output=True, timeout=60)
         return out.stdout.decode("utf-8", "replace").strip().splitlines()[0]
     except Exception:
         return "未知版本"
+
+
+_VERSION_NUM_RE = re.compile(r"(\d+)(?:\.(\d+))?(?:\.(\d+))?")
+
+
+def parse_sdk_version(text: str) -> Optional[tuple[int, int, int]]:
+    """从官方启动器 --version 的输出里解析引擎版本号；解析不出来返回 None。
+
+    实际输出形如 "Ren'Py 8.3.4.2201"（末尾四段是构建号），也可能只给
+    "Ren'Py 8.3" 这种两段式；这里只取前三段数字，缺的位补 0 再比较，
+    避免 (8, 3) < (8, 0, 0) 这类元组长度陷阱。
+    """
+    if not text or text == "未知版本":
+        return None
+    match = _VERSION_NUM_RE.search(text)
+    if not match:
+        return None
+    parts = [int(g) if g else 0 for g in match.groups()]
+    return tuple((parts + [0, 0, 0])[:3])
+
+
+def _av1_engine_version(game_dir,
+                        sdk: Optional[str] = None
+                        ) -> tuple[Optional[tuple[int, int, int]],
+                                   Optional[str]]:
+    """取判定 AV1 要用的目标引擎版本（av1_decision 的内部步骤，勿单独调）。
+
+    取值顺序（fail-closed）：
+    1. game/script_version.txt——成品里由 Ren'Py 生成，最权威；
+    2. 没有该文件时用本机 SDK 版本兜底：工程模式多半还没生成版本文件，
+       实际打包用的就是本机 SDK，所以 SDK 版本即目标引擎版本；
+    3. 两者都拿不到 → 返回 (None, None)，调用方必须按"不支持"处理。
+
+    返回 (版本三元组, 来源说明)；来源是给人看的短句，用于 warning 文案。
+    版本文件存在但解析失败时**不**回退到 SDK：那份文件说的就是引擎版本，
+    解析不出来只能当作"拿不到"，再拿本机 SDK 猜等于掩盖问题。
+    """
+    sv = Path(game_dir) / "script_version.txt"
+    if sv.is_file():
+        try:
+            raw = sv.read_text(encoding="utf-8", errors="ignore").strip()
+            version = tuple(int(x) for x in ast.literal_eval(raw))
+            return version, "script_version.txt"
+        except Exception:
+            return None, None
+    # sdk 是调用方显式指定的 SDK（如 CLI 的 --sdk）；不传就按常规位置探测。
+    # 工程模式在打包前就判定 AV1，此时显式 SDK 还没被 find_sdk 记住，
+    # 必须由调用方直接传进来，否则首跑会误判成"拿不到 SDK"。
+    sdk_dir = find_sdk(sdk)
+    if not sdk_dir:
+        return None, None
+    version = parse_sdk_version(sdk_version(sdk_dir))
+    if version is None:
+        return None, None
+    return version, "本机 SDK"
+
+
+# AV1 视频只有 Ren'Py 8.0+ 的引擎能播放（官方支持清单见 video_optimizer 头注释）
+AV1_MIN_ENGINE_VERSION = (8, 0, 0)
+
+# "为什么停用 AV1" 的中文提示：工程模式与成品模式共用同一句话，
+# 结尾必须说清怎么解除停用（issue #42 的口径）。
+_MIN_VERSION_TEXT = ".".join(str(x) for x in AV1_MIN_ENGINE_VERSION[:2])
+_MINS_TUPLE_TEXT = "(" + ", ".join(str(x) for x in AV1_MIN_ENGINE_VERSION) + ")"
+AV1_DISABLED_WARNING = (
+    "AV1 视频编码已跳过：无法确认目标引擎版本"
+    f"（AV1 要求 Ren'Py {_MIN_VERSION_TEXT} 及以上），"
+    "为免老引擎播放失败，本次按普通编码处理。"
+    "解除办法：在 game/script_version.txt 里写入目标引擎版本"
+    f"（如 (8, 3, 4)，只要不低于 {_MINS_TUPLE_TEXT}），"
+    f"或在设置里指定 {_MIN_VERSION_TEXT} 及以上的 SDK 目录"
+    "（full / package 也可以加 --sdk）。")
+
+
+def av1_decision(options, game_dir,
+                 sdk: Optional[str] = None) -> tuple[bool, Optional[str]]:
+    """AV1 的最终生效值 + 判定依据：工程/成品两条线唯一的门控入口。
+
+    返回 (是否生效, 版本来源)。来源是 "script_version.txt" / "本机 SDK"，
+    用于把"按什么判定的"写进提示文案；未生效时来源为 None。
+
+    口径（fail-closed，issue #42）：
+    - 用户没开 experimental_av1 → 不生效，且不去起 `renpy --version` 子进程；
+    - 有 game/script_version.txt → 按它判定（解析不出来就当作拿不到，
+      绝不拿本机 SDK 去猜）；
+    - 没有该文件 → 用本机 SDK 版本兜底；
+    - 都拿不到 → 不生效，调用方按普通编码处理并给出 AV1_DISABLED_WARNING。
+
+    run_project 与 run_dist 都只调这一个函数，各自不再写一份 if。
+    """
+    if not getattr(options, "experimental_av1", False):
+        return False, None
+    version, source = _av1_engine_version(game_dir, sdk)
+    if version is None:
+        return False, None
+    return tuple(version) >= AV1_MIN_ENGINE_VERSION, source
 
 
 def check_environment(sdk: Optional[str] = None) -> dict:
