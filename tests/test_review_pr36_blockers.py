@@ -199,3 +199,142 @@ def test_api_history_survives_jobstore_failure(client, monkeypatch):
     assert data["ok"] is True
     assert data["jobs"] == []
     assert data.get("warning"), "失败时要有提示语，别假装是空历史"
+
+# ---------------------------------------------------------------------------
+# 阻断 3：交付目录名幂等 + 用户预置的同名目录绝不被删
+# ---------------------------------------------------------------------------
+
+def _make_dist_zip(zip_path: Path, wrapper: str | None = "MyGame") -> Path:
+    """造一个最小成品压缩包；wrapper=None 时是"没有顶层文件夹"的包。"""
+    prefix = f"{wrapper}/" if wrapper else ""
+    with zipfile.ZipFile(zip_path, "w") as zf:
+        zf.writestr(f"{prefix}game/script.rpy", 'label start:\n    "hi"\n')
+        zf.writestr(f"{prefix}game/options.rpy", "define x = 1\n")
+    return zip_path
+
+
+def _delivered_tops(run_result: dict) -> list[str]:
+    """读回本次交付包的顶层目录名。"""
+    with zipfile.ZipFile(run_result["archive_output"]) as zf:
+        return sorted({name.split("/")[0] for name in zf.namelist()})
+
+
+def test_run_dist_smart_is_idempotent_on_same_input(tmp_path):
+    """同一个压缩包连跑两次，交付包顶层目录名必须一致。
+
+    回归：撞名修复把 target.exists() 一律让位，第二次变成 MyGame-2，
+    玩家解出来的文件夹名开始漂移（启动脚本/快捷方式按目录名找）。
+    """
+    from rtools.config import OptimizeOptions
+    from rtools.pipeline import run_dist_smart
+
+    src = _make_dist_zip(tmp_path / "Game.zip")
+    work = tmp_path / "work"
+    out = tmp_path / "out"
+    names = []
+    for _ in range(2):
+        r = run_dist_smart(str(src), OptimizeOptions(), str(work), str(out))
+        names.append(_delivered_tops(r))
+    assert names[0] == ["MyGame"], f"首次交付名不对：{names[0]}"
+    assert names[1] == names[0], f"同名重跑后交付目录名漂移了：{names}"
+
+
+def test_run_dist_smart_is_idempotent_without_wrapper(tmp_path):
+    """没有顶层 wrapper 的包同样幂等（旧版会变成 game-解压-2）。"""
+    from rtools.config import OptimizeOptions
+    from rtools.pipeline import run_dist_smart
+
+    src = _make_dist_zip(tmp_path / "game.zip", wrapper=None)
+    work = tmp_path / "work"
+    out = tmp_path / "out"
+    names = []
+    for _ in range(3):
+        r = run_dist_smart(str(src), OptimizeOptions(), str(work), str(out))
+        names.append(_delivered_tops(r))
+    assert names[0] == ["game-解压"]
+    assert names[1] == names[0] and names[2] == names[0], \
+        f"无 wrapper 的包重跑后交付目录名漂移了：{names}"
+
+
+def test_run_dist_smart_never_deletes_user_directory(tmp_path):
+    """用户预置的同名目录绝不被删，新交付改成让位名。"""
+    from rtools.config import OptimizeOptions
+    from rtools.pipeline import run_dist_smart
+
+    src = _make_dist_zip(tmp_path / "Game.zip")
+    work = tmp_path / "work"
+    work.mkdir()
+    user_dir = work / "MyGame"
+    user_dir.mkdir()
+    keep = user_dir / "我的东西.txt"
+    keep.write_text("用户自己的文件", encoding="utf-8")
+
+    r = run_dist_smart(str(src), OptimizeOptions(), str(work),
+                       str(tmp_path / "out"))
+    assert keep.exists() and keep.read_text(encoding="utf-8") == "用户自己的文件", \
+        "用户预置的同名目录被删了"
+    assert _delivered_tops(r) == ["MyGame-2"], "撞到用户目录时必须让位改名"
+
+
+def test_claim_delivery_dir_reuses_own_ledger_entry(tmp_path):
+    """带归属标记的旧交付目录可以清掉复用；用户目录只让位。"""
+    from rtools.pipeline import (_load_owned_deliveries, _claim_delivery_dir,
+                                 _mark_delivery)
+
+    work = tmp_path / "work"
+    work.mkdir()
+    owned = work / "MyGame"
+    owned.mkdir()
+    (owned / "old.txt").write_text("上次的残留", encoding="utf-8")
+    _mark_delivery(work, owned)
+    assert "MyGame" in _load_owned_deliveries(work)
+
+    chosen = _claim_delivery_dir(work / "MyGame",
+                                 _load_owned_deliveries(work), [])
+    assert chosen == work / "MyGame", "自己产出的目录应当原地复用"
+    assert not chosen.exists(), "复用前必须先把上次的内容清掉"
+
+    user = work / "Other"
+    user.mkdir()
+    (user / "sos.txt").write_text("别动我", encoding="utf-8")
+    other = _claim_delivery_dir(work / "Other",
+                                _load_owned_deliveries(work), [])
+    assert other == work / "Other-2", "用户目录必须让位"
+    assert (user / "sos.txt").exists(), "用户目录内容绝不能被删"
+
+
+def test_claim_delivery_dir_ignores_stale_ledger_name(tmp_path):
+    """登记表过时：名字记着但目录里没有归属标记，仍算用户的东西。"""
+    from rtools.pipeline import _load_owned_deliveries, _claim_delivery_dir
+
+    work = tmp_path / "work"
+    work.mkdir()
+    stale = work / "MyGame"
+    stale.mkdir()
+    keep = stale / "用户后来放的.txt"
+    keep.write_text("别动", encoding="utf-8")
+    # 手写一份"名字记着、但目录里没有标记"的过时台账
+    (work / ".rtools-deliveries.json").write_text(
+        '{"version": 1, "delivered": ["MyGame"]}', encoding="utf-8")
+
+    chosen = _claim_delivery_dir(work / "MyGame",
+                                 _load_owned_deliveries(work), [])
+    assert chosen == work / "MyGame-2", "只凭过时台账的名字不得删用户目录"
+    assert keep.exists(), "用户目录内容绝不能被删"
+
+
+def test_delivery_marker_not_inside_archive(tmp_path):
+    """归属标记是回包之后才写的，绝不能出现在交付包里。"""
+    from rtools.config import OptimizeOptions
+    from rtools.pipeline import run_dist_smart
+
+    src = _make_dist_zip(tmp_path / "Game.zip")
+    work = tmp_path / "work"
+    r = run_dist_smart(str(src), OptimizeOptions(), str(work),
+                       str(tmp_path / "out"))
+    with zipfile.ZipFile(r["archive_output"]) as zf:
+        names = zf.namelist()
+    assert not any(".rtools-delivered" in n for n in names), \
+        f"归属标记被写进交付包了：{names}"
+    # 磁盘上的交付目录里则必须有标记（下次重跑靠它认自己人）
+    assert (Path(r["working_dir"]) / ".rtools-delivered").is_file()

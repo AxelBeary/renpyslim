@@ -11,6 +11,7 @@ from __future__ import annotations
 import ast
 import contextvars
 import json
+import logging
 import os
 import shutil
 import threading
@@ -31,6 +32,8 @@ from .config import OptimizeOptions
 from .refs import RefIndex
 from .utils import fmt_size as _fmt, find_suffix_clashes
 from . import rpa
+
+logger = logging.getLogger(__name__)
 
 
 class PipelineError(Exception):
@@ -134,6 +137,105 @@ def _unique_dir(path: Path) -> Path:
             return candidate
     return path.with_name(
         f"{path.name}-{time.strftime('%Y%m%d-%H%M%S')}-{uuid.uuid4().hex[:6]}")
+
+
+# 交付目录登记表：放在 work_root 里，只记"本工具自己产出的交付目录名"。
+# 作用是区分「上次运行自己留下的同名目录」与「用户本来就在那里的东西」：
+# 前者可以清掉复用（同名输入重跑要幂等），后者一律让位绝不删。
+_DELIVERY_LEDGER = ".rtools-deliveries.json"
+# 交付目录里的归属标记：登记表可能过时（用户删了我们的目录、又在同名位置
+# 放了自己的东西），所以删除前还要看到这个标记才认。标记在回包之后才写，
+# 绝不会进交付包。
+_DELIVERY_MARKER = ".rtools-delivered"
+
+
+def _same_path(a: str | Path, b: str | Path) -> bool:
+    """同一个路径的宽松比较（Windows 大小写不敏感，符号链接不展开）。"""
+    return os.path.normcase(os.path.abspath(str(a))) == \
+        os.path.normcase(os.path.abspath(str(b)))
+
+
+def _load_owned_deliveries(work_root: Path) -> set[str]:
+    """读登记表：返回本工具在 work_root 下产出过的交付目录名。
+
+    只收纯名字（不含路径分隔符、不是 . / ..），防止被改写的登记表把
+    清理动作引到 work_root 之外。读失败一律当空表——登记表只是台账，
+    丢了顶多下次让位改名，绝不阻断任务。
+    """
+    try:
+        payload = json.loads((work_root / _DELIVERY_LEDGER).read_text(
+            encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    names = payload.get("delivered") if isinstance(payload, dict) else None
+    if not isinstance(names, list):
+        return set()
+    owned: set[str] = set()
+    for name in names:
+        if not isinstance(name, str) or not name:
+            continue
+        if name in (".", "..") or Path(name).name != name:
+            continue
+        owned.add(name)
+    return owned
+
+
+def _mark_delivery(work_root: Path, delivered: Path) -> None:
+    """标记"这个交付目录是本工具产出的"：目录内留归属标记 + 记登记表。
+
+    必须在回包之后调用——标记文件不能被打进交付包。任一步失败都只告警：
+    最坏结果是下次重跑让位改名（不幂等），绝不影响本次交付。
+    """
+    try:
+        (delivered / _DELIVERY_MARKER).write_text(delivered.name,
+                                                  encoding="utf-8")
+    except OSError as exc:
+        logger.warning("交付目录归属标记写入失败（%s）：%s", delivered, exc)
+    owned = _load_owned_deliveries(work_root)
+    owned.add(delivered.name)
+    payload = {"version": 1, "delivered": sorted(owned)}
+    tmp = work_root / f"{_DELIVERY_LEDGER}.{uuid.uuid4().hex}.tmp"
+    try:
+        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2),
+                       encoding="utf-8")
+        os.replace(tmp, work_root / _DELIVERY_LEDGER)
+    except OSError as exc:
+        logger.warning("交付目录登记表写入失败（%s）：%s", work_root, exc)
+        tmp.unlink(missing_ok=True)
+
+
+def _is_own_delivery(path: Path, owned: set[str]) -> bool:
+    """这个目录是不是本工具自己产出的（有归属标记才认）。"""
+    return path.name in owned and (path / _DELIVERY_MARKER).is_file()
+
+
+def _claim_delivery_dir(target: Path, owned: set[str],
+                        created_by_run: list[Path]) -> Path:
+    """给交付目录挑一个能安全使用的位置，返回该路径。
+
+    规则（安全红线：target.name 来自压缩包内容，不可信）：
+    - 目录不存在 → 直接用（最常见）；
+    - 目录是**本次运行自己产出的**（解压目录 / 工作副本）→ 清空后复用；
+    - 目录是本工具**上次交付留下的**（登记表里有名、且目录内有归属标记）
+      → 清空后复用，所以同名输入连跑两次，交付目录名稳定不变；
+    - 其余（用户预置的同名目录）→ 调 _unique_dir 让位，绝不删除；
+    - 是自家的但清不掉（被占用）→ 同样让位，不抛错。
+
+    只认标记不认名字：登记表可能过时（用户删了我们的目录又在同名位置放了
+    自己的东西），单看名字就把用户的东西删了。shutil.rmtree 本身不会跟随
+    目录内的 junction/符号链接（实测目标内容不受影响），口径与备份一致。
+    """
+    if not target.exists():
+        return target
+    mine = _is_own_delivery(target, owned) or any(
+        _same_path(target, p) for p in created_by_run)
+    if mine:
+        try:
+            shutil.rmtree(target)
+            return target
+        except OSError:
+            pass
+    return _unique_dir(target)
 
 
 def _worker_count(n_jobs: int) -> int:
@@ -1674,17 +1776,22 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     # 交付包里的文件夹用原成品目录名，不带时间戳，好认又整洁
     import shutil as _shutil
     proper_name = Path(dist_root).name
+    work_root_p = Path(work_root)
     wd = Path(result["working_dir"])
     if wd.name != proper_name:
         target = wd.parent / proper_name
-        if target.exists():
-            # 安全修复（2026-11-27 交叉审计）：proper_name 取自压缩包内容，
-            # 不可信。绝不删已存在目录，改用一个不撞名的交付目录名。
-            alt = _unique_dir(target)
+        # 安全修复（2026-11-27）：proper_name 取自压缩包内容，不可信，
+        # 绝不能无条件 rmtree。幂等修复（2026-11-28 评审阻断 3）：也不能
+        # 一律让位——那样同名输入重跑会得到 MyGame-2，交付目录名开始漂移。
+        # 现在只清「本工具自己产出的目录」（本次运行的解压目录/工作副本，
+        # 或登记表里记着的上次交付），用户预置的同名目录一律让位。
+        claimed = _claim_delivery_dir(
+            target, _load_owned_deliveries(work_root_p), [Path(extract_dir)])
+        if claimed != target:
             p.emit("repack",
-                   f"{target.name} 已存在，为免覆盖已有内容，"
-                   f"交付目录改用 {alt.name}")
-            target = alt
+                   f"{target.name} 已存在且不是本工具产出的，"
+                   f"为免覆盖已有内容，交付目录改用 {claimed.name}")
+            target = claimed
         try:
             wd.rename(target)
         except OSError as e:
@@ -1710,6 +1817,12 @@ def run_dist_smart(path: str, options: OptimizeOptions,
     archives.create_archive(result["working_dir"], out_zip)
     result["archive_output"] = out_zip
     result["archive_input"] = path
+    # 标记本次交付目录（归属标记 + 登记表）：下次同名输入重跑时，
+    # _claim_delivery_dir 据它认出"这是本工具自己留下的"从而原地复用，
+    # 交付目录名不会漂移。必须在回包之后，标记不能进交付包。
+    delivered = Path(result["working_dir"])
+    if delivered.parent == work_root_p:
+        _mark_delivery(work_root_p, delivered)
     # 审核修复（中-6）：回包成功后解压目录不再需要——不清理的话
     # _rtools_work 每次运行都会累积一份全量解压拷贝。
     # 安全修复（2026-11-27）：没有顶层 wrapper 时工作副本会被改名到
