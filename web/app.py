@@ -848,9 +848,11 @@ def api_full(req: FullReq):
     progress = _job_progress(job_id)
 
     def task():
+        # 显式 SDK 也传进优化段：AV1 引擎门控用它兜底（issue #42）
         opt = pipeline.run_project(str(path), opts, work_root, output_dir,
                                    progress,
-                                   cancel=lambda: _job_cancelled(job_id))
+                                   cancel=lambda: _job_cancelled(job_id),
+                                   sdk=sdk)
         # 打包阶段没有取消回调：进包前再确认一次，已取消就别再产出
         # 一个用户不想要的交付包。
         if _job_cancelled(job_id):

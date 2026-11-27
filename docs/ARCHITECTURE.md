@@ -158,6 +158,33 @@ has_renpy_layout）。全程不解包、不建工作目录、不改原包；CLI 
 - 磁盘预检：`backup.ensure_free_space` 在复制工作副本、写 in_place 备份、
   APK 解包/回写前检查目标盘空间（另加 10% 余量），不足时抛人话错误。
 
+### AV1 引擎门控（issue #42，工程/成品同一口径）
+
+`--av1` 只在**目标引擎确认 >= 8.0** 时才真正生效，判定是 fail-closed 的：
+
+1. 有 `game/script_version.txt` → 按它判定（文件存在但解析不出来，**不**回退
+   到 SDK——那份文件说的就是引擎版本，拿本机 SDK 猜只会掩盖问题）；
+2. 没有该文件 → 用 SDK 版本兜底（工程模式多半还没生成版本文件，而实际
+   打包用的就是那个 SDK，所以它的版本即目标引擎版本）。SDK 优先取调用方
+   显式指定的那个（CLI `--sdk` / Web 设置里的 SDK 目录）；工程模式在打包前
+   就判定 AV1，此时显式 SDK 还没被 `find_sdk` 记住，必须由调用方传进
+   `run_project(..., sdk=)`，否则首跑会误判成"拿不到 SDK"；
+3. 两者都拿不到 → **停用 AV1**，按普通编码处理，并在 warnings 里给出
+   `AV1_DISABLED_WARNING`（说明为何停用 + 怎么解除：写 `game/script_version.txt`
+   或指定 `--sdk`）。
+
+实现在 `rtools/packager.py`：`av1_decision()` 是唯一下定论的地方（返回
+`(是否生效, 版本来源)`），内部用私有 `_av1_engine_version()` 取版本；常量
+`AV1_MIN_ENGINE_VERSION` / `AV1_DISABLED_WARNING` 供两条线共用。`run_project`
+与 `run_dist` 都只调 `packager.av1_decision`——**两条线禁止各写一份 if**，
+也不允许再有只读版本文件的旁路判定（取版本的函数刻意保持私有）。
+
+视频缓存键 `vid|preset|{0,1}|ext` 里的那一位取的是**最终生效值**（`use_av1`），
+门控停用时缓存不会与 AV1 产物串用。
+
+判定只依赖本机文件与 SDK，**不做任何网络查询**；开关关着时不必调用
+`sdk_version()`（会起一次 `renpy --version`），避免为已关的功能付外部进程开销。
+
 ### 平台分层（Windows / POSIX，v0.18.0 / issue #26 第一阶段）
 
 口径：**Windows 仍是一等公民**（发行版 exe 只有 Windows 一份，签名与分发形态不变），

@@ -40,7 +40,6 @@ def _store_path() -> Path:
     return home / "jobs.json"
 
 
-<<<<<<< HEAD
 def _acquire_file_lock(lock_path: Path):
     """打开锁文件并加建议锁；拿不到锁时返回 None（降级为不加锁）。
 
@@ -50,19 +49,21 @@ def _acquire_file_lock(lock_path: Path):
     """
     try:
         lock_path.parent.mkdir(parents=True, exist_ok=True)
+        # a+b：文件不存在就建、已有内容不截断。锁文件内容无意义，
+        # 只借它的字节区间做跨进程门闩。
         handle = open(lock_path, "a+b")
     except OSError as exc:
         logger.warning("无法创建任务历史文件锁（%s），本次不跨进程加锁：%s",
                        lock_path, exc)
         return None
     try:
+        handle.seek(0)
         if os.name == "nt":
             import msvcrt
-            handle.seek(0, os.SEEK_END)
-            if handle.tell() == 0:
-                handle.write(b"\0")
-                handle.flush()
-            handle.seek(0)
+            # 区间锁可以落在文件末尾之外：0 字节文件同样能锁第 0..1 字节。
+            # **不要**为了“文件非空”去补写填充字节——并发下两个进程同时
+            # 扩容会撞窗口期，失败方 flush() 抛 PermissionError 后降级成
+            # 不加锁，读-改-写失去互斥，记录被覆盖（实测 30 条只剩 29 条）。
             msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
         else:
             import fcntl
@@ -80,49 +81,20 @@ def _acquire_file_lock(lock_path: Path):
 def _release_file_lock(handle) -> None:
     """解锁并关闭锁文件；释放失败只告警，不影响调用方的结果。"""
     try:
-        if os.name == "nt":
-            import msvcrt
-            handle.seek(0)
-=======
-def _lock_byte_range(handle) -> None:
-    """在锁文件上取得跨进程建议锁（阻塞直到拿到）。
-
-    Windows 的 msvcrt.locking 按**字节区间**加锁：区间必须真实存在，
-    但可以落在文件末尾之外（0 字节文件同样能锁第 0..1 字节），所以
-    这里既不写填充字节，也不需要先扩容——旧实现“发现 0 字节就补写
-    一个 \0”恰恰是并发下的自伤：两个进程同时补写时会撞窗口期，
-    失败方抛 PermissionError 后降级为不加锁，读-改-写失去互斥，
-    记录就被覆盖丢失（实测 30 条并发写只剩 29 条，偶发）。
-    """
-    if os.name == "nt":
-        import msvcrt
-        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-    else:
-        import fcntl
-        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-
-
-def _unlock_byte_range(handle) -> None:
-    """释放 _lock_byte_range 取得的锁；失败不抛（进程退出也会自动释放）。"""
-    try:
         handle.seek(0)
         if os.name == "nt":
             import msvcrt
->>>>>>> fix/deflake-cross-process-and-browse
             msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
         else:
             import fcntl
             fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
     except OSError:
         pass
-<<<<<<< HEAD
     finally:
         try:
             handle.close()
         except OSError:
             pass
-=======
->>>>>>> fix/deflake-cross-process-and-browse
 
 
 @contextlib.contextmanager
@@ -141,33 +113,8 @@ def _file_lock():
     EIO、权限错误统统伪装成 RuntimeError）。
     """
     path = _store_path()
-<<<<<<< HEAD
     handle = _acquire_file_lock(path.with_name(path.name + ".lock"))
     if handle is None:
-=======
-    handle = None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = path.with_name(path.name + ".lock")
-        # a+b：文件不存在就建、已有内容不截断（锁文件内容无意义，
-        # 只借它的字节区间做跨进程门闩）。
-        handle = open(lock_path, "a+b")
-        handle.seek(0)
-        try:
-            _lock_byte_range(handle)
-        except OSError as exc:
-            logger.warning("任务历史文件锁不可用（%s），本次不跨进程加锁：%s",
-                           lock_path, exc)
-            yield
-            return
-        try:
-            yield
-        finally:
-            _unlock_byte_range(handle)
-    except OSError as exc:
-        logger.warning("无法创建任务历史文件锁（%s），本次不跨进程加锁：%s",
-                       path, exc)
->>>>>>> fix/deflake-cross-process-and-browse
         yield
         return
     try:
