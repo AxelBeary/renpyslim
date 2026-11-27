@@ -10,6 +10,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
+from .archives import walk_tree
 from .utils import fmt_size
 
 logger = logging.getLogger(__name__)
@@ -138,6 +139,11 @@ def make_backup_zip(target_dir: str, dest_zip: str) -> str:
     审核修复（中-9）：先写 tmp 再原子落位——备份是 in_place 模式
     唯一的救命稻草，旧写法中途失败会留下"能打开但缺文件"的
     合法残缺备份，误导用户以为备份完好。
+
+    安全修复（2026-11-28 评审阻断 1）：遍历改走 archives.walk_tree，
+    与交付打包共用同一份实现。旧版是 target.rglob("*") 配 p.is_file()，
+    而 junction 是**目录**——is_file() 恒为 False，链接判定永远轮不到它，
+    rglob 直接穿进联接里，把工程外的文件当普通文件写进备份包。
     """
     target = Path(target_dir)
     out = Path(dest_zip)
@@ -145,23 +151,15 @@ def make_backup_zip(target_dir: str, dest_zip: str) -> str:
     ensure_free_space(out, _tree_size(target, _BACKUP_SKIP),
                       f"备份 {target.name}")
     tmp = out.with_name(f"{out.name}.{uuid.uuid4().hex}.tmp")
+
+    def add_file(path: Path, rel: Path) -> None:
+        # rel 已带根目录名（walk_tree 的口径），解压出来是一个完整工程目录
+        zf.write(str(path), rel.as_posix())
+
     try:
         with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED,
                              compresslevel=6) as zf:
-            for p in target.rglob("*"):
-                if p.is_file():
-                    # 链接一律不备份内容：跟随链接会把工程外的文件
-                    # 写进备份包（in_place 备份可能被交给别人）。
-                    try:
-                        if p.is_symlink() or _is_junction(p):
-                            logger.warning("备份跳过符号链接/联接：%s", p)
-                            continue
-                    except OSError:
-                        continue
-                    if any(part in _BACKUP_SKIP
-                           for part in p.relative_to(target).parts):
-                        continue
-                    zf.write(p, p.relative_to(target.parent))
+            walk_tree(target, add_file, skip_names=_BACKUP_SKIP)
         os.replace(tmp, out)
     except BaseException:
         tmp.unlink(missing_ok=True)

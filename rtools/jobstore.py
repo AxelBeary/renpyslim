@@ -40,6 +40,61 @@ def _store_path() -> Path:
     return home / "jobs.json"
 
 
+def _acquire_file_lock(lock_path: Path):
+    """打开锁文件并加建议锁；拿不到锁时返回 None（降级为不加锁）。
+
+    只负责"打开 + 加锁"这一段，且**只在这一段**把 OSError 解释成
+    "本次不跨进程加锁"。锁体（调用方的读-改-写）绝不能落进这里的
+    异常处理范围，否则磁盘满 / EIO / 权限这类真实故障会被就地吞掉。
+    """
+    try:
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        handle = open(lock_path, "a+b")
+    except OSError as exc:
+        logger.warning("无法创建任务历史文件锁（%s），本次不跨进程加锁：%s",
+                       lock_path, exc)
+        return None
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+    except OSError as exc:
+        # 文件系统不支持建议锁（如某些网络盘）：降级为不加锁，
+        # 别把一个可选的历史记录功能变成硬失败。
+        logger.warning("任务历史文件锁不可用（%s），本次不跨进程加锁：%s",
+                       lock_path, exc)
+        handle.close()
+        return None
+    return handle
+
+
+def _release_file_lock(handle) -> None:
+    """解锁并关闭锁文件；释放失败只告警，不影响调用方的结果。"""
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        try:
+            handle.close()
+        except OSError:
+            pass
+
+
 @contextlib.contextmanager
 def _file_lock():
     """跨进程互斥：Web 与 CLI 可能同时写同一份 jobs.json。
@@ -48,51 +103,22 @@ def _file_lock():
     会让后写者覆盖先写者（实测 30 条并发写只剩 21 条）。这里对
     同目录的 jobs.json.lock 加建议锁，锁住整个读-改-写临界区。
     加锁失败（文件系统不支持等）只降级为不加锁，不阻断任务记录。
+
+    结构上把"获取"与"释放"拆成 _acquire_file_lock / _release_file_lock，
+    本函数只保留 yield 前后的编排：获取阶段的 OSError 在获取函数里就地
+    降级，锁体（yield 之后）的异常由调用方原样收到——绝不在这里第二次
+    yield（那会触发 "generator didn't stop after throw()"，把磁盘故障、
+    EIO、权限错误统统伪装成 RuntimeError）。
     """
     path = _store_path()
-    handle = None
-    try:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = path.with_name(path.name + ".lock")
-        handle = open(lock_path, "a+b")
-        if os.name == "nt":
-            import msvcrt
-            handle.seek(0, os.SEEK_END)
-            if handle.tell() == 0:
-                handle.write(b"\0")
-                handle.flush()
-            handle.seek(0)
-            try:
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-            except OSError:
-                logger.warning("任务历史文件锁不可用（%s），本次不跨进程加锁",
-                               lock_path)
-                yield
-                return
-        else:
-            import fcntl
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
-        try:
-            yield
-        finally:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
-    except OSError as exc:
-        logger.warning("无法创建任务历史文件锁（%s），本次不跨进程加锁：%s",
-                       path, exc)
+    handle = _acquire_file_lock(path.with_name(path.name + ".lock"))
+    if handle is None:
         yield
         return
+    try:
+        yield
     finally:
-        if handle is not None:
-            handle.close()
+        _release_file_lock(handle)
 
 
 def _jsonable(value: Any, depth: int = 0) -> Any:

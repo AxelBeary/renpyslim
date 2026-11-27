@@ -938,14 +938,31 @@ def api_job_cancel(job_id: str):
 
 @app.get("/api/history")
 def api_history(limit: int = jobstore.DEFAULT_LIMIT):
-    """跨重启的任务历史（磁盘）。运行态靠心跳与进程判活识别中断。"""
-    return {"ok": True, "jobs": jobstore.list_jobs(limit=limit)}
+    """跨重启的任务历史（磁盘）。运行态靠心跳与进程判活识别中断。
+
+    防御（2026-11-28 评审阻断 2）：历史是可选功能，读盘/加锁出问题
+    （磁盘满、EIO、权限）不能让接口整个 500——那会让前端每轮轮询都报错，
+    还把用户挡在其它功能外面。失败时按空历史返回并给出提示语。
+    """
+    try:
+        jobs = jobstore.list_jobs(limit=limit)
+    except Exception as exc:            # noqa: BLE001 - 兜底：历史不该拖垮接口
+        _LOG.warning("读取任务历史失败：%s", exc, exc_info=True)
+        return {"ok": True, "jobs": [],
+                "warning": "任务历史读取失败，本次按空历史显示。"}
+    return {"ok": True, "jobs": jobs}
 
 
 @app.delete("/api/history")
 def api_history_clear():
     """清空本机任务历史，返回清掉的条数。"""
-    return {"ok": True, "cleared": jobstore.clear()}
+    try:
+        cleared = jobstore.clear()
+    except Exception as exc:            # noqa: BLE001 - 同上：不让清理失败变成 500
+        _LOG.warning("清空任务历史失败：%s", exc, exc_info=True)
+        return {"ok": False, "cleared": 0,
+                "error": "清空任务历史失败：磁盘或文件锁异常，请稍后重试。"}
+    return {"ok": True, "cleared": cleared}
 
 
 @app.get("/api/update")
