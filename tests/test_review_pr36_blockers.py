@@ -19,8 +19,24 @@ from pathlib import Path
 
 import pytest
 
-from rtools import backup
+from rtools import backup, jobstore
 from rtools.archives import create_zip
+
+try:
+    from fastapi.testclient import TestClient
+except ImportError:                      # pragma: no cover - 缺依赖时整组 skip
+    TestClient = None
+
+BASE_URL = "http://127.0.0.1:52786"      # 本机门牌号，过"本地专用"防护
+
+
+@pytest.fixture()
+def client():
+    if TestClient is None:
+        pytest.skip("缺少测试客户端依赖")
+    import web.app as app_mod
+    with TestClient(app_mod.app, base_url=BASE_URL) as c:
+        yield c
 
 
 # ---------------------------------------------------------------------------
@@ -127,3 +143,59 @@ def test_backup_zip_does_not_follow_symlinked_dir(tmp_path):
     assert "Game/game/script.rpy" in names
     assert not any("PRIVATE-KEY" in n for n in names)
     assert not any("assets_link" in n for n in names)
+
+# ---------------------------------------------------------------------------
+# 阻断 2：锁体内的 OSError 必须原样传播，不能被改写成 RuntimeError
+# ---------------------------------------------------------------------------
+
+def test_file_lock_propagates_oserror_from_body(tmp_path):
+    """with jobstore._file_lock(): raise OSError(...) 必须收到 OSError。
+
+    回归：旧版在 _file_lock 里两处 except OSError 分支都 yield，
+    锁体（yield 之后的用户代码）被裹进同一个 try，锁体内任何 OSError
+    （磁盘满、EIO、权限）都被接住并第二次 yield，
+    CPython 报 "generator didn't stop after throw()"，异常类型被改写成
+    RuntimeError——真实故障原因全丢，排障线索断掉。
+    """
+    with pytest.raises(OSError, match="disk on fire"):
+        with jobstore._file_lock():
+            raise OSError("disk on fire")
+
+
+def test_file_lock_degrades_when_lock_file_unopenable(tmp_path, monkeypatch):
+    """对照面：是真的拿不到锁时，仍要降级为不加锁（锁体照常执行）。"""
+    real_open = open
+
+    def broken_open(path, *args, **kwargs):
+        if str(path).endswith(".lock"):
+            raise OSError("锁文件打不开")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.open", broken_open)
+    ran = []
+    with jobstore._file_lock():
+        ran.append(True)
+    assert ran == [True], "拿不到锁时必须降级执行锁体，而不是抛错"
+
+
+def test_file_lock_releases_after_body_raises(tmp_path):
+    """锁体抛错也要正常释放：错误之后再拿锁不能被自己卡死。"""
+    with pytest.raises(OSError):
+        with jobstore._file_lock():
+            raise OSError("boom")
+    with jobstore._file_lock():
+        pass        # 能再次进来说明上一次的锁已经释放
+
+
+def test_api_history_survives_jobstore_failure(client, monkeypatch):
+    """jobstore 读盘失败时，历史接口返回 200 而不是 500。"""
+    def boom(*args, **kwargs):
+        raise OSError("磁盘 / 文件锁故障")
+
+    monkeypatch.setattr(jobstore, "list_jobs", boom)
+    resp = client.get("/api/history?limit=5")
+    assert resp.status_code == 200, "历史接口不该因磁盘故障 500"
+    data = resp.json()
+    assert data["ok"] is True
+    assert data["jobs"] == []
+    assert data.get("warning"), "失败时要有提示语，别假装是空历史"
