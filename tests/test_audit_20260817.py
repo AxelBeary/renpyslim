@@ -16,7 +16,8 @@ import pytest
 from rtools import archives, cleanup, sdk as sdk_mod, verifier
 from rtools.config import OptimizeOptions
 from rtools.models import ChangeRecord, Progress
-from rtools.pipeline import PipelineCancelled, _run_jobs_or_flush
+from rtools.pipeline import (PipelineCancelled, _ChangelogFlush,  # noqa: E402
+                             _run_jobs_or_flush)
 from rtools.utils import find_suffix_clashes
 
 
@@ -242,9 +243,11 @@ def _patch_run_jobs(monkeypatch, exc):
 def test_crash_flushes_partial_changelog(tmp_path, monkeypatch):
     """非取消的真异常（如磁盘满）也必须落部分清单。"""
     _patch_run_jobs(monkeypatch, OSError("磁盘已满"))
+    saved = 0
+    flush = _ChangelogFlush(str(tmp_path), [], lambda: saved)
     with pytest.raises(OSError):
         _run_jobs_or_flush(Progress(), "optimize", [("j", lambda: None)],
-                           None, str(tmp_path), [], 0)
+                           None, flush)
     data = json.loads((tmp_path / "changelog.json").read_text(encoding="utf-8"))
     assert data["cancelled"] is True
 
@@ -255,9 +258,11 @@ def test_cancel_aggregates_completed_results(tmp_path, monkeypatch):
     _patch_run_jobs(monkeypatch, PipelineCancelled(
         [{"records": [rec], "saved": 5}]))
     records: list = []
+    saved = 10
+    flush = _ChangelogFlush(str(tmp_path), records, lambda: saved)
     with pytest.raises(PipelineCancelled):
         _run_jobs_or_flush(Progress(), "optimize", [("j", lambda: None)],
-                           None, str(tmp_path), records, 10)
+                           None, flush)
     assert len(records) == 1 and records[0].src == "a.png"
     data = json.loads((tmp_path / "changelog.json").read_text(encoding="utf-8"))
     assert data["saved_bytes"] == 15          # 10 + 本批 5
