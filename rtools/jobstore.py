@@ -40,6 +40,38 @@ def _store_path() -> Path:
     return home / "jobs.json"
 
 
+def _lock_byte_range(handle) -> None:
+    """在锁文件上取得跨进程建议锁（阻塞直到拿到）。
+
+    Windows 的 msvcrt.locking 按**字节区间**加锁：区间必须真实存在，
+    但可以落在文件末尾之外（0 字节文件同样能锁第 0..1 字节），所以
+    这里既不写填充字节，也不需要先扩容——旧实现“发现 0 字节就补写
+    一个 \0”恰恰是并发下的自伤：两个进程同时补写时会撞窗口期，
+    失败方抛 PermissionError 后降级为不加锁，读-改-写失去互斥，
+    记录就被覆盖丢失（实测 30 条并发写只剩 29 条，偶发）。
+    """
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+
+
+def _unlock_byte_range(handle) -> None:
+    """释放 _lock_byte_range 取得的锁；失败不抛（进程退出也会自动释放）。"""
+    try:
+        handle.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+
+
 @contextlib.contextmanager
 def _file_lock():
     """跨进程互斥：Web 与 CLI 可能同时写同一份 jobs.json。
@@ -54,37 +86,21 @@ def _file_lock():
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         lock_path = path.with_name(path.name + ".lock")
+        # a+b：文件不存在就建、已有内容不截断（锁文件内容无意义，
+        # 只借它的字节区间做跨进程门闩）。
         handle = open(lock_path, "a+b")
-        if os.name == "nt":
-            import msvcrt
-            handle.seek(0, os.SEEK_END)
-            if handle.tell() == 0:
-                handle.write(b"\0")
-                handle.flush()
-            handle.seek(0)
-            try:
-                msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
-            except OSError:
-                logger.warning("任务历史文件锁不可用（%s），本次不跨进程加锁",
-                               lock_path)
-                yield
-                return
-        else:
-            import fcntl
-            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.seek(0)
+        try:
+            _lock_byte_range(handle)
+        except OSError as exc:
+            logger.warning("任务历史文件锁不可用（%s），本次不跨进程加锁：%s",
+                           lock_path, exc)
+            yield
+            return
         try:
             yield
         finally:
-            try:
-                if os.name == "nt":
-                    import msvcrt
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                else:
-                    import fcntl
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-            except OSError:
-                pass
+            _unlock_byte_range(handle)
     except OSError as exc:
         logger.warning("无法创建任务历史文件锁（%s），本次不跨进程加锁：%s",
                        path, exc)

@@ -18,15 +18,6 @@ def client():
         yield c
 
 
-@pytest.fixture(autouse=True)
-def reset_browse_state():
-    with app_mod._BROWSE_META_LOCK:
-        app_mod._BROWSE_STATE.update({"held": False, "since": None, "token": 0})
-    yield
-    with app_mod._BROWSE_META_LOCK:
-        app_mod._BROWSE_STATE.update({"held": False, "since": None, "token": 0})
-
-
 def test_normal_local_request_allowed(client):
     r = client.get("/api/env")
     assert r.status_code == 200

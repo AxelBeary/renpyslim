@@ -33,16 +33,6 @@ def client():
         yield c
 
 
-@pytest.fixture(autouse=True)
-def reset_browse_state():
-    """用例前后复位浏览锁状态，避免互相污染。"""
-    with app_mod._BROWSE_META_LOCK:
-        app_mod._BROWSE_STATE.update({"held": False, "since": None, "token": 0})
-    yield
-    with app_mod._BROWSE_META_LOCK:
-        app_mod._BROWSE_STATE.update({"held": False, "since": None, "token": 0})
-
-
 def _wait_job_done(client, job_id, timeout=10.0) -> dict:
     """轮询任务直到终态，返回最终响应；非 done 直接断言失败。"""
     deadline = time.time() + timeout
@@ -91,24 +81,37 @@ def test_browse_force_reset_after_max_hold_and_stale_release(client, monkeypatch
                         lambda kind: (gate.wait(10), "/picked")[1])
     monkeypatch.setattr(app_mod, "_BROWSE_JOIN_TIMEOUT", 0.2)
 
-    # 伪造一个已卡 700 秒的旧锁（默认上限 600 秒），代际记为 5
+    # 伪造一个已卡 700 秒的旧锁（默认上限 600 秒）。代际取当前值 +1 写成
+    # 局部变量：后面一律按"相对 stale_token 前进一代"断言，不依赖全局初值。
     with app_mod._BROWSE_META_LOCK:
+        stale_token = app_mod._BROWSE_STATE["token"] + 1
         app_mod._BROWSE_STATE.update(
-            {"held": True, "since": time.time() - 700, "token": 5})
+            {"held": True, "since": time.time() - 700, "token": stale_token})
 
     with caplog.at_level(logging.WARNING, logger="renpyslim.web"):
         r = client.get("/api/browse")
     # 强制重置生效：新对话框成功开出（本例它也会因短 join 超时，
     # 关键是"锁被重置、新请求得以持有"而不是被旧锁挡住）
-    assert r.json()["ok"] is False and "超时" in r.json()["error"]
+    #
+    # 失败时把响应体和锁状态一起写进消息（低频偶发的取证口径）：这条断言
+    # 只有三种落点——"超时"（本用例期望）、ok=True（对话框线程提前结束）、
+    # "无法弹出选择框"（对话框抛异常）。裸断言只能报"是 False"，看不出是哪种，
+    # 曾经因此无法定位一次全量套件里的偶发红。
+    resp = r.json()
+    assert resp["ok"] is False and "超时" in resp["error"], (
+        f"期望对话框线程挂住并报超时，实际响应 {resp!r}；"
+        f"当时锁状态 {app_mod._BROWSE_STATE!r}，"
+        f"对话框函数 {app_mod._browse_open_dialog!r}")
     assert app_mod._BROWSE_STATE["held"] is True
-    assert app_mod._BROWSE_STATE["token"] == 6      # 代际已前进
+    # 代际必须"前进一代"而不是等于某个绝对数字：断言绝对 token 会把
+    # 用例绑死在"全局初值恰好是 5"上，任何前序用例推高过 token 就漂移。
+    assert app_mod._BROWSE_STATE["token"] == stale_token + 1  # 代际已前进
     assert any("强制重置" in m for m in caplog.messages)
 
-    # 旧线程（代际 5）迟到苏醒后的释放必须是空操作
-    app_mod._browse_release(5)
+    # 旧线程（上一代）迟到苏醒后的释放必须是空操作
+    app_mod._browse_release(stale_token)
     assert app_mod._BROWSE_STATE["held"] is True
-    assert app_mod._BROWSE_STATE["token"] == 6
+    assert app_mod._BROWSE_STATE["token"] == stale_token + 1
 
     gate.set()                 # 新线程走完按自己的代际正常放锁
     deadline = time.time() + 5.0

@@ -25,6 +25,51 @@ def isolated_renpyslim_home(tmp_path, monkeypatch):
     return tmp_path
 
 
+_BROWSE_DEFAULT_JOIN_TIMEOUT = 180.0
+_BROWSE_DEFAULT_MAX_HOLD = 600.0
+
+
+@pytest.fixture(autouse=True)
+def isolated_browse_lock_state():
+    """每个用例前后把 Web 浏览框锁复位到"未持有"，并还原被改过的时长常量。
+
+    web/app.py 的 _BROWSE_STATE（held/since/token）与两个时长常量都是
+    模块级可变状态，进程内所有用例共用同一份。用例之间不复位会串味：
+    上一个用例超时挂住的对话框线程还持有锁，本用例一进来就被
+    "已有一个选择框打开"挡掉；_BROWSE_JOIN_TIMEOUT 被 monkeypatch 改小后
+    泄漏到下个用例，也会让"本该挂住"的假对话框提前返回。
+
+    **代际 token 故意不复位**：产品的 _browse_release(token) 靠"令牌等于当前
+    代际"判定是否放锁。把计数器归零会让新一代拿到与上一代相同的数字，上一条
+    用例遗留的对话框线程迟到苏醒时就会误放本用例的锁——那是夹具自己制造的
+    竞态。token 保持单调递增，代际才始终唯一。用例内一律按"相对上一代 +1"
+    断言，不依赖全局初值。
+    """
+    try:
+        import web.app as app_mod
+    except Exception:            # noqa: BLE001 - 没装 Web 依赖时不介入
+        yield
+        return
+    lock = getattr(app_mod, "_BROWSE_META_LOCK", None)
+    state = getattr(app_mod, "_BROWSE_STATE", None)
+    if lock is None or state is None:
+        yield
+        return
+
+    def _reset():
+        with lock:
+            state["held"] = False
+            state["since"] = None
+        app_mod._BROWSE_JOIN_TIMEOUT = _BROWSE_DEFAULT_JOIN_TIMEOUT
+        app_mod._BROWSE_LOCK_MAX_HOLD = _BROWSE_DEFAULT_MAX_HOLD
+
+    _reset()
+    try:
+        yield
+    finally:
+        _reset()
+
+
 def _build_minimal_ttf(path, chars):
     """用 fontTools 程序化生成含指定码位的最小 TrueType 字体。
 
