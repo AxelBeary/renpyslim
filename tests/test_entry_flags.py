@@ -203,3 +203,54 @@ def test_runtime_port_out_of_range_is_ignored(port, tmp_path, monkeypatch):
         lambda *args, **kwargs: pytest.fail("越界 runtime.json 不应创建 socket"),
     )
     assert entry._running_instance_port() is None
+
+# ---------------------------------------------------------------------------
+# 两个入口的"参数错误"退出码故意不同（2026-11-28 实测发现文档没写清）
+#
+#   main.py（窗口版 exe 的入口）会先做路由，未知选项在**起界面之前**被拦下，
+#   退出码 2；cli.py（RenPySlim-cli.exe）走 argparse，未知选项是参数错误，
+#   按 CLI 契约输出 ok:false JSON 并退出 1。
+#
+# 两者都是正确行为，写进 AGENTS.md 时用了"退出码 2"一句话带过，容易被读成
+# "两个 exe 都退 2"。这组用例把差异钉死，改哪边都会红，强制同步文档。
+# ---------------------------------------------------------------------------
+
+def _run_cli(args, tmp_path, timeout=120):
+    """跑 cli.py 子进程（模拟 RenPySlim-cli.exe）；隔离 HOME。"""
+    env = dict(os.environ)
+    for key in ("USERPROFILE", "HOME", "RENPYSLIM_HOME"):
+        env[key] = str(tmp_path)
+    return subprocess.run(
+        [sys.executable, str(ROOT / "cli.py"), *args],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        env=env, timeout=timeout)
+
+
+def test_router_rejects_unknown_option_with_exit_2(tmp_path):
+    """窗口版入口（main.py）：未知选项在路由层就被拒，退出码 2。"""
+    r = _run(["--definitely-not-a-flag"], tmp_path)
+    assert r.returncode == 2
+    assert "未知选项" in r.stderr
+
+
+def test_cli_rejects_unknown_option_with_json_and_exit_1(tmp_path):
+    """控制台版入口（cli.py）：参数错误仍守 JSON 契约，退出码 1。
+
+    与上一条的差异是**故意的**：自动化靠 stdout 的 ok 字段判断用法错误，
+    退出码只用来区分"路由层拒绝"与"CLI 解析层拒绝"。
+    """
+    r = _run_cli(["--definitely-not-a-flag"], tmp_path)
+    assert r.returncode == 1, f"期望 1，实际 {r.returncode}；stderr={r.stderr}"
+    data = json.loads(r.stdout)
+    assert data["ok"] is False
+    assert data["error"]
+    # usage 一并给出，方便调用方提示正确用法
+    assert "usage" in data
+
+
+def test_cli_unknown_subcommand_also_keeps_json_contract(tmp_path):
+    """非法子命令走同一条参数错误出口（不是只有未知选项）。"""
+    r = _run_cli(["definitely-not-a-command"], tmp_path)
+    assert r.returncode == 1
+    data = json.loads(r.stdout)
+    assert data["ok"] is False

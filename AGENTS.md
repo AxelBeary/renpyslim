@@ -16,7 +16,16 @@
 - 无头入口：仓库根目录的 `cli.py`（Python 源码方式运行）。
 - 发行版 exe 也认命令行：`RenPySlim.exe --version` / `--help` / `<子命令>`
   （如 `RenPySlim.exe analyze <路径>`）会分流到同一套无头 CLI，输出接回调用方终端；
-  带未知选项（`-` 开头且不认识）直接报错退出码 2，**不会被当成要打开的工程路径**。
+  带未知选项（`-` 开头且不认识）直接报错、退出码 **2**，
+  **不会被当成要打开的工程路径**。
+- **两个 exe 的"参数错误"退出码故意不同，不要混用**：
+  - `RenPySlim.exe`（窗口版）：未知选项由 `main.py` 的路由层拦下，
+    stderr 打"未知选项"，退出码 **2**（连 GUI 都不会起）。
+  - `RenPySlim-cli.exe`（控制台版，**自动化首选**）：未知选项是 argparse 的
+    参数错误，按 CLI 契约向 stdout 输出 `{"ok": false, "error": ...}`，
+    退出码 **1**。
+  脚本判断"这条命令是不是用错了"请优先看 `ok` 字段；只有需要区分
+  "路由层拒绝"与"CLI 层参数错误"时才看退出码。
 - **自动化请一律用 `RenPySlim-cli.exe`**（控制台子系统）：`RenPySlim-cli.exe --version`、
   `RenPySlim-cli.exe analyze <路径>` 在 PowerShell / cmd / 计划任务 / CI / 管道里都能正常输出。
   窗口版 `RenPySlim.exe` 虽然也认同一套参数，但它没有自己的控制台（`console=False`），
@@ -235,7 +244,15 @@ Windows 与 WSL Ubuntu 双平台跑通（数量以 `pytest tests -q` 实际收�
 - The released exe also accepts command-line use: `RenPySlim.exe --version` / `--help` /
   `<subcommand>` (e.g. `RenPySlim.exe analyze <path>`) is routed to the same headless CLI
   with output attached to the caller's terminal; unknown options (leading `-` that is not
-  recognised) fail with exit code 2 and are **never** treated as a project path.
+  recognised) fail with exit code **2** and are **never** treated as a project path.
+- **The two exes intentionally use different exit codes for "bad arguments"** — do not mix them up:
+  - `RenPySlim.exe` (windowed): unknown options are caught by the `main.py` router,
+    which prints "未知选项" to stderr and exits **2** (the GUI never starts).
+  - `RenPySlim-cli.exe` (console, **preferred for automation**): an unknown option is an
+    argparse error, so it follows the CLI contract — `{"ok": false, "error": ...}` on
+    stdout and exit code **1**.
+  Scripts should key off the `ok` field to detect a usage error; consult the exit code
+  only when you must tell "rejected by the router" from "rejected by the CLI parser".
 - **Automation should always use `RenPySlim-cli.exe`** (console subsystem):
   `RenPySlim-cli.exe --version`, `RenPySlim-cli.exe analyze <path>` print reliably in
   PowerShell / cmd / Task Scheduler / CI / pipes. The windowed `RenPySlim.exe` accepts the
