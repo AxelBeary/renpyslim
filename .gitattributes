@@ -1,0 +1,37 @@
+# 行尾统一（2026-11-28 用户拍板）：仓库内一律 LF，检出时按平台。
+#
+# 之前仓库里没有这个文件，结果 .gitignore 出现"工作区 CRLF / blob LF"的
+# 分裂状态：git status 报干净，一改就整文件重写，blame 全废。这里一次
+# 性说清楚，别让下一个人再踩。
+
+# 默认：文本文件入库统一 LF，工作区按平台检出。
+* text=auto eol=lf
+
+# 二进制：不做任何转换（也不要 diff/merge）。
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.webp binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.apk binary
+*.exe binary
+*.dll binary
+*.pyd binary
+
+# Windows 批处理必须是 CRLF，而且只准纯 ASCII —— cmd.exe 按 OEM 代码页
+# (GBK/936) 读 .bat，汉字字节会吞掉换行，把注释当命令执行。这条规则写在
+# AGENTS.md 里，这里用 eol 兜住行尾，编码靠评审与 ship-gate 扫描。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# PowerShell 5.1 对无 BOM 的 UTF-8 会按 ANSI 解码，别让这些文件混进仓库；
+# 真要有 .ps1，行尾按 CRLF（Windows 原生工具链的默认预期）。
+*.ps1 text eol=crlf
+
+# 注意：不要给 rtools/vendor/** 写 "-text"。它的语义是"当二进制存原始字节"，
+# 会把工作区的 CRLF 原样写进 blob，反而制造全量 diff。vendor 的 blob 本来就是
+# LF，走默认的 text=auto 即可（升级时整包替换也不会产生噪音）。
