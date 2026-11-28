@@ -60,14 +60,33 @@ jobs:
           PY
 
       # Web 服务在无图形会话下必须能起来，且 /api/env 正常返回
+      #
+      # 注意这里的等待循环：curl 在服务还没起来时会打印连接失败，那是**正常
+      # 重试**，不是错误（日志里出现 "Failed to connect ... 5959" 是预期噪音）。
+      # 所以必须显式记录成败——旧版靠后面 open() 报 FileNotFoundError 兜底，
+      # 真失败时看到的是"文件不存在"，而不是"服务没起来"，非常误导。
       - name: Web starts headless
         run: |
-          python -m uvicorn web.app:app --host 127.0.0.1 --port 5959 &
+          python -m uvicorn web.app:app --host 127.0.0.1 --port 5959 2>server.log &
           SERVER=$!
-          for i in $(seq 1 40); do
-            if curl -fsS http://127.0.0.1:5959/api/env -o env_web.json; then break; fi
+          trap 'kill $SERVER 2>/dev/null || true' EXIT
+
+          READY=0
+          for _ in $(seq 1 40); do
+            if curl -fsS http://127.0.0.1:5959/api/env -o env_web.json 2>/dev/null; then
+              READY=1
+              break
+            fi
             sleep 0.5
           done
+
+          if [ "$READY" -ne 1 ]; then
+            echo "::error::无头 Web 服务在 20 秒内没有起来（issue #26 验收项）"
+            echo "--- uvicorn stderr ---"
+            cat server.log || true
+            exit 1
+          fi
+
           python - <<'PY'
           import json
           data = json.load(open("env_web.json", encoding="utf-8"))
@@ -75,4 +94,3 @@ jobs:
           assert "environment" in data, data
           print("web /api/env ok")
           PY
-          kill $SERVER
