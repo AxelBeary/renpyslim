@@ -1,13 +1,56 @@
-# RenPySlim 交接状态（截至 2026-11-26：v0.18.0 进行中；已发布版本仍是 v0.17.4）
+# RenPySlim 交接状态（截至 2026-11-28：v0.18.0 已发版）
 
 > 给下一次开工的自己/协作者：读完本页 + BACKLOG.md + ARCHITECTURE.md 即可无缝接手。
 
-## 当前版本：v0.17.4（已发布）· v0.18.0（未发布 / 进行中）
+## 当前版本：v0.18.0（已发布）
 
-> **v0.18.0 尚未发版**，本节只记录已落地的代码与验证结果，发版流水线与资产校验留到真正发布时再补。
-> 版本号 `rtools/__init__.py` 目前仍是 `0.17.4`，随发版一起改。
+> 版本号唯一来源是 `rtools/__init__.py` 的 `__version__`，`updater` 直接读它
+> 与 GitHub 的 `releases/latest` 比对，没有第二处硬编码。
+> 发版：`git tag v0.18.0 && git push origin v0.18.0`，release.yml 自动构建
+> 两个 exe 并发布（发布前会跑全量 pytest，红了不发版）。
 
-### v0.18.0（未发布 / 进行中）：issue #26 第一阶段 · Linux 源码运行
+### v0.18.0（已发布 2026-11-28）：Linux 源码运行 + 交叉审计修复 + 编码卫生
+
+本版三批内容：
+
+1. **issue #26 第一阶段 · Linux 源码运行**（下列各条）；
+2. **交叉审计修复**：PR #36 的 6 个提交 + 6 个 issue（#37–#42），
+   均已合并并在各 issue 下留有决策说明；
+3. **编码卫生**：`.gitattributes` 统一行尾、`build_exe.bat` 改纯 ASCII。
+
+#### 第三批：编码卫生（2026-11-28）
+
+- `build_exe.bat` 之前带 3 处中文注释。**cmd.exe 按 OEM 代码页（zh-CN 上是
+  GBK/936）解析 .bat**，汉字字节可能吞掉换行、把注释当命令执行——症状是
+  "双击没反应"且无任何报错。已重写为纯 ASCII + CRLF。
+- 新增 `.gitattributes`：`* text=auto eol=lf`，二进制显式标 `binary`，
+  `*.bat/*.cmd/*.ps1` 固定 CRLF。起因是 `.gitignore` 出现过"工作区 CRLF /
+  blob LF"的分裂状态：`git status` 报干净、一改就整文件重写、blame 失效。
+  实测 103 个已跟踪 `.py` 的 blob 全是 LF，但 47 个检出副本是 CRLF。
+  **没有给 vendor 写 `-text`**：它的语义是"按原始字节存"，会把工作区 CRLF
+  写进 blob 反而制造全量 diff（实测踩过，13 个 vendor 文件被改写）。
+- 新增 `tests/test_script_encoding.py`（4 条）：.bat/.cmd 纯 ASCII、CRLF、
+  .gitattributes 的 bat 规则存在、入库 .py 无 CRLF。反证通过（造一个带中文的
+  `_probe.bat` 会精确报"第 2 行含非 ASCII 字节 0xE6"）。入库 .py 那条查的是
+  索引内容而非检出副本——对着磁盘断言会在每台 Windows 上无意义地红。
+
+#### 第二批：交叉审计修复（2026-11-27 / 28）
+
+PR #36 合并后又处理了 6 个 issue，全部是"记账/取消语义"与"契约待定"类：
+
+| issue | 决策 | 关键点 |
+|---|---|---|
+| #37 | RPA 记账改事务提交，**丢弃**而非标 reverted | `saved_bytes = 散落资产收益 + 已提交封包净变化` |
+| #38 | 落清单晚于口径定型 | `saved_ref` 现取而非快照 |
+| #39 | 取消改协作式 | 不变量：要么不留痕，要么留痕且记账 |
+| #40 | 中断也走 JSON 出口，退出 130 | 带 `interrupted`/`kind` 供脚本判别 |
+| #41 | zip **支持**执行位往返（仅 POSIX） | 只认 `create_system=3`，否则 Windows 包会凭空多执行位 |
+| #42 | AV1 门控 fail-closed（选项 A） | 工程与成品共用 `packager.av1_decision` |
+
+另修了 PR 评审发现的 3 个阻断项（备份 junction 泄漏、jobstore 锁内异常被改写、
+交付目录重跑不幂等），以及一个跨进程丢记录的偶发缺陷（锁文件扩容竞态）。
+
+#### 第一批：issue #26 第一阶段 · Linux 源码运行
 
 口径：**Windows 仍是一等公民**（发行版 exe 只有 Windows 一份），
 **Linux 源码运行已打通**。**不写成"全平台支持"**——macOS 未上真机验证，
